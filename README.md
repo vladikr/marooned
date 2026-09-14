@@ -74,16 +74,34 @@ Optional:
 
 ### 1. Install the operator
 
-**From this tree** (sandbox mode is in-tree; use this until a release includes it):
+**Against your KubeVirt kubevirtci cluster** (the usual local loop):
 
 ```bash
-# kubevirtci cluster with KubeVirt already installed by cluster-up
+# in ~/devel/kubevirt — same cluster you use for KubeVirt functest
+export KUBEVIRT_MEMORY_SIZE=9216M
+export KUBEVIRT_PROVIDER=k8s-1.27   # must exist in that tree; newer kubevirtci has k8s-1.37
 make cluster-up
-make cluster-sync
+make cluster-sync                   # deploys *this* KubeVirt, one CR
+
+# in this repo
+export KUBEVIRT_DIR=$HOME/devel/kubevirt
+export KUBEVIRT_PROVIDER=$KUBEVIRT_PROVIDER   # same value as above
+make cluster-sync                   # deploys marooned onto that cluster
 ```
 
-`cluster-sync` builds images, generates manifests, installs the operator, and
-applies the `MaroonedPods` CR. It waits until the operator reports Available.
+`KUBEVIRT_DIR` defaults to `$HOME/devel/kubevirt` when that tree exists.
+`make cluster-up` here refuses to start a second cluster in that case — bring
+the VMs up from kubevirt so nested virt, registry, and KubeVirt stay one
+install. `cluster-sync` here pushes images to kubevirtci’s `registry:5000`,
+installs the operator, and applies `examples/maroonedpods-config.yaml`
+(masquerade, the kubevirtci-friendly NIC).
+
+Do **not** run this repo’s `cluster-up` on top of kubevirt’s: that would
+install a second KubeVirt CR.
+
+**Standalone** (no `~/devel/kubevirt`): this repo’s older vendored kubevirtci
+can still `make cluster-up && make cluster-sync`, and it will install KubeVirt
+from `KUBEVIRT_RELEASE`.
 
 **On an existing cluster**, after building and pushing images:
 
@@ -234,10 +252,13 @@ namespace.
 ```bash
 make build          # controller, operator, server, shim, agent
 make test WHAT='./pkg/webhook ./pkg/sandbox/... ./pkg/maroonedpods-server/handler'
-make cluster-up     # kubevirtci + KubeVirt
-make cluster-sync   # deploy from this tree
+
+# cluster lives in ~/devel/kubevirt (see Deploy)
+export KUBEVIRT_DIR=$HOME/devel/kubevirt
+export KUBEVIRT_PROVIDER=k8s-1.27
+make cluster-sync
 make functest
-make cluster-down
+# tear down: cd $KUBEVIRT_DIR && make cluster-down
 ```
 
 Images:

@@ -63,9 +63,23 @@ generate-verify: generate
 	./hack/check-for-binaries.sh
 
 cluster-up:
+	@if [ -d "$${KUBEVIRT_DIR:-$${HOME}/devel/kubevirt}/cluster-up" ]; then \
+		echo "This repo attaches to an existing KubeVirt kubevirtci cluster."; \
+		echo "Bring the cluster up from that tree (do not install a second KubeVirt):"; \
+		echo "  cd $${KUBEVIRT_DIR:-$${HOME}/devel/kubevirt}"; \
+		echo "  export KUBEVIRT_MEMORY_SIZE=$${KUBEVIRT_MEMORY_SIZE:-9216M}"; \
+		echo "  export KUBEVIRT_PROVIDER=$${KUBEVIRT_PROVIDER:-k8s-1.27}"; \
+		echo "  make cluster-up && make cluster-sync"; \
+		echo "Then here: make cluster-sync && make functest"; \
+		exit 1; \
+	fi
 	eval "KUBEVIRT_RELEASE=${KUBEVIRT_RELEASE} ./cluster-up/up.sh"
 
 cluster-down:
+	@if [ -d "$${KUBEVIRT_DIR:-$${HOME}/devel/kubevirt}/cluster-up" ]; then \
+		echo "Tear down from the KubeVirt tree: cd $${KUBEVIRT_DIR:-$${HOME}/devel/kubevirt} && make cluster-down"; \
+		exit 1; \
+	fi
 	./cluster-up/down.sh
 
 push-images:

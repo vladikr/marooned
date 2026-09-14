@@ -1,4 +1,9 @@
 # Introduction
+
+The default local path is an existing KubeVirt kubevirtci cluster
+(`KUBEVIRT_DIR=~/devel/kubevirt`, see the top-level README). Use this
+`external` provider only when the cluster is *not* kubevirtci.
+
 Sometimes one would want to setup MAROONEDPODS development environment on a totally external cluster (not kubevirtci).  
 We try to support this, with this document aggregating some knowledge around that.
 

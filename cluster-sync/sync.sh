@@ -7,8 +7,9 @@ echo maroonedpods
 
 source ./hack/build/config.sh
 source ./hack/build/common.sh
-source ./cluster-up/hack/common.sh
-source ./cluster-up/cluster/${KUBEVIRT_PROVIDER}/provider.sh
+source ./hack/kubevirt-cluster.sh
+source "${KUBEVIRTCI_PATH}/hack/common.sh"
+source "${KUBEVIRTCI_CLUSTER_PATH}/${KUBEVIRT_PROVIDER}/provider.sh"
 
 if [ "${KUBEVIRT_PROVIDER}" = "external" ]; then
    MAROONEDPODS_SYNC_PROVIDER="external"
@@ -104,6 +105,11 @@ wait_maroonedpods_crd_installed $MAROONEDPODS_INSTALL_TIMEOUT
 
 _kubectl apply -f "./_out/manifests/release/maroonedpods-cr.yaml"
 wait_maroonedpods_available
+
+if [ -f examples/maroonedpods-config.yaml ]; then
+  echo "Applying sandbox MaroonedPodsConfig"
+  _kubectl apply -f examples/maroonedpods-config.yaml
+fi
 
 
 
