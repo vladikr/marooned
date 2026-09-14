@@ -29,12 +29,6 @@ func NewPod(name, namespace string) *PodBuilder {
 	}
 }
 
-// WithMaroonedLabel adds the maroonedpods.io/maroon label
-func (b *PodBuilder) WithMaroonedLabel() *PodBuilder {
-	b.pod.Labels[util.MaroonedPodLabel] = "true"
-	return b
-}
-
 // WithLabel adds a custom label
 func (b *PodBuilder) WithLabel(key, value string) *PodBuilder {
 	b.pod.Labels[key] = value
@@ -88,30 +82,11 @@ func (b *PodBuilder) Build() *v1.Pod {
 	return b.pod
 }
 
-// NewMaroonedPod creates a simple marooned pod with nginx
-func NewMaroonedPod(name, namespace string) *v1.Pod {
-	return NewPod(name, namespace).
-		WithMaroonedLabel().
-		WithContainer("nginx", "nginx:latest").
-		WithRestartPolicy(v1.RestartPolicyAlways).
-		Build()
-}
-
-// NewSandboxPod creates a RuntimeClass=marooned pod (sandbox mode).
+// NewSandboxPod creates a RuntimeClass=marooned pod.
 func NewSandboxPod(name, namespace string) *v1.Pod {
 	return NewPod(name, namespace).
 		WithRuntimeClass(util.RuntimeClassName).
 		WithContainer("box", "busybox").
-		WithRestartPolicy(v1.RestartPolicyAlways).
-		Build()
-}
-
-// NewMaroonedPodWithResources creates a marooned pod with specific resource requests
-func NewMaroonedPodWithResources(name, namespace, cpu, memory string) *v1.Pod {
-	return NewPod(name, namespace).
-		WithMaroonedLabel().
-		WithContainer("nginx", "nginx:latest").
-		WithContainerResources(cpu, memory).
 		WithRestartPolicy(v1.RestartPolicyAlways).
 		Build()
 }

@@ -43,27 +43,20 @@ func sandboxPod(mutate func(*corev1.Pod)) *corev1.Pod {
 	return pod
 }
 
-func TestIsSandboxVsNodeMode(t *testing.T) {
+func TestIsSandboxVsLabel(t *testing.T) {
 	rc := util.RuntimeClassName
 	sandbox := &corev1.Pod{Spec: corev1.PodSpec{RuntimeClassName: &rc}}
-	node := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{util.MaroonedPodLabel: "true"}}}
-	both := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{util.MaroonedPodLabel: "true"}},
-		Spec:       corev1.PodSpec{RuntimeClassName: &rc},
-	}
+	labeled := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{util.MaroonedPodLabel: "true"}}}
 	plain := &corev1.Pod{}
 
-	if !IsSandboxPod(sandbox) || IsNodeModePod(sandbox) {
-		t.Fatalf("runtimeClass pod should be sandbox only")
+	if !IsSandboxPod(sandbox) {
+		t.Fatalf("runtimeClass pod should be sandbox")
 	}
-	if IsSandboxPod(node) || !IsNodeModePod(node) {
-		t.Fatalf("maroon label without runtimeClass should be node mode")
+	if IsSandboxPod(labeled) {
+		t.Fatalf("maroonedpods.io/maroon label is not sandbox mode in this repo")
 	}
-	if !IsSandboxPod(both) || IsNodeModePod(both) {
-		t.Fatalf("runtimeClass wins over maroon label")
-	}
-	if IsSandboxPod(plain) || IsNodeModePod(plain) {
-		t.Fatalf("plain pod is neither")
+	if IsSandboxPod(plain) {
+		t.Fatalf("plain pod is not sandbox")
 	}
 }
 

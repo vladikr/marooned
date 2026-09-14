@@ -22,9 +22,7 @@
 		maroonedpods_operator \
 		marooned_shim \
 		marooned_agent \
-		build-node-image \
 		build-sandbox-image \
-		push-node-image \
 		fmt \
 		goveralls \
 		release-description \
@@ -120,18 +118,6 @@ marooned_shim:
 marooned_agent:
 	go build -o marooned_agent -v cmd/marooned-agent/*.go
 	chmod 777 marooned_agent
-
-# Build the bootc-based k3s node image
-build-node-image:
-	@echo "Building MaroonedPods node image..."
-	podman build -t quay.io/vladikr/marooned-node:latest -f images/node/Containerfile.node images/node/
-	@echo "Node image built successfully"
-
-# Push the node image to registry
-push-node-image: build-node-image
-	@echo "Pushing MaroonedPods node image..."
-	podman push quay.io/vladikr/marooned-node:latest
-	@echo "Node image pushed successfully"
 
 # Build the sandbox guest image (agent OS, no kubelet)
 build-sandbox-image:

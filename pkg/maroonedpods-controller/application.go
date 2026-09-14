@@ -37,7 +37,6 @@ import (
 	"maroonedpods.io/maroonedpods/pkg/client"
 	"maroonedpods.io/maroonedpods/pkg/informers"
 	"maroonedpods.io/maroonedpods/pkg/maroonedpods-controller/leaderelectionconfig"
-	maroonedpods_controller2 "maroonedpods.io/maroonedpods/pkg/maroonedpods-controller/maroonedpods-gate-controller"
 	"maroonedpods.io/maroonedpods/pkg/sandbox/adaptor"
 	"maroonedpods.io/maroonedpods/pkg/util"
 	"net/http"
@@ -46,22 +45,19 @@ import (
 )
 
 type MaroonedPodsControllerApp struct {
-	ctx                          context.Context
-	maroonedpodsNs               string
-	host                         string
-	LeaderElection               leaderelectionconfig.Configuration
-	maroonedpodsCli              client.MaroonedPodsClient
-	maroonedPodsGateController   *maroonedpods_controller2.MaroonedPodsGateController
-	sandboxAdaptor               *adaptor.Adaptor
-	podInformer                  cache.SharedIndexInformer
-	sandboxPodInformer           cache.SharedIndexInformer
-	maroonedpodsInformer         cache.SharedIndexInformer
-	configInformer               cache.SharedIndexInformer
-	vmiInformer                  cache.SharedIndexInformer
-	nodeInformer                 cache.SharedIndexInformer
-	readyChan                    chan bool
-	enqueueAllGateControllerChan chan struct{}
-	leaderElector                *leaderelection.LeaderElector
+	ctx                  context.Context
+	maroonedpodsNs       string
+	host                 string
+	LeaderElection       leaderelectionconfig.Configuration
+	maroonedpodsCli      client.MaroonedPodsClient
+	sandboxAdaptor       *adaptor.Adaptor
+	sandboxPodInformer   cache.SharedIndexInformer
+	maroonedpodsInformer cache.SharedIndexInformer
+	configInformer       cache.SharedIndexInformer
+	vmiInformer          cache.SharedIndexInformer
+	nodeInformer         cache.SharedIndexInformer
+	readyChan            chan bool
+	leaderElector        *leaderelection.LeaderElector
 }
 
 func Execute() {
@@ -70,7 +66,6 @@ func Execute() {
 
 	app.LeaderElection = leaderelectionconfig.DefaultLeaderElectionConfiguration()
 	app.readyChan = make(chan bool, 1)
-	app.enqueueAllGateControllerChan = make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	app.ctx = ctx
@@ -93,8 +88,6 @@ func Execute() {
 	app.host = host
 
 	app.maroonedpodsCli, err = client.GetMaroonedPodsClient()
-	//app.podInformer = informers.GetPodInformer(app.maroonedpodsCli)
-	app.podInformer = informers.GetPodsToMaroonInformer(app.maroonedpodsCli)
 	app.sandboxPodInformer = informers.GetSandboxPodsInformer(app.maroonedpodsCli)
 	app.maroonedpodsInformer = informers.GetMaroonedPodsInformer(app.maroonedpodsCli)
 	app.configInformer = informers.GetMaroonedPodsConfigInformer(app.maroonedpodsCli)
@@ -102,7 +95,6 @@ func Execute() {
 	app.nodeInformer = informers.GetNodesInformer(app.maroonedpodsCli)
 	stop := ctx.Done()
 
-	app.initMaroonedPodsGateController(stop)
 	app.initSandboxAdaptor(stop)
 
 	app.Run(stop)
@@ -128,17 +120,6 @@ func (mca *MaroonedPodsControllerApp) leaderProbe(_ *restful.Request, response *
 	if err := response.WriteHeaderAndJson(http.StatusOK, res, restful.MIME_JSON); err != nil {
 		klog.Warningf("failed to return 200 OK reply: %v", err)
 	}
-}
-
-func (mca *MaroonedPodsControllerApp) initMaroonedPodsGateController(stop <-chan struct{}) {
-	mca.maroonedPodsGateController = maroonedpods_controller2.NewMaroonedPodsGateController(mca.maroonedpodsCli,
-		mca.podInformer,
-		mca.vmiInformer,
-		mca.nodeInformer,
-		mca.configInformer,
-		stop,
-		mca.enqueueAllGateControllerChan,
-	)
 }
 
 func (mca *MaroonedPodsControllerApp) initSandboxAdaptor(stop <-chan struct{}) {
@@ -225,7 +206,6 @@ func (mca *MaroonedPodsControllerApp) onStartedLeading() func(ctx context.Contex
 	return func(ctx context.Context) {
 		stop := ctx.Done()
 
-		go mca.podInformer.Run(stop)
 		go mca.sandboxPodInformer.Run(stop)
 		go mca.maroonedpodsInformer.Run(stop)
 		go mca.configInformer.Run(stop)
@@ -233,7 +213,6 @@ func (mca *MaroonedPodsControllerApp) onStartedLeading() func(ctx context.Contex
 		go mca.nodeInformer.Run(stop)
 
 		if !cache.WaitForCacheSync(stop,
-			mca.podInformer.HasSynced,
 			mca.sandboxPodInformer.HasSynced,
 			mca.vmiInformer.HasSynced,
 			mca.nodeInformer.HasSynced,
@@ -243,9 +222,6 @@ func (mca *MaroonedPodsControllerApp) onStartedLeading() func(ctx context.Contex
 			klog.Warningf("failed to wait for caches to sync")
 		}
 
-		go func() {
-			mca.maroonedPodsGateController.Run(context.Background(), 3)
-		}()
 		go func() {
 			mca.sandboxAdaptor.Run(context.Background(), 3)
 		}()

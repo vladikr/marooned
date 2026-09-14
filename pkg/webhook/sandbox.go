@@ -24,18 +24,6 @@ func IsSandboxPod(pod *corev1.Pod) bool {
 	return *pod.Spec.RuntimeClassName == util.RuntimeClassName
 }
 
-// IsNodeModePod reports whether the pod uses the legacy guest-kubelet path.
-func IsNodeModePod(pod *corev1.Pod) bool {
-	if pod == nil || pod.Labels == nil {
-		return false
-	}
-	if IsSandboxPod(pod) {
-		return false
-	}
-	_, ok := pod.Labels[util.MaroonedPodLabel]
-	return ok
-}
-
 // MutateSandboxPod applies the sandbox admission rules in place:
 // persist stripped volume spec, set placement, finalizer, mode label,
 // strip devices/hugepages/PVCs. CPU/memory requests stay.

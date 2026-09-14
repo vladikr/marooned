@@ -106,10 +106,7 @@ func EffectiveSandbox(cfg *mpv1.MaroonedPodsConfig) mpv1.SandboxConfig {
 	return out
 }
 
-// DefaultMode returns Sandbox unless the config explicitly sets Node.
+// DefaultMode is always Sandbox in this repo. Node mode is not implemented here.
 func DefaultMode(cfg *mpv1.MaroonedPodsConfig) mpv1.IsolationMode {
-	if cfg == nil || cfg.Spec.DefaultMode == "" {
-		return mpv1.IsolationModeSandbox
-	}
-	return cfg.Spec.DefaultMode
+	return mpv1.IsolationModeSandbox
 }

@@ -138,14 +138,15 @@ type VMResources struct {
 	MemoryMi uint64 `json:"memoryMi,omitempty"`
 }
 
-// IsolationMode selects how marooned pods are isolated.
+// IsolationMode is retained for CR compatibility. This operator only runs Sandbox.
+// Node is ignored if set; guest-kubelet isolation lives in github.com/vladikr/maroonedpods.
 // +kubebuilder:validation:Enum=Sandbox;Node
 type IsolationMode string
 
 const (
 	// IsolationModeSandbox runs the container in a hidden KubeVirt guest (no guest kubelet).
 	IsolationModeSandbox IsolationMode = "Sandbox"
-	// IsolationModeNode runs the pod on a dedicated guest kubelet/k3s node.
+	// IsolationModeNode is ignored by this operator.
 	IsolationModeNode IsolationMode = "Node"
 )
 
@@ -251,7 +252,8 @@ type SandboxConfig struct {
 
 // MaroonedPodsConfigSpec defines the configuration for MaroonedPods behavior
 type MaroonedPodsConfigSpec struct {
-	// DefaultMode is Sandbox (RuntimeClass marooned) or Node (legacy guest kubelet).
+	// DefaultMode is retained for CR compatibility. This operator always runs Sandbox.
+	// Node is ignored if set.
 	// +kubebuilder:default=Sandbox
 	// +optional
 	DefaultMode IsolationMode `json:"defaultMode,omitempty"`

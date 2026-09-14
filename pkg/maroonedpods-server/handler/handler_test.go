@@ -72,7 +72,7 @@ func TestHandleSandboxCreate(t *testing.T) {
 	}
 }
 
-func TestHandleNodeModeStillGated(t *testing.T) {
+func TestHandleMaroonLabelIsIgnored(t *testing.T) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "legacy",
@@ -94,8 +94,11 @@ func TestHandleNodeModeStillGated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Response.Patch == nil {
-		t.Fatal("node mode should still patch a scheduling gate")
+	if !out.Response.Allowed {
+		t.Fatal("label-only pod must be allowed without mutation")
+	}
+	if out.Response.Patch != nil {
+		t.Fatal("maroonedpods.io/maroon must not opt into sandbox or node mode here")
 	}
 }
 

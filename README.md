@@ -43,8 +43,12 @@ does not publish them twice. CPU and memory requests stay on the Pod for
 scheduling. The original volume list is stored on
 `maroonedpods.io/volumes` and `maroonedpods.io/placement=user|infra`.
 
-Node mode (`maroonedpods.io/maroon=true` plus a guest kubelet) still exists
-and is not the default. See [docs/node-mode.md](docs/node-mode.md).
+This repository is **sandbox only**. A `maroonedpods.io/maroon` label does
+nothing here. Guest-kubelet / VM-is-a-Node isolation (including group mode)
+is https://github.com/vladikr/maroonedpods.
+
+Do **not** install this operator and maroonedpods in the same cluster. They
+share `MaroonedPodsConfig`.
 
 Sandbox networking, CUDN/l2bridge, PVC placement, and confidential compute:
 [docs/sandbox-mode.md](docs/sandbox-mode.md).
@@ -100,11 +104,7 @@ The operator then deploys:
 
 Do **not** install a second KubeVirt CR.
 
-Published-release install (older node-mode builds; not sandbox):
-
-```bash
-kubectl apply -f https://github.com/vladikr/maroonedpods/releases/latest/download/maroonedpods-operator.yaml
-```
+Node-mode (guest kubelet) install is the maroonedpods project, not this one.
 
 ### 2. Runtime handler
 
@@ -244,7 +244,6 @@ Images:
 
 ```bash
 make build-sandbox-image   # guest agent OS
-make build-node-image      # node mode only
 ```
 
 ---

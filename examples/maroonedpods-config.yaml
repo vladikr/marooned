@@ -3,6 +3,7 @@ kind: MaroonedPodsConfig
 metadata:
   name: default
 spec:
+  # Sandbox is the only mode in this operator. Node is ignored if set.
   defaultMode: Sandbox
   sandbox:
     infraNamespace: marooned-system
@@ -34,9 +35,7 @@ spec:
         enabled: false
         kbsURL: ""
 
-  # Node mode (legacy guest kubelet). See docs/node-mode.md.
-  # Container disk image to use for virtual node VMs
-  # Default: quay.io/capk/ubuntu-2004-container-disk:v1.26.0
+  # Unused by this operator (kept for CR compatibility with maroonedpods).
   nodeImage: quay.io/capk/ubuntu-2004-container-disk:v1.26.0
 
   # Number of pre-booted VM nodes to keep in warm pool

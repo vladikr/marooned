@@ -9,17 +9,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
-	"maroonedpods.io/maroonedpods/pkg/util"
 	"maroonedpods.io/maroonedpods/pkg/webhook"
 	"net/http"
-	"strings"
 )
 
 const (
-	allowPodRequest                 = "Pod has successfully gated"
-	validPodUpdate                  = "Pod update did not remove MaroonedPodsGate"
-	maroonedpodsControllerPodUpdate = "MaroonedPods controller has permission to remove gate from pods"
-	invalidPodUpdate                = "Only MaroonedPods controller has permission to remove " + util.MaroonedPodsGate + " gate from pods"
+	allowPodRequest = "Pod is not a marooned sandbox"
 )
 
 type Handler struct {
@@ -37,28 +32,20 @@ func NewHandler(Request *admissionv1.AdmissionRequest, maroonedpodsCli kubernete
 }
 
 func (v Handler) Handle() (*admissionv1.AdmissionReview, error) {
-	if v.request.Kind.Kind == "Pod" && (v.request.Operation == admissionv1.Create || v.request.Operation == admissionv1.Update) {
-		pod := v1.Pod{}
-		if err := json.Unmarshal(v.request.Object.Raw, &pod); err != nil {
-			return nil, err
-		}
-		if webhook.IsSandboxPod(&pod) {
-			if v.request.Operation == admissionv1.Create || v.request.Operation == admissionv1.Update {
-				return v.mutateSandboxPod(&pod)
-			}
-		}
-		if v.request.Operation == admissionv1.Create {
-			if webhook.IsNodeModePod(&pod) {
-				return v.mutatePod(&pod)
-			}
-			return reviewResponse(v.request.UID, true, http.StatusAccepted, allowPodRequest), nil
-		}
+	if v.request.Kind.Kind != "Pod" {
+		return nil, fmt.Errorf("Marooned webhook doesn't recongnize request: %+v", v.request)
 	}
-	switch v.request.Kind.Kind {
-	case "Pod":
-		return v.validatePodUpdate()
+	if v.request.Operation != admissionv1.Create && v.request.Operation != admissionv1.Update {
+		return reviewResponse(v.request.UID, true, http.StatusAccepted, allowPodRequest), nil
 	}
-	return nil, fmt.Errorf("MaroonedPods webhook doesn't recongnize request: %+v", v.request)
+	pod := v1.Pod{}
+	if err := json.Unmarshal(v.request.Object.Raw, &pod); err != nil {
+		return nil, err
+	}
+	if webhook.IsSandboxPod(&pod) {
+		return v.mutateSandboxPod(&pod)
+	}
+	return reviewResponse(v.request.UID, true, http.StatusAccepted, allowPodRequest), nil
 }
 
 func (v Handler) mutateSandboxPod(pod *v1.Pod) (*admissionv1.AdmissionReview, error) {
@@ -88,34 +75,6 @@ func (v Handler) mutateSandboxPod(pod *v1.Pod) (*admissionv1.AdmissionReview, er
 	return reviewResponseWithPatch(v.request.UID, true, http.StatusAccepted, "sandbox pod mutated", patch), nil
 }
 
-func (v Handler) mutatePod(pod *v1.Pod) (*admissionv1.AdmissionReview, error) {
-	schedulingGates := pod.Spec.SchedulingGates
-	if schedulingGates == nil {
-		schedulingGates = []v1.PodSchedulingGate{}
-	}
-	schedulingGates = append(schedulingGates, v1.PodSchedulingGate{Name: util.MaroonedPodsGate})
-
-	schedulingGatesBytes, err := json.Marshal(schedulingGates)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add finalizer to pod for VMI cleanup
-	finalizers := pod.Finalizers
-	if finalizers == nil {
-		finalizers = []string{}
-	}
-	finalizers = append(finalizers, util.MaroonedPodsFinalizer)
-
-	finalizersBytes, err := json.Marshal(finalizers)
-	if err != nil {
-		return nil, err
-	}
-
-	patch := fmt.Sprintf(`[{"op": "add", "path": "/metadata/finalizers", "value": %s}, {"op": "add", "path": "/spec/schedulingGates", "value": %s}, {"op": "add", "path": "/spec/tolerations/-", "value": {"key": "%s.maroonedpods.io", "operator":"Exists", "effect": "NoSchedule"}}, {"op": "add", "path": "/spec/nodeSelector", "value": {"kubernetes.io/hostname": "%s"}}]`, string(finalizersBytes), string(schedulingGatesBytes), pod.Name, pod.Name)
-	return reviewResponseWithPatch(v.request.UID, true, http.StatusAccepted, allowPodRequest, []byte(patch)), nil
-}
-
 func reviewResponseWithPatch(uid types.UID, allowed bool, httpCode int32,
 	reason string, patch []byte) *admissionv1.AdmissionReview {
 	rr := reviewResponse(uid, allowed, httpCode, reason)
@@ -141,52 +100,4 @@ func reviewResponse(uid types.UID, allowed bool, httpCode int32,
 			},
 		},
 	}
-}
-
-func (v Handler) validatePodUpdate() (*admissionv1.AdmissionReview, error) {
-	oldPod := v1.Pod{}
-	if err := json.Unmarshal(v.request.OldObject.Raw, &oldPod); err != nil {
-		return nil, err
-	}
-
-	if !hasMaroonedPodsGate(oldPod.Spec.SchedulingGates) {
-		return reviewResponse(v.request.UID, true, http.StatusAccepted, validPodUpdate), nil
-	}
-
-	currentPod := v1.Pod{}
-	if err := json.Unmarshal(v.request.Object.Raw, &currentPod); err != nil {
-		return nil, err
-	}
-
-	if hasMaroonedPodsGate(currentPod.Spec.SchedulingGates) {
-		return reviewResponse(v.request.UID, true, http.StatusAccepted, validPodUpdate), nil
-	}
-
-	if isMaroonedPodsControllerServiceAccount(v.request.UserInfo.Username, v.maroonedpodsNS) {
-		return reviewResponse(v.request.UID, true, http.StatusAccepted, maroonedpodsControllerPodUpdate), nil
-	}
-
-	return reviewResponse(v.request.UID, false, http.StatusForbidden, invalidPodUpdate), nil
-
-}
-
-func hasMaroonedPodsGate(psgs []v1.PodSchedulingGate) bool {
-	if psgs == nil {
-		return false
-	}
-	for _, sg := range psgs {
-		if sg.Name == util.MaroonedPodsGate {
-			return true
-		}
-	}
-	return false
-}
-
-func ignoreRqErr(err string) string {
-	return strings.TrimPrefix(err, strings.Split(err, ":")[0]+": ")
-}
-
-func isMaroonedPodsControllerServiceAccount(serviceAccount string, maroonedpodsNS string) bool {
-	prefix := fmt.Sprintf("system:serviceaccount:%s", maroonedpodsNS)
-	return serviceAccount == fmt.Sprintf("%s:%s", prefix, util.ControllerResourceName)
 }
