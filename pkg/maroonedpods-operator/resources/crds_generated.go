@@ -2129,6 +2129,98 @@ spec:
                 description: 'Taint key prefix for pod-specific node affinity Default:
                   "maroonedpods.io" The full taint key will be: <prefix>/<pod-name>'
                 type: string
+              defaultMode:
+                default: Sandbox
+                description: DefaultMode is Sandbox (RuntimeClass marooned) or Node
+                  (legacy guest kubelet).
+                enum:
+                - Sandbox
+                - Node
+                type: string
+              sandbox:
+                description: Sandbox configures hidden-VMI isolation used by RuntimeClass
+                  marooned.
+                properties:
+                  infraNamespace:
+                    default: marooned-system
+                    type: string
+                  kernelBoot:
+                    properties:
+                      image:
+                        type: string
+                      kernelPath:
+                        type: string
+                      initrdPath:
+                        type: string
+                      kernelArgs:
+                        type: string
+                    type: object
+                  rootfsImage:
+                    type: string
+                  agentListen:
+                    enum:
+                    - vsock
+                    - tcp
+                    type: string
+                  warmPoolSize:
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  poolSizeClasses:
+                    items:
+                      properties:
+                        name:
+                          type: string
+                        guestCPU:
+                          type: string
+                        guestMemory:
+                          type: string
+                      required:
+                      - name
+                      - guestCPU
+                      - guestMemory
+                      type: object
+                    type: array
+                  network:
+                    properties:
+                      binding:
+                        enum:
+                        - l2bridge
+                        - masquerade
+                        type: string
+                    type: object
+                  publishGuestIPOnPod:
+                    type: boolean
+                  extraGuestOverhead:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    type: object
+                  confidentialCompute:
+                    properties:
+                      default:
+                        enum:
+                        - "off"
+                        - snp
+                        - tdx
+                        - annotation
+                        type: string
+                      requireCapableNode:
+                        type: boolean
+                      trustee:
+                        properties:
+                          enabled:
+                            type: boolean
+                          kbsURL:
+                            type: string
+                        type: object
+                    type: object
+                  defaultSRIOVNetwork:
+                    type: string
+                type: object
               resourceOverhead:
                 additionalProperties:
                   anyOf:

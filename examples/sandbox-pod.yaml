@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: isolated-busybox
+spec:
+  runtimeClassName: marooned
+  containers:
+  - name: box
+    image: busybox
+    command: ["sleep", "3600"]

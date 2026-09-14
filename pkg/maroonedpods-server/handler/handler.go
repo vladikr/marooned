@@ -3,12 +3,14 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	jsonpatch "gomodules.xyz/jsonpatch/v2"
 	admissionv1 "k8s.io/api/admission/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"maroonedpods.io/maroonedpods/pkg/util"
+	"maroonedpods.io/maroonedpods/pkg/webhook"
 	"net/http"
 	"strings"
 )
@@ -35,21 +37,55 @@ func NewHandler(Request *admissionv1.AdmissionRequest, maroonedpodsCli kubernete
 }
 
 func (v Handler) Handle() (*admissionv1.AdmissionReview, error) {
-	if v.request.Kind.Kind == "Pod" && v.request.Operation == admissionv1.Create {
+	if v.request.Kind.Kind == "Pod" && (v.request.Operation == admissionv1.Create || v.request.Operation == admissionv1.Update) {
 		pod := v1.Pod{}
 		if err := json.Unmarshal(v.request.Object.Raw, &pod); err != nil {
 			return nil, err
 		}
-		if _, exist := pod.Labels["maroonedpods.io/maroon"]; exist {
-			return v.mutatePod(&pod)
+		if webhook.IsSandboxPod(&pod) {
+			if v.request.Operation == admissionv1.Create || v.request.Operation == admissionv1.Update {
+				return v.mutateSandboxPod(&pod)
+			}
 		}
-		return reviewResponse(v.request.UID, true, http.StatusAccepted, allowPodRequest), nil
+		if v.request.Operation == admissionv1.Create {
+			if webhook.IsNodeModePod(&pod) {
+				return v.mutatePod(&pod)
+			}
+			return reviewResponse(v.request.UID, true, http.StatusAccepted, allowPodRequest), nil
+		}
 	}
 	switch v.request.Kind.Kind {
 	case "Pod":
 		return v.validatePodUpdate()
 	}
 	return nil, fmt.Errorf("MaroonedPods webhook doesn't recongnize request: %+v", v.request)
+}
+
+func (v Handler) mutateSandboxPod(pod *v1.Pod) (*admissionv1.AdmissionReview, error) {
+	original, err := json.Marshal(pod)
+	if err != nil {
+		return nil, err
+	}
+	mutated := pod.DeepCopy()
+	if err := webhook.MutateSandboxPod(mutated); err != nil {
+		return reviewResponse(v.request.UID, false, http.StatusForbidden, err.Error()), nil
+	}
+	modified, err := json.Marshal(mutated)
+	if err != nil {
+		return nil, err
+	}
+	ops, err := jsonpatch.CreatePatch(original, modified)
+	if err != nil {
+		return nil, err
+	}
+	if len(ops) == 0 {
+		return reviewResponse(v.request.UID, true, http.StatusAccepted, "sandbox pod already mutated"), nil
+	}
+	patch, err := json.Marshal(ops)
+	if err != nil {
+		return nil, err
+	}
+	return reviewResponseWithPatch(v.request.UID, true, http.StatusAccepted, "sandbox pod mutated", patch), nil
 }
 
 func (v Handler) mutatePod(pod *v1.Pod) (*admissionv1.AdmissionReview, error) {

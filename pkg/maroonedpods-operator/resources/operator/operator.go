@@ -120,6 +120,53 @@ func getClusterPolicyRules() []rbacv1.PolicyRule {
 				"watch",
 			},
 		},
+		{
+			APIGroups: []string{
+				"",
+			},
+			Resources: []string{
+				"namespaces",
+			},
+			Verbs: []string{
+				"create",
+				"get",
+				"list",
+				"watch",
+				"update",
+			},
+		},
+		{
+			APIGroups: []string{
+				"node.k8s.io",
+			},
+			Resources: []string{
+				"runtimeclasses",
+			},
+			Verbs: []string{
+				"create",
+				"get",
+				"list",
+				"watch",
+				"update",
+				"delete",
+			},
+		},
+		{
+			APIGroups: []string{
+				"apps",
+			},
+			Resources: []string{
+				"daemonsets",
+			},
+			Verbs: []string{
+				"create",
+				"get",
+				"list",
+				"watch",
+				"update",
+				"delete",
+			},
+		},
 	}
 	rules = append(rules, cluster.GetClusterRolePolicyRules()...)
 	return rules
@@ -284,6 +331,7 @@ func createDeployment(args *FactoryArgs) []client.Object {
 			args.Image,
 			args.NamespacedArgs.ControllerImage,
 			args.NamespacedArgs.MaroonedPodsServerImage,
+			args.NamespacedArgs.ShimImage,
 			args.NamespacedArgs.Verbosity,
 			args.NamespacedArgs.PullPolicy,
 			args.NamespacedArgs.ImagePullSecrets),
@@ -293,6 +341,7 @@ func createDeployment(args *FactoryArgs) []client.Object {
 func createCRD(args *FactoryArgs) []client.Object {
 	return []client.Object{
 		createMaroonedPodsListCRD(),
+		createMaroonedPodsConfigCRD(),
 	}
 }
 func createMaroonedPodsListCRD() *extv1.CustomResourceDefinition {
@@ -301,7 +350,16 @@ func createMaroonedPodsListCRD() *extv1.CustomResourceDefinition {
 	return &crd
 }
 
-func createOperatorEnvVar(operatorVersion, deployClusterResources, controllerImage, webhookServerImage, verbosity, pullPolicy string) []corev1.EnvVar {
+func createMaroonedPodsConfigCRD() *extv1.CustomResourceDefinition {
+	crd := extv1.CustomResourceDefinition{}
+	_ = k8syaml.NewYAMLToJSONDecoder(strings.NewReader(resources.MaroonedPodsCRDs["maroonedpodsconfig"])).Decode(&crd)
+	return &crd
+}
+
+func createOperatorEnvVar(operatorVersion, deployClusterResources, controllerImage, webhookServerImage, shimImage, verbosity, pullPolicy string) []corev1.EnvVar {
+	if shimImage == "" {
+		shimImage = "quay.io/vladikr/marooned-shim:latest"
+	}
 	return []corev1.EnvVar{
 		{
 			Name:  "DEPLOY_CLUSTER_RESOURCES",
@@ -320,6 +378,10 @@ func createOperatorEnvVar(operatorVersion, deployClusterResources, controllerIma
 			Value: webhookServerImage,
 		},
 		{
+			Name:  "MAROONED_SHIM_IMAGE",
+			Value: shimImage,
+		},
+		{
 			Name:  "VERBOSITY",
 			Value: verbosity,
 		},
@@ -334,7 +396,7 @@ func createOperatorEnvVar(operatorVersion, deployClusterResources, controllerIma
 	}
 }
 
-func createOperatorDeployment(operatorVersion, namespace, deployClusterResources, operatorImage, controllerImage, webhookServerImage, verbosity, pullPolicy string, imagePullSecrets []corev1.LocalObjectReference) *appsv1.Deployment {
+func createOperatorDeployment(operatorVersion, namespace, deployClusterResources, operatorImage, controllerImage, webhookServerImage, shimImage, verbosity, pullPolicy string, imagePullSecrets []corev1.LocalObjectReference) *appsv1.Deployment {
 	deployment := utils2.CreateOperatorDeployment("maroonedpods-operator", namespace, "name", "maroonedpods-operator", utils2.OperatorServiceAccountName, imagePullSecrets, int32(1))
 	container := utils2.CreateContainer("maroonedpods-operator", operatorImage, verbosity, pullPolicy)
 	container.Ports = createPrometheusPorts()
@@ -349,7 +411,7 @@ func createOperatorDeployment(operatorVersion, namespace, deployClusterResources
 			corev1.ResourceMemory: resource.MustParse("150Mi"),
 		},
 	}
-	container.Env = createOperatorEnvVar(operatorVersion, deployClusterResources, controllerImage, webhookServerImage, verbosity, pullPolicy)
+	container.Env = createOperatorEnvVar(operatorVersion, deployClusterResources, controllerImage, webhookServerImage, shimImage, verbosity, pullPolicy)
 	deployment.Spec.Template.Spec.Containers = []corev1.Container{container}
 	return deployment
 }
@@ -394,6 +456,7 @@ _The MAroonedPods Operator does not support updates yet._
 		data.OperatorImage,
 		data.ControllerImage,
 		data.WebhookServerImage,
+		"",
 		data.Verbosity,
 		data.ImagePullPolicy,
 		data.ImagePullSecrets)
@@ -486,12 +549,12 @@ _The MAroonedPods Operator does not support updates yet._
 			}},
 			Labels: map[string]string{
 				"alm-owner-maroonedpods": "maroonedpods-operator",
-				"operated-by":   "maroonedpods-operator",
+				"operated-by":            "maroonedpods-operator",
 			},
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"alm-owner-maroonedpods": "maroonedpods-operator",
-					"operated-by":   "maroonedpods-operator",
+					"operated-by":            "maroonedpods-operator",
 				},
 			},
 			InstallModes: []csvv1.InstallMode{

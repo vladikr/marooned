@@ -38,6 +38,7 @@ import (
 	"maroonedpods.io/maroonedpods/pkg/informers"
 	"maroonedpods.io/maroonedpods/pkg/maroonedpods-controller/leaderelectionconfig"
 	maroonedpods_controller2 "maroonedpods.io/maroonedpods/pkg/maroonedpods-controller/maroonedpods-gate-controller"
+	"maroonedpods.io/maroonedpods/pkg/sandbox/adaptor"
 	"maroonedpods.io/maroonedpods/pkg/util"
 	"net/http"
 	"os"
@@ -51,7 +52,9 @@ type MaroonedPodsControllerApp struct {
 	LeaderElection               leaderelectionconfig.Configuration
 	maroonedpodsCli              client.MaroonedPodsClient
 	maroonedPodsGateController   *maroonedpods_controller2.MaroonedPodsGateController
+	sandboxAdaptor               *adaptor.Adaptor
 	podInformer                  cache.SharedIndexInformer
+	sandboxPodInformer           cache.SharedIndexInformer
 	maroonedpodsInformer         cache.SharedIndexInformer
 	configInformer               cache.SharedIndexInformer
 	vmiInformer                  cache.SharedIndexInformer
@@ -92,6 +95,7 @@ func Execute() {
 	app.maroonedpodsCli, err = client.GetMaroonedPodsClient()
 	//app.podInformer = informers.GetPodInformer(app.maroonedpodsCli)
 	app.podInformer = informers.GetPodsToMaroonInformer(app.maroonedpodsCli)
+	app.sandboxPodInformer = informers.GetSandboxPodsInformer(app.maroonedpodsCli)
 	app.maroonedpodsInformer = informers.GetMaroonedPodsInformer(app.maroonedpodsCli)
 	app.configInformer = informers.GetMaroonedPodsConfigInformer(app.maroonedpodsCli)
 	app.vmiInformer = informers.GetVMIInformer(app.maroonedpodsCli)
@@ -99,6 +103,7 @@ func Execute() {
 	stop := ctx.Done()
 
 	app.initMaroonedPodsGateController(stop)
+	app.initSandboxAdaptor(stop)
 
 	app.Run(stop)
 
@@ -133,6 +138,15 @@ func (mca *MaroonedPodsControllerApp) initMaroonedPodsGateController(stop <-chan
 		mca.configInformer,
 		stop,
 		mca.enqueueAllGateControllerChan,
+	)
+}
+
+func (mca *MaroonedPodsControllerApp) initSandboxAdaptor(stop <-chan struct{}) {
+	mca.sandboxAdaptor = adaptor.New(mca.maroonedpodsCli,
+		mca.sandboxPodInformer,
+		mca.vmiInformer,
+		mca.configInformer,
+		stop,
 	)
 }
 
@@ -212,6 +226,7 @@ func (mca *MaroonedPodsControllerApp) onStartedLeading() func(ctx context.Contex
 		stop := ctx.Done()
 
 		go mca.podInformer.Run(stop)
+		go mca.sandboxPodInformer.Run(stop)
 		go mca.maroonedpodsInformer.Run(stop)
 		go mca.configInformer.Run(stop)
 		go mca.vmiInformer.Run(stop)
@@ -219,6 +234,7 @@ func (mca *MaroonedPodsControllerApp) onStartedLeading() func(ctx context.Contex
 
 		if !cache.WaitForCacheSync(stop,
 			mca.podInformer.HasSynced,
+			mca.sandboxPodInformer.HasSynced,
 			mca.vmiInformer.HasSynced,
 			mca.nodeInformer.HasSynced,
 			mca.maroonedpodsInformer.HasSynced,
@@ -229,6 +245,9 @@ func (mca *MaroonedPodsControllerApp) onStartedLeading() func(ctx context.Contex
 
 		go func() {
 			mca.maroonedPodsGateController.Run(context.Background(), 3)
+		}()
+		go func() {
+			mca.sandboxAdaptor.Run(context.Background(), 3)
 		}()
 		close(mca.readyChan)
 	}

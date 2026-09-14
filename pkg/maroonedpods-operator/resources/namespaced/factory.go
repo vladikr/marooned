@@ -15,6 +15,7 @@ type FactoryArgs struct {
 	ControllerImage         string `required:"true" split_words:"true"`
 	DeployClusterResources  string `required:"true" split_words:"true"`
 	MaroonedPodsServerImage string `required:"true" envconfig:"MAROONEDPODS_SERVER_IMAGE"`
+	ShimImage               string `split_words:"true" envconfig:"MAROONED_SHIM_IMAGE"`
 	Verbosity               string `required:"true"`
 	PullPolicy              string `required:"true" split_words:"true"`
 	ImagePullSecrets        []corev1.LocalObjectReference
@@ -31,8 +32,8 @@ type namespaceHaver interface {
 }
 
 var factoryFunctions = map[string]factoryFunc{
-	"maroonedpodsServer":  createMaroonedPodsServerResources,
-	"controller": createMaroonedPodsControllerResources,
+	"maroonedpodsServer": createMaroonedPodsServerResources,
+	"controller":         createMaroonedPodsControllerResources,
 }
 
 // CreateAllResources creates all namespaced resources

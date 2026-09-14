@@ -20,7 +20,10 @@
 		maroonedpods_controller \
 		maroonedpods_server \
 		maroonedpods_operator \
+		marooned_shim \
+		marooned_agent \
 		build-node-image \
+		build-sandbox-image \
 		push-node-image \
 		fmt \
 		goveralls \
@@ -29,7 +32,7 @@
 		fossa
 all: build
 
-build:  maroonedpods_controller maroonedpods_server maroonedpods_operator
+build:  maroonedpods_controller maroonedpods_server maroonedpods_operator marooned_shim marooned_agent
 
 DOCKER?=1
 ifeq (${DOCKER}, 1)
@@ -110,6 +113,14 @@ maroonedpods_server:
 	go build -o maroonedpods_server -v cmd/maroonedpods-server/*.go
 	chmod 777 maroonedpods_server
 
+marooned_shim:
+	go build -o marooned_shim -v cmd/marooned-shim/*.go
+	chmod 777 marooned_shim
+
+marooned_agent:
+	go build -o marooned_agent -v cmd/marooned-agent/*.go
+	chmod 777 marooned_agent
+
 # Build the bootc-based k3s node image
 build-node-image:
 	@echo "Building MaroonedPods node image..."
@@ -122,12 +133,21 @@ push-node-image: build-node-image
 	podman push quay.io/vladikr/marooned-node:latest
 	@echo "Node image pushed successfully"
 
+# Build the sandbox guest image (agent OS, no kubelet)
+build-sandbox-image:
+	@echo "Building MaroonedPods sandbox image..."
+	podman build -t quay.io/vladikr/marooned-sandbox:latest -f images/sandbox/Containerfile images/sandbox/
+	@echo "Sandbox image built successfully"
+
+push-sandbox-image: build-sandbox-image
+	podman push quay.io/vladikr/marooned-sandbox:latest
+
 csv-generator:
 	go build -o bin/csv-generator -v tools/csv-generator/csv-generator.go
 	chmod 777 bin/csv-generator
 
 clean:
-	rm ./maroonedpods_controller ./maroonedpods_operator ./maroonedpods_server -f
+	rm ./maroonedpods_controller ./maroonedpods_operator ./maroonedpods_server ./marooned_shim ./marooned_agent -f
 
 
 fmt:

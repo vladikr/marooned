@@ -3,6 +3,38 @@ kind: MaroonedPodsConfig
 metadata:
   name: default
 spec:
+  defaultMode: Sandbox
+  sandbox:
+    infraNamespace: marooned-system
+    kernelBoot:
+      image: quay.io/vladikr/marooned-sandbox-kernel:latest
+      kernelPath: /boot/vmlinuz
+      initrdPath: /boot/initrd
+      kernelArgs: "console=hvc0 marooned.agent=vsock"
+    rootfsImage: quay.io/vladikr/marooned-sandbox:latest
+    agentListen: vsock
+    warmPoolSize: 2
+    poolSizeClasses:
+      - name: s
+        guestCPU: "1"
+        guestMemory: 512Mi
+      - name: m
+        guestCPU: "2"
+        guestMemory: 2Gi
+    network:
+      binding: masquerade
+    publishGuestIPOnPod: true
+    extraGuestOverhead:
+      cpu: 50m
+      memory: 64Mi
+    confidentialCompute:
+      default: off
+      requireCapableNode: true
+      trustee:
+        enabled: false
+        kbsURL: ""
+
+  # Node mode (legacy guest kubelet). See docs/node-mode.md.
   # Container disk image to use for virtual node VMs
   # Default: quay.io/capk/ubuntu-2004-container-disk:v1.26.0
   nodeImage: quay.io/capk/ubuntu-2004-container-disk:v1.26.0

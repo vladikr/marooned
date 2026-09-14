@@ -8,8 +8,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	utils2 "maroonedpods.io/maroonedpods/pkg/util"
 	sdkapi "kubevirt.io/controller-lifecycle-operator-sdk/api"
+	utils2 "maroonedpods.io/maroonedpods/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 

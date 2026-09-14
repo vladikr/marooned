@@ -2,6 +2,11 @@
 aaq_controller
 aaq_operator
 aaq_server
+maroonedpods_controller
+maroonedpods_operator
+maroonedpods_server
+marooned_shim
+marooned_agent
 tmp
 _ci-configs/*
 0

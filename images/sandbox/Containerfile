@@ -1,0 +1,16 @@
+# Sandbox guest image: tiny userspace + marooned-agent. No kubelet, k3s, or CNI.
+FROM alpine:3.18 as builder
+RUN apk add --no-cache go make git
+WORKDIR /src
+COPY . /src
+# When built via `make build-sandbox-image` the context is images/sandbox/.
+# The agent binary is expected at /src/marooned_agent if prebuilt, otherwise
+# a placeholder start script is used.
+
+FROM alpine:3.18
+RUN apk add --no-cache util-linux coreutils procps iproute2
+COPY init.sh /init
+COPY marooned-agent.sh /usr/local/bin/marooned-agent
+RUN chmod +x /init /usr/local/bin/marooned-agent
+# PID 1 is a tiny init that execs the agent.
+ENTRYPOINT ["/init"]

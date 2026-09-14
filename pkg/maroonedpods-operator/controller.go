@@ -16,10 +16,10 @@ import (
 	"time"
 
 	"github.com/kelseyhightower/envconfig"
-	mpcluster "maroonedpods.io/maroonedpods/pkg/maroonedpods-operator/resources/cluster"
-	mpnamespaced "maroonedpods.io/maroonedpods/pkg/maroonedpods-operator/resources/namespaced"
 	"kubevirt.io/controller-lifecycle-operator-sdk/pkg/sdk/callbacks"
 	sdkr "kubevirt.io/controller-lifecycle-operator-sdk/pkg/sdk/reconciler"
+	mpcluster "maroonedpods.io/maroonedpods/pkg/maroonedpods-operator/resources/cluster"
+	mpnamespaced "maroonedpods.io/maroonedpods/pkg/maroonedpods-operator/resources/namespaced"
 
 	"maroonedpods.io/maroonedpods/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -71,6 +71,8 @@ func newReconciler(mgr manager.Manager) (*ReconcileMaroonedPods, error) {
 	}
 
 	namespacedArgs.Namespace = namespace
+	clusterArgs.ShimImage = namespacedArgs.ShimImage
+	clusterArgs.PullPolicy = namespacedArgs.PullPolicy
 
 	log.Info("", "VARS", fmt.Sprintf("%+v", namespacedArgs))
 

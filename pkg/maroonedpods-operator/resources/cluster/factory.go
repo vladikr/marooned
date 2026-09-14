@@ -11,9 +11,11 @@ import (
 
 // FactoryArgs contains the required parameters to generate all cluster-scoped resources
 type FactoryArgs struct {
-	Namespace string
-	Client    client.Client
-	Logger    logr.Logger
+	Namespace  string
+	Client     client.Client
+	Logger     logr.Logger
+	ShimImage  string
+	PullPolicy string
 }
 
 type factoryFunc func(*FactoryArgs) []client.Object
@@ -22,8 +24,9 @@ type factoryFuncMap map[string]factoryFunc
 
 var staticFactoryFunctions = factoryFuncMap{
 	"maroonedpods-server-rbac": createStaticMaroonedPodsLockResources,
-	"controller-rbac": createStaticControllerResources,
-	"crd-resources":   createCRDResources,
+	"controller-rbac":          createStaticControllerResources,
+	"crd-resources":            createCRDResources,
+	"sandbox-resources":        createSandboxClusterResources,
 }
 
 var dynamicFactoryFunctions = factoryFuncMap{
@@ -65,8 +68,7 @@ func createResourceGroup(funcMap factoryFuncMap, group string, args *FactoryArgs
 }
 
 func createCRDResources(args *FactoryArgs) []client.Object {
-	return []client.Object{
-	}
+	return []client.Object{}
 }
 
 // GetClusterRolePolicyRules returns all cluster PolicyRules

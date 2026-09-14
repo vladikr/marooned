@@ -31,17 +31,17 @@ func getControllerClusterPolicyRules() []rbacv1.PolicyRule {
 				"patch",
 			},
 		},
-        {
-            APIGroups: []string{
-                "",
-            },
-            Resources: []string{
-                "nodes",
-            },
-            Verbs: []string{
-                "get", "list", "watch", "update", "patch",
-            },
-        },
+		{
+			APIGroups: []string{
+				"",
+			},
+			Resources: []string{
+				"nodes",
+			},
+			Verbs: []string{
+				"get", "list", "watch", "update", "patch",
+			},
+		},
 		{
 			APIGroups: []string{
 				"",
@@ -54,7 +54,7 @@ func getControllerClusterPolicyRules() []rbacv1.PolicyRule {
 				"list",
 				"watch",
 				"get",
-                "patch",
+				"patch",
 			},
 		},
 		{
@@ -110,8 +110,8 @@ func getControllerClusterPolicyRules() []rbacv1.PolicyRule {
 				"update",
 				"watch",
 				"list",
-                "delete",
-                "patch",
+				"delete",
+				"patch",
 			},
 		},
 		{
@@ -123,7 +123,7 @@ func getControllerClusterPolicyRules() []rbacv1.PolicyRule {
 			},
 			Verbs: []string{
 				"update",
-                "patch",
+				"patch",
 			},
 		},
 		{
@@ -165,6 +165,23 @@ func getControllerClusterPolicyRules() []rbacv1.PolicyRule {
 		},
 		{
 			APIGroups: []string{
+				"discovery.k8s.io",
+			},
+			Resources: []string{
+				"endpointslices",
+			},
+			Verbs: []string{
+				"get",
+				"list",
+				"watch",
+				"create",
+				"update",
+				"patch",
+				"delete",
+			},
+		},
+		{
+			APIGroups: []string{
 				"kubevirt.io",
 			},
 			Resources: []string{
@@ -174,11 +191,13 @@ func getControllerClusterPolicyRules() []rbacv1.PolicyRule {
 				"watch",
 				"list",
 				"get",
-                "create",
-                "update",
-                "delete",
-                "patch",
+				"create",
+				"update",
+				"delete",
+				"patch",
 			},
+			// Cluster-wide: diskless VMIs live in marooned-system; PVC
+			// sandboxes create the VMI in the Pod namespace.
 		},
 		{
 			APIGroups: []string{
@@ -188,7 +207,7 @@ func getControllerClusterPolicyRules() []rbacv1.PolicyRule {
 				"virtualmachineinstances/status",
 			},
 			Verbs: []string{
-                "patch",
+				"patch",
 			},
 		},
 		{

@@ -10,8 +10,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"maroonedpods.io/maroonedpods/pkg/maroonedpods-operator/resources/namespaced"
 	utils "kubevirt.io/controller-lifecycle-operator-sdk/pkg/sdk/resources"
+	"maroonedpods.io/maroonedpods/pkg/maroonedpods-operator/resources/namespaced"
 )
 
 // FactoryArgs contains the required parameters to generate all cluster-scoped resources

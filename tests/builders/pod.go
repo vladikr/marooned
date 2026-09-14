@@ -71,6 +71,12 @@ func (b *PodBuilder) WithContainerResources(cpu, memory string) *PodBuilder {
 	return b
 }
 
+// WithRuntimeClass sets spec.runtimeClassName.
+func (b *PodBuilder) WithRuntimeClass(name string) *PodBuilder {
+	b.pod.Spec.RuntimeClassName = &name
+	return b
+}
+
 // WithRestartPolicy sets the restart policy
 func (b *PodBuilder) WithRestartPolicy(policy v1.RestartPolicy) *PodBuilder {
 	b.pod.Spec.RestartPolicy = policy
@@ -87,6 +93,15 @@ func NewMaroonedPod(name, namespace string) *v1.Pod {
 	return NewPod(name, namespace).
 		WithMaroonedLabel().
 		WithContainer("nginx", "nginx:latest").
+		WithRestartPolicy(v1.RestartPolicyAlways).
+		Build()
+}
+
+// NewSandboxPod creates a RuntimeClass=marooned pod (sandbox mode).
+func NewSandboxPod(name, namespace string) *v1.Pod {
+	return NewPod(name, namespace).
+		WithRuntimeClass(util.RuntimeClassName).
+		WithContainer("box", "busybox").
 		WithRestartPolicy(v1.RestartPolicyAlways).
 		Build()
 }

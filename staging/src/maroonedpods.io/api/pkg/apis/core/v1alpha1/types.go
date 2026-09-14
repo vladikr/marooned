@@ -138,9 +138,129 @@ type VMResources struct {
 	MemoryMi uint64 `json:"memoryMi,omitempty"`
 }
 
+// IsolationMode selects how marooned pods are isolated.
+// +kubebuilder:validation:Enum=Sandbox;Node
+type IsolationMode string
+
+const (
+	// IsolationModeSandbox runs the container in a hidden KubeVirt guest (no guest kubelet).
+	IsolationModeSandbox IsolationMode = "Sandbox"
+	// IsolationModeNode runs the pod on a dedicated guest kubelet/k3s node.
+	IsolationModeNode IsolationMode = "Node"
+)
+
+// SandboxKernelBoot configures direct kernel boot for non-TEE sandbox VMIs.
+type SandboxKernelBoot struct {
+	// Container image that contains kernel and initrd.
+	// +optional
+	Image string `json:"image,omitempty"`
+	// Path to the kernel inside the image.
+	// +optional
+	KernelPath string `json:"kernelPath,omitempty"`
+	// Path to the initrd inside the image.
+	// +optional
+	InitrdPath string `json:"initrdPath,omitempty"`
+	// Arguments passed to the guest kernel.
+	// +optional
+	KernelArgs string `json:"kernelArgs,omitempty"`
+}
+
+// SandboxSizeClass is a guest CPU/memory class used by the warm pool.
+type SandboxSizeClass struct {
+	// Name of the size class (for example s, m).
+	Name string `json:"name"`
+	// Guest vCPU request, Kubernetes quantity (for example "1" or "2").
+	GuestCPU string `json:"guestCPU"`
+	// Guest memory request, Kubernetes quantity (for example 512Mi).
+	GuestMemory string `json:"guestMemory"`
+}
+
+// SandboxNetwork configures the hidden VMI NIC.
+type SandboxNetwork struct {
+	// Binding plugin or method. l2bridge is production; masquerade is the dev fallback.
+	// +kubebuilder:validation:Enum=l2bridge;masquerade
+	// +optional
+	Binding string `json:"binding,omitempty"`
+}
+
+// SandboxTrustee is optional guest-side attestation against a Trustee KBS.
+type SandboxTrustee struct {
+	// Enabled turns on the guest attester.
+	Enabled bool `json:"enabled,omitempty"`
+	// KBSURL is the Trustee Key Broker Service endpoint. Must not run on the hypervisor node.
+	// +optional
+	KBSURL string `json:"kbsURL,omitempty"`
+}
+
+// SandboxConfidentialCompute selects SNP/TDX for hidden sandbox VMIs.
+type SandboxConfidentialCompute struct {
+	// Default TEE when the pod does not set maroonedpods.io/tee.
+	// off | snp | tdx | annotation
+	// +kubebuilder:validation:Enum=off;snp;tdx;annotation
+	// +optional
+	Default string `json:"default,omitempty"`
+	// RequireCapableNode adds nodeSelectors for kubevirt.io/sev or kubevirt.io/tdx.
+	// +optional
+	RequireCapableNode *bool `json:"requireCapableNode,omitempty"`
+	// Trustee configures optional guest attester tools. Maroonedpods never verifies evidence on the hypervisor.
+	// +optional
+	Trustee *SandboxTrustee `json:"trustee,omitempty"`
+}
+
+// SandboxConfig is the configuration for RuntimeClass=marooned sandbox VMs.
+type SandboxConfig struct {
+	// InfraNamespace holds hidden VMIs and virt-launcher pods.
+	// +kubebuilder:default="marooned-system"
+	// +optional
+	InfraNamespace string `json:"infraNamespace,omitempty"`
+	// KernelBoot is used for non-TEE sandbox guests. TEE guests boot UEFI instead.
+	// +optional
+	KernelBoot *SandboxKernelBoot `json:"kernelBoot,omitempty"`
+	// RootfsImage is the sandbox agent OS containerDisk (not the node image).
+	// +optional
+	RootfsImage string `json:"rootfsImage,omitempty"`
+	// AgentListen is how the shim reaches the guest agent.
+	// +kubebuilder:validation:Enum=vsock;tcp
+	// +optional
+	AgentListen string `json:"agentListen,omitempty"`
+	// WarmPoolSize is the desired number of available+creating pool VMIs per (node, size class, tee).
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	WarmPoolSize int32 `json:"warmPoolSize,omitempty"`
+	// PoolSizeClasses defines guest sizes the pool can keep warm.
+	// +optional
+	PoolSizeClasses []SandboxSizeClass `json:"poolSizeClasses,omitempty"`
+	// Network configures the default NIC. The network source is always pod: {}.
+	// +optional
+	Network *SandboxNetwork `json:"network,omitempty"`
+	// PublishGuestIPOnPod requests EndpointSlice publication of the guest CUDN address.
+	// v1 does not fight kubelet for status.podIP.
+	// +optional
+	PublishGuestIPOnPod *bool `json:"publishGuestIPOnPod,omitempty"`
+	// ExtraGuestOverhead is added to pod requests when sizing the guest.
+	// +optional
+	ExtraGuestOverhead *corev1.ResourceList `json:"extraGuestOverhead,omitempty"`
+	// ConfidentialCompute is the SNP/TDX profile for hidden VMIs.
+	// +optional
+	ConfidentialCompute *SandboxConfidentialCompute `json:"confidentialCompute,omitempty"`
+	// DefaultSRIOVNetwork is the NAD name used when a pod requests a VF without
+	// the maroonedpods.io/sriov-network annotation.
+	// +optional
+	DefaultSRIOVNetwork string `json:"defaultSRIOVNetwork,omitempty"`
+}
+
 // MaroonedPodsConfigSpec defines the configuration for MaroonedPods behavior
 type MaroonedPodsConfigSpec struct {
-	// Container disk image to use for virtual node VMs
+	// DefaultMode is Sandbox (RuntimeClass marooned) or Node (legacy guest kubelet).
+	// +kubebuilder:default=Sandbox
+	// +optional
+	DefaultMode IsolationMode `json:"defaultMode,omitempty"`
+
+	// Sandbox configures hidden-VMI isolation used by RuntimeClass marooned.
+	// +optional
+	Sandbox *SandboxConfig `json:"sandbox,omitempty"`
+
+	// Container disk image to use for virtual node VMs (mode: Node)
 	// Default: quay.io/capk/ubuntu-2004-container-disk:v1.26.0
 	// +kubebuilder:default="quay.io/capk/ubuntu-2004-container-disk:v1.26.0"
 	// +optional
@@ -199,4 +319,3 @@ type MaroonedPodsConfigList struct {
 
 	Items []MaroonedPodsConfig `json:"items"`
 }
-
