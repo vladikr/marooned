@@ -74,34 +74,34 @@ Optional:
 
 ### 1. Install the operator
 
-**Against your KubeVirt kubevirtci cluster** (the usual local loop):
+Default: **this repo’s kubevirtci**, independent of `~/devel/kubevirt`.
+`cluster-up` starts the VMs and installs **one** KubeVirt CR from
+`KUBEVIRT_RELEASE` (not your local kubevirt tree).
 
 ```bash
-# in ~/devel/kubevirt — same cluster you use for KubeVirt functest
 export KUBEVIRT_MEMORY_SIZE=9216M
-export KUBEVIRT_PROVIDER=k8s-1.27   # must exist in that tree; newer kubevirtci has k8s-1.37
+export KUBEVIRT_PROVIDER=k8s-1.27    # must exist in cluster-up/cluster/
+export KUBEVIRT_RELEASE=latest_stable
 make cluster-up
-make cluster-sync                   # deploys *this* KubeVirt, one CR
-
-# in this repo
-export KUBEVIRT_DIR=$HOME/devel/kubevirt
-export KUBEVIRT_PROVIDER=$KUBEVIRT_PROVIDER   # same value as above
-make cluster-sync                   # deploys marooned onto that cluster
+make cluster-sync                    # operator + MaroonedPodsConfig
+make functest
+make cluster-down
 ```
 
-`KUBEVIRT_DIR` defaults to `$HOME/devel/kubevirt` when that tree exists.
-`make cluster-up` here refuses to start a second cluster in that case — bring
-the VMs up from kubevirt so nested virt, registry, and KubeVirt stay one
-install. `cluster-sync` here pushes images to kubevirtci’s `registry:5000`,
-installs the operator, and applies `examples/maroonedpods-config.yaml`
-(masquerade, the kubevirtci-friendly NIC).
+Do not also `make cluster-up` from kubevirt against the same VMs. Two
+projects sharing one kubevirtci instance is how you get a second KubeVirt CR
+and a dirty cluster.
 
-Do **not** run this repo’s `cluster-up` on top of kubevirt’s: that would
-install a second KubeVirt CR.
+**Compat lane** (optional): test against an unreleased KubeVirt you already
+synced. This is not the default, and it is not auto-detected.
 
-**Standalone** (no `~/devel/kubevirt`): this repo’s older vendored kubevirtci
-can still `make cluster-up && make cluster-sync`, and it will install KubeVirt
-from `KUBEVIRT_RELEASE`.
+```bash
+# already: cd ~/devel/kubevirt && make cluster-up && make cluster-sync
+export KUBEVIRT_DIR=$HOME/devel/kubevirt
+export KUBEVIRT_PROVIDER=k8s-1.27    # same as that cluster-up
+make cluster-sync
+make functest
+```
 
 **On an existing cluster**, after building and pushing images:
 
@@ -252,14 +252,15 @@ namespace.
 ```bash
 make build          # controller, operator, server, shim, agent
 make test WHAT='./pkg/webhook ./pkg/sandbox/... ./pkg/maroonedpods-server/handler'
-
-# cluster lives in ~/devel/kubevirt (see Deploy)
-export KUBEVIRT_DIR=$HOME/devel/kubevirt
-export KUBEVIRT_PROVIDER=k8s-1.27
+make cluster-up     # this repo's kubevirtci + one KubeVirt CR
 make cluster-sync
 make functest
-# tear down: cd $KUBEVIRT_DIR && make cluster-down
+make cluster-down
 ```
+
+Bump the vendored kubevirtci (and thus k8s-1.37, if you want it) with
+`hack/update-kubevirtci.sh`. Do not inherit providers from `~/devel/kubevirt`
+unless you set `KUBEVIRT_DIR` on purpose.
 
 Images:
 
