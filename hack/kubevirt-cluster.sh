@@ -30,14 +30,23 @@ if [ -n "${KUBEVIRT_DIR:-}" ]; then
     fi
     export KUBEVIRT_DIR
     export KUBEVIRTCI_PATH="${KUBEVIRTCI_PATH:-${KUBEVIRT_DIR}/cluster-up}"
+    # kubevirtci concatenates ${KUBEVIRTCI_PATH}hack/common.sh (no extra slash).
+    case "${KUBEVIRTCI_PATH}" in
+    */) ;;
+    *) export KUBEVIRTCI_PATH="${KUBEVIRTCI_PATH}/" ;;
+    esac
     export KUBEVIRTCI_CONFIG_PATH="${KUBEVIRTCI_CONFIG_PATH:-${KUBEVIRT_DIR}/_ci-configs}"
-    export KUBEVIRTCI_CLUSTER_PATH="${KUBEVIRTCI_CLUSTER_PATH:-${KUBEVIRTCI_PATH}/cluster}"
+    export KUBEVIRTCI_CLUSTER_PATH="${KUBEVIRTCI_CLUSTER_PATH:-${KUBEVIRTCI_PATH}cluster}"
     echo "Using KubeVirt cluster at ${KUBEVIRT_DIR} (KUBEVIRT_PROVIDER=${KUBEVIRT_PROVIDER:-from kubevirtci default})"
 else
     _here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
     export KUBEVIRTCI_PATH="${KUBEVIRTCI_PATH:-${_here}/cluster-up}"
+    case "${KUBEVIRTCI_PATH}" in
+    */) ;;
+    *) export KUBEVIRTCI_PATH="${KUBEVIRTCI_PATH}/" ;;
+    esac
     export KUBEVIRTCI_CONFIG_PATH="${KUBEVIRTCI_CONFIG_PATH:-${_here}/_ci-configs}"
-    export KUBEVIRTCI_CLUSTER_PATH="${KUBEVIRTCI_CLUSTER_PATH:-${KUBEVIRTCI_PATH}/cluster}"
+    export KUBEVIRTCI_CLUSTER_PATH="${KUBEVIRTCI_CLUSTER_PATH:-${KUBEVIRTCI_PATH}cluster}"
 fi
 
 if [ -n "${KUBEVIRT_PROVIDER:-}" ] && [ ! -d "${KUBEVIRTCI_CLUSTER_PATH}/${KUBEVIRT_PROVIDER}" ]; then
