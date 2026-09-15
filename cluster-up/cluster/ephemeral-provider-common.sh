@@ -45,7 +45,7 @@ else
 fi
 
 _cli_container="${KUBEVIRTCI_GOCLI_CONTAINER:-quay.io/kubevirtci/gocli:${KUBEVIRTCI_TAG}}"
-_cli="${_cri_bin} run --privileged --net=host --rm ${USE_TTY} -v ${_cri_socket}:/var/run/docker.sock"
+_cli="${_cri_bin} run --privileged --net=host --rm ${USE_TTY} -v ${_cri_socket}:/var/run/docker.sock -e KUBEVIRT_PROVIDER=${KUBEVIRT_PROVIDER} -e DOCKER_API_VERSION"
 # gocli will try to mount /lib/modules to make it accessible to dnsmasq in
 # in case it exists
 if [ -d /lib/modules ]; then
@@ -87,9 +87,13 @@ function _registry_volume() {
 
 function _add_common_params() {
     # shellcheck disable=SC2155
-    local params="--nodes ${KUBEVIRT_NUM_NODES} --memory ${KUBEVIRT_MEMORY_SIZE} --cpu 6 --secondary-nics ${KUBEVIRT_NUM_SECONDARY_NICS} --random-ports --background --prefix $provider_prefix ${KUBEVIRT_PROVIDER} ${KUBEVIRT_PROVIDER_EXTRA_ARGS}"
+    local params="--nodes ${KUBEVIRT_NUM_NODES} --memory ${KUBEVIRT_MEMORY_SIZE} --numa ${KUBEVIRT_NUM_NUMA_NODES} --cpu ${KUBEVIRT_NUM_VCPU} --secondary-nics ${KUBEVIRT_NUM_SECONDARY_NICS} --random-ports --background --prefix $provider_prefix ${KUBEVIRT_PROVIDER} ${KUBEVIRT_PROVIDER_EXTRA_ARGS}"
 
     params=" --dns-port $KUBEVIRT_DNS_HOST_PORT $params"
+
+    if [ "$KUBEVIRT_SECONDARY_NIC_BRIDGES" == "true" ]; then
+        params=" --enable-secondary-nic-bridges $params"
+    fi
 
     if [[ $TARGET =~ windows_sysprep.* ]] && [ -n "$WINDOWS_SYSPREP_NFS_DIR" ]; then
         params=" --nfs-data $WINDOWS_SYSPREP_NFS_DIR $params"
@@ -101,8 +105,23 @@ function _add_common_params() {
 
     if [ -n "${KUBEVIRTCI_PROVISION_CHECK}" ]; then
         params=" --container-registry=quay.io --container-suffix=:latest $params"
-    elif [[ ${KUBEVIRT_SLIM} == "true" ]]; then
-        params=" --slim $params"
+    else
+        if [[ -n ${KUBEVIRTCI_CONTAINER_REGISTRY} ]]; then
+            params=" --container-registry=$KUBEVIRTCI_CONTAINER_REGISTRY $params"
+        fi
+
+        if [[ -n ${KUBEVIRTCI_CONTAINER_ORG} ]]; then
+            params=" --container-org=$KUBEVIRTCI_CONTAINER_ORG $params"
+        fi
+
+        if [[ -n ${KUBEVIRTCI_CONTAINER_SUFFIX} ]]; then
+            params=" --container-suffix=:$KUBEVIRTCI_CONTAINER_SUFFIX $params"
+        fi
+
+        # Currently, the s390x architecture supports only KUBEVIRT_SLIM.
+        if [[ ${KUBEVIRT_SLIM} == "true" || $(uname -m) == "s390x" ]]; then
+            params=" --slim $params"
+        fi
     fi
 
     if [ $KUBEVIRT_WITH_ETC_IN_MEMORY == "true" ]; then
@@ -124,8 +143,28 @@ function _add_common_params() {
         params=" --single-stack $params"
     fi
 
+    if [ $KUBEVIRT_FLANNEL == "true" ]; then
+        params=" --flannel $params"
+    fi
+
+    if [ $KUBEVIRT_NO_ETCD_FSYNC == "true" ]; then
+        params=" --no-etcd-fsync $params"
+    fi
+
+    if [ $KUBEVIRT_ENABLE_AUDIT == "true" ]; then
+        params=" --enable-audit $params"
+    fi
+
+    if [ $KUBVIRT_WITH_CNAO_SKIP_CONFIG == "true" ]; then
+        params=" --skip-cnao-cr $params"
+    fi
+
     if [ $KUBEVIRT_DEPLOY_NFS_CSI == "true" ]; then
-        params=" --enable-nfs-csi $params"
+        if [ -z $KUBEVIRT_NFS_DIR ]; then
+            >&2 echo "NFS requested but no NFS directory specified (KUBEVIRT_NFS_DIR)"
+            exit 1
+        fi
+        params=" --enable-nfs-csi --nfs-data $KUBEVIRT_NFS_DIR $params"
     fi
 
     # alternate (new) way to specify storage providers
@@ -151,6 +190,10 @@ function _add_common_params() {
         params=" --hugepages-2m $KUBEVIRT_HUGEPAGES_2M $params"
     fi
 
+    if [ -n "$KUBEVIRT_HUGEPAGES_1G" ]; then
+        params=" --hugepages-1g $KUBEVIRT_HUGEPAGES_1G $params"
+    fi
+
     if [ -n "$KUBEVIRT_REALTIME_SCHEDULER" ]; then
         params=" --enable-realtime-scheduler $params"
     fi
@@ -159,8 +202,80 @@ function _add_common_params() {
         params=" --enable-fips $params"
     fi
 
+    if [ "$KUBEVIRT_WITH_MULTUS_V3" == "true" ] || [ "$KUBEVIRT_WITH_MULTUS" == "true" ]; then
+        params=" --deploy-multus $params"
+    fi
+
+    if [ "$KUBEVIRT_WITH_CNAO" == "true" ]; then
+        params=" --enable-cnao $params"
+    fi
+
+    if [ "$KUBEVIRT_WITH_DYN_NET_CTRL" == "true" ]; then
+        params=" --deploy-dnc $params"
+    fi
+
+    if [ "$KUBEVIRT_DEPLOY_CDI" == "true" ]; then
+        params=" --deploy-cdi $params"
+    fi
+
+    if [ -n "$KUBEVIRT_CUSTOM_CDI_VERSION" ]; then
+        params=" --cdi-version=$KUBEVIRT_CUSTOM_CDI_VERSION $params"
+    fi
+
+    if [ "$KUBEVIRT_DEPLOY_AAQ" == "true" ]; then
+        params=" --deploy-aaq $params"
+    fi
+
+    if [ -n "$KUBEVIRT_CUSTOM_AAQ_VERSION" ]; then
+        params=" --aaq-version=$KUBEVIRT_CUSTOM_AAQ_VERSION $params"
+    fi
+
+    if [ "$KUBEVIRT_KSM_ON" == "true" ]; then
+        params=" --enable-ksm $params"
+    fi
+
+    if [ ! -z $KUBEVIRT_KSM_SLEEP_BETWEEN_SCANS_MS ]; then
+        params=" --ksm-scan-interval=$KUBEVIRT_KSM_SLEEP_BETWEEN_SCANS_MS $params"
+    fi
+
+    if [ ! -z $KUBEVIRT_KSM_PAGES_TO_SCAN ]; then
+        params=" --ksm-page-count=$KUBEVIRT_KSM_PAGES_TO_SCAN $params"
+    fi
+
+    if [ "$KUBEVIRT_SWAP_ON" == "true" ]; then
+        params=" --enable-swap $params"
+    fi
+
+    if [ ! -z $KUBEVIRT_SWAP_SIZE_IN_GB  ]; then
+        params=" --swap-size=$KUBEVIRT_SWAP_SIZE_IN_GB $params"
+    fi
+
+    if [ ! -z $KUBEVIRT_SWAPPINESS ]; then
+        params=" --swapiness=$KUBEVIRT_SWAPPINESS $params"
+    fi
+
+    if [ ! -z "$KUBEVIRT_SWAP_BEHAVIOR" ]; then
+        params=" --swap-behavior=$KUBEVIRT_SWAP_BEHAVIOR $params"
+    fi
+
+    if [ -n "$KUBEVIRT_VSOCK_CHILD_NS_MODE" ]; then
+        params=" --vsock-child-ns-mode=$KUBEVIRT_VSOCK_CHILD_NS_MODE $params"
+    fi
+
     if [ -n "$KUBEVIRTCI_PROXY" ]; then
         params=" --docker-proxy=$KUBEVIRTCI_PROXY $params"
+    fi
+
+    if [ "$KUBEVIRT_DEPLOY_NETWORK_RESOURCES_INJECTOR" == "true" ]; then
+        params=" --deploy-network-resources-injector $params"
+    fi
+
+    if [ -n "$KUBEVIRT_TOPOLOGY_MANAGER_POLICY" ]; then
+        params=" --topology-manager-policy=$KUBEVIRT_TOPOLOGY_MANAGER_POLICY $params"
+    fi
+
+    if [ -n "$KUBEVIRT_RESERVED_SYSTEM_CPUS" ]; then
+        params=" --reserved-system-cpus=$KUBEVIRT_RESERVED_SYSTEM_CPUS $params"
     fi
 
     echo $params

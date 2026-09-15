@@ -1,4 +1,13 @@
-# How to use cluster-up
+# cluster-up
+
+## Prerequisites: podman or docker
+
+cluster-up requires that either podman or docker be installed on the host.
+To use podman, follow setup instructions at:
+https://github.com/kubevirt/kubevirtci/blob/main/PODMAN.md
+
+
+## How to use cluster-up
 
 This directory provides a wrapper around gocli. It can be vendored into other
 git repos and integrated to provide in the kubevirt well-known cluster commands

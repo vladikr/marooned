@@ -80,7 +80,7 @@ Default: **this repo’s kubevirtci**, independent of `~/devel/kubevirt`.
 
 ```bash
 export KUBEVIRT_MEMORY_SIZE=9216M
-export KUBEVIRT_PROVIDER=k8s-1.27    # must exist in cluster-up/cluster/
+export KUBEVIRT_PROVIDER=k8s-1.37    # k8s-1.34 .. k8s-1.37 in this kubevirtci pin
 export KUBEVIRT_RELEASE=latest_stable
 make cluster-up
 make cluster-sync                    # operator + MaroonedPodsConfig
@@ -258,9 +258,9 @@ make functest
 make cluster-down
 ```
 
-Bump the vendored kubevirtci (and thus k8s-1.37, if you want it) with
-`hack/update-kubevirtci.sh`. Do not inherit providers from `~/devel/kubevirt`
-unless you set `KUBEVIRT_DIR` on purpose.
+Vendored kubevirtci is tag `2609091017-ad4877a9` (`hack/update-kubevirtci.sh`).
+Do not inherit providers from `~/devel/kubevirt` unless you set `KUBEVIRT_DIR`
+on purpose.
 
 Images:
 

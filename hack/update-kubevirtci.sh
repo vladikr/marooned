@@ -17,17 +17,21 @@
 SCRIPT_ROOT="$(cd "$(dirname $0)/../" && pwd -P)"
 
 # the kubevirtci tag to vendor from (https://github.com/kubevirt/kubevirtci/tags)
-kubevirtci_release_tag=2303311039-054c0ed
+# prow latest: https://storage.googleapis.com/kubevirt-prow/release/kubevirt/kubevirtci/latest
+kubevirtci_release_tag=2609091017-ad4877a9
 
 # remove previous cluster-up dir entirely before vendoring
 rm -rf ${SCRIPT_ROOT}/cluster-up
 
 # download and extract the cluster-up dir from a specific hash in kubevirtci
-curl -L https://github.com/kubevirt/kubevirtci/archive/${kubevirtci_release_tag}/kubevirtci.tar.gz | tar xz kubevirtci-${kubevirtci_release_tag}/cluster-up --strip-component 1
+curl --fail -L "https://github.com/kubevirt/kubevirtci/archive/refs/tags/${kubevirtci_release_tag}.tar.gz" \
+  | tar xz "kubevirtci-${kubevirtci_release_tag}/cluster-up" --strip-component 1
 
 echo "KUBEVIRTCI_TAG=${kubevirtci_release_tag}" >>${SCRIPT_ROOT}/cluster-up/hack/common.sh
 
 cat << 'EOF' >> ${SCRIPT_ROOT}/cluster-up/up.sh
+
+kubectl() { ${KUBEVIRTCI_PATH}/kubectl.sh "$@"; }
 
 if [ "$KUBEVIRT_RELEASE" = "latest_nightly" ]; then
   LATEST=$(curl -L https://storage.googleapis.com/kubevirt-prow/devel/nightly/release/kubevirt/kubevirt/latest)

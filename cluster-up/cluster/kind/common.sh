@@ -2,12 +2,19 @@
 
 set -e
 
-function detect_cri() {
-    if podman ps >/dev/null 2>&1; then echo podman; elif docker ps >/dev/null 2>&1; then echo docker; fi
-}
-
+source "${KUBEVIRTCI_PATH}/../hack/detect_cri.sh"
 export CRI_BIN=${CRI_BIN:-$(detect_cri)}
+
+export KIND_EXPERIMENTAL_PROVIDER=${CRI_BIN}
 CONFIG_WORKER_CPU_MANAGER=${CONFIG_WORKER_CPU_MANAGER:-false}
+# only setup ipFamily when the environmental variable is not empty
+# avaliable value: ipv4, ipv6, dual
+IPFAMILY=${IPFAMILY}
+
+# setup the port mapping for kind cluster, this is needed for some e2e tests
+# KIND_PORT_MAPPING=cluster_port:host_port e.g. KIND_PORT_MAPPING=30001:30002
+# only one port mapping allowed
+KIND_PORT_MAPPING=${KIND_PORT_MAPPING}
 
 # check CPU arch
 PLATFORM=$(uname -m)
@@ -15,14 +22,11 @@ case ${PLATFORM} in
 x86_64* | i?86_64* | amd64*)
     ARCH="amd64"
     ;;
-ppc64le)
-    ARCH="ppc64le"
-    ;;
 aarch64* | arm64*)
     ARCH="arm64"
     ;;
 *)
-    echo "invalid Arch, only support x86_64, ppc64le, aarch64"
+    echo "invalid Arch, only support x86_64 and aarch64"
     exit 1
     ;;
 esac
@@ -85,12 +89,24 @@ function _reload-containerd-daemon-cmd() {
 }
 
 function _insecure-registry-config-cmd() {
-    echo "sed -i '/\[plugins.cri.registry.mirrors\]/a\        [plugins.cri.registry.mirrors.\"registry:5000\"]\n\          endpoint = [\"http://registry:5000\"]' /etc/containerd/config.toml"
-}
+    echo '
+    mkdir -p /etc/containerd/certs.d/registry:5000
+    cat > /etc/containerd/certs.d/registry:5000/hosts.toml <<EOF
+server = "http://registry:5000"
 
+[host."http://registry:5000"]
+  capabilities = ["pull", "resolve", "push"]
+  skip_verify = true
+EOF
+    '
+}
 # this works since the nodes use the same names as containers
 function _ssh_into_node() {
-    ${CRI_BIN} exec -it "$1" bash
+    if [[ $2 != "" ]]; then
+        ${CRI_BIN} exec "$@"
+    else
+        ${CRI_BIN} exec -it "$1" bash
+    fi
 }
 
 function _run_registry() {
@@ -138,8 +154,8 @@ function prepare_config() {
 master_ip="127.0.0.1"
 kubeconfig=${BASE_PATH}/$KUBEVIRT_PROVIDER/.kubeconfig
 kubectl=${BASE_PATH}/$KUBEVIRT_PROVIDER/.kubectl
-docker_prefix=localhost:${HOST_PORT}/kubevirt
-manifest_docker_prefix=registry:5000/kubevirt
+docker_prefix=\${DOCKER_PREFIX:-localhost:${HOST_PORT}/kubevirt}
+manifest_docker_prefix=\${DOCKER_PREFIX:-registry:5000/kubevirt}
 EOF
 }
 
@@ -168,7 +184,7 @@ function _fix_node_labels() {
     master_nodes=$(_get_nodes | grep -i $MASTER_NODES_PATTERN | awk '{print $1}')
     for node in ${master_nodes[@]}; do
         # removing NoSchedule taint if is there
-        if _kubectl taint nodes $node node-role.kubernetes.io/master:NoSchedule-; then
+        if _kubectl taint nodes $node node-role.kubernetes.io/master:NoSchedule- || _kubectl taint nodes $node node-role.kubernetes.io/control-plane:NoSchedule-; then
             _kubectl label node $node kubevirt.io/schedulable=true
         fi
     done
@@ -180,11 +196,33 @@ function _fix_node_labels() {
     done
 }
 
-function setup_kind() {
-    $KIND --loglevel debug create cluster --retain --name=${CLUSTER_NAME} --config=${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/kind.yaml --image=$KIND_NODE_IMAGE
-    $KIND get kubeconfig --name=${CLUSTER_NAME} > ${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/.kubeconfig
+function _dump_kind_node_logs() {
+    echo "=== Dumping kind node container logs for debugging ==="
+    for container in $(${CRI_BIN} ps -a --filter "label=io.x-k8s.kind.cluster=${CLUSTER_NAME}" --format '{{.Names}}'); do
+        echo "--- Container logs: ${container} ---"
+        ${CRI_BIN} logs "${container}" 2>&1 || true
+        echo "--- End container logs: ${container} ---"
+    done
+    echo "=== End kind node container logs ==="
+}
 
-    ${CRI_BIN} cp ${CLUSTER_NAME}-control-plane:$KUBECTL_PATH ${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/.kubectl
+function setup_kind() {
+    $KIND -v 9 create cluster --retain --name=${CLUSTER_NAME} --config=${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/kind.yaml --image=$KIND_NODE_IMAGE --kubeconfig=${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/.kubeconfig \
+        || ( _dump_kind_node_logs; \
+        $KIND -v 9 delete cluster --name=${CLUSTER_NAME} \
+        && $KIND -v 9 create cluster --retain --name=${CLUSTER_NAME} --config=${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/kind.yaml --image=$KIND_NODE_IMAGE --kubeconfig=${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/.kubeconfig )
+
+    if ${CRI_BIN} exec ${CLUSTER_NAME}-control-plane ls /usr/bin/kubectl > /dev/null; then
+        kubectl_path=/usr/bin/kubectl
+    elif ${CRI_BIN} exec ${CLUSTER_NAME}-control-plane ls /bin/kubectl > /dev/null; then
+        kubectl_path=/bin/kubectl
+    else
+        echo "Error: kubectl not found on node, exiting"
+        exit 1
+    fi
+
+    ${CRI_BIN} cp ${CLUSTER_NAME}-control-plane:$kubectl_path ${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/.kubectl
+
     chmod u+x ${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/.kubectl
 
     if [ $KUBEVIRT_WITH_KIND_ETCD_IN_MEMORY == "true" ]; then
@@ -225,6 +263,18 @@ function setup_kind() {
         _configure_network "$node"
     done
     prepare_config
+
+    if [[ $KUBEVIRT_DEPLOY_CDI == "true" ]]; then
+       KUBEVIRT_CUSTOM_CDI_VERSION=${KUBEVIRT_CUSTOM_CDI_VERSION:-"v1.63.0"}
+      _kubectl create -f https://github.com/kubevirt/containerized-data-importer/releases/download/"$KUBEVIRT_CUSTOM_CDI_VERSION"/cdi-operator.yaml
+      _kubectl create -f https://github.com/kubevirt/containerized-data-importer/releases/download/"$KUBEVIRT_CUSTOM_CDI_VERSION"/cdi-cr.yaml
+    fi
+
+    # remove the rancher.io kind default storageClass
+    _kubectl delete --ignore-not-found sc standard
+    # install the local storageClass for KubeVirt tests
+    _kubectl apply -f $KIND_MANIFESTS_DIR/local-storage-class.yaml
+
 }
 
 function _add_extra_mounts() {
@@ -235,10 +285,26 @@ function _add_extra_mounts() {
     readOnly: true
 EOF
 
-    if [[ "$KUBEVIRT_PROVIDER" =~ sriov.* || "$KUBEVIRT_PROVIDER" =~ vgpu.* ]]; then
+    if [[ "$KUBEVIRT_PROVIDER" =~ vgpu.* ]]; then
         cat <<EOF >> ${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/kind.yaml
   - containerPath: /dev/vfio/
     hostPath: /dev/vfio/
+EOF
+  fi
+}
+
+function _add_extra_portmapping() {
+  if [[ "$KIND_PORT_MAPPING" != "" ]]; then
+    container_port=$(echo "$KIND_PORT_MAPPING" | awk -F: '{print $1}')
+    host_port=$(echo "$KIND_PORT_MAPPING" | awk -F: '{print $2}')
+    if [[ -z "$container_port" || -z "$host_port" ]]; then
+      echo "Invalid KIND_PORT_MAPPING format. Expected 'container_port:host_port'."
+      exit 1
+    fi
+    cat <<EOF >> ${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/kind.yaml
+  extraPortMappings:
+  - containerPort: $container_port
+    hostPort: $host_port
 EOF
   fi
 }
@@ -250,7 +316,6 @@ function _add_kubeadm_cpu_manager_config_patch() {
     kind: JoinConfiguration
     nodeRegistration:
       kubeletExtraArgs:
-        "feature-gates": "CPUManager=true"
         "cpu-manager-policy": "static"
         "kube-reserved": "cpu=500m"
         "system-reserved": "cpu=500m"
@@ -270,11 +335,17 @@ EOF
     done
 }
 
-function _add_kubeadm_config_patches() {
-    if [ $KUBEVIRT_WITH_KIND_ETCD_IN_MEMORY == "true" ]; then
-        cat <<EOF >> ${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/kind.yaml
+function _add_kubeadm_config_patches_header() {
+   cat <<EOF >> ${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/kind.yaml
 kubeadmConfigPatches:
 - |
+EOF
+}
+
+function _add_kubeadm_config_patches() {
+  _add_kubeadm_config_patches_header
+  if [ $KUBEVIRT_WITH_KIND_ETCD_IN_MEMORY == "true" ]; then
+    cat <<EOF >> ${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/kind.yaml
   kind: ClusterConfiguration
   metadata:
     name: config
@@ -282,14 +353,32 @@ kubeadmConfigPatches:
     local:
       dataDir: $ETCD_IN_MEMORY_DATA_DIR
 EOF
-        echo "KIND cluster etcd data will be mounted to RAM on kind nodes: $ETCD_IN_MEMORY_DATA_DIR"
+    echo "KIND cluster etcd data will be mounted to RAM on kind nodes: $ETCD_IN_MEMORY_DATA_DIR"
+  fi
+  if [[ -n "$CONFIG_TOPOLOGY_MANAGER_POLICY" ]]; then
+     cat <<EOF >> ${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/kind.yaml
+  ---
+  kind: KubeletConfiguration
+  topologyManagerPolicy: ${CONFIG_TOPOLOGY_MANAGER_POLICY}
+  ---
+EOF
+  fi
+}
+
+function _setup_ipfamily() {
+    if [ "$IPFAMILY" != "" ]; then
+        IPFAMILY_REPLACE="networking:\n  ipFamily: $IPFAMILY"
+        sed -i "s/networking:/$IPFAMILY_REPLACE/" ${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/kind.yaml
+        echo "KIND cluster ip family has been set to $IPFAMILY"
     fi
 }
 
 function _prepare_kind_config() {
     _add_workers
-    _add_kubeadm_config_patches
-
+    if [[ "$KUBEVIRT_WITH_KIND_ETCD_IN_MEMORY" == "true" ||  -n "$CONFIG_TOPOLOGY_MANAGER_POLICY" ]]; then
+      _add_kubeadm_config_patches
+    fi
+    _setup_ipfamily
     echo "Final KIND config:"
     cat ${KUBEVIRTCI_CONFIG_PATH}/$KUBEVIRT_PROVIDER/kind.yaml
 }
@@ -309,6 +398,15 @@ function down() {
     if [ -z "$($KIND get clusters | grep ${CLUSTER_NAME})" ]; then
         return
     fi
+
+    worker_nodes=$(_get_nodes | grep -i $WORKER_NODES_PATTERN | awk '{print $1}')
+    for worker_node in $worker_nodes; do
+        if ip netns exec $worker_node ip -details address | grep "vf 0" -B 2 > /dev/null; then
+            iface=$(ip netns exec $worker_node ip -details address | grep "vf 0" -B 2 | grep -E 'UP|DOWN' | awk -F": " '{print $2}')
+            ip netns exec $worker_node ip link set $iface netns 1 && echo "gracefully detached $iface from $worker_node"
+        fi
+    done
+
     # On CI, avoid failing an entire test run just because of a deletion error
     $KIND delete cluster --name=${CLUSTER_NAME} || [ "$CI" = "true" ]
     ${CRI_BIN} rm -f $REGISTRY_NAME >> /dev/null

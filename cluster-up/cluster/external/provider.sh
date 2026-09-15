@@ -18,9 +18,18 @@ function prepare_config() {
 kubeconfig=\${KUBECONFIG}
 docker_tag=\${DOCKER_TAG}
 docker_prefix=\${DOCKER_PREFIX}
-manifest_docker_prefix=\${DOCKER_PREFIX}
+manifest_docker_prefix=\${MANIFEST_DOCKER_PREFIX:-\$DOCKER_PREFIX}
 image_pull_policy=\${IMAGE_PULL_POLICY:-Always}
 EOF
+
+    if [ -n "$KUBECTL" ]; then
+       echo "kubectl=${KUBECTL}" >> "$PROVIDER_CONFIG_FILE_PATH"
+    else
+       if which kubectl; then
+          echo "kubectl=$(which kubectl)" >> "$PROVIDER_CONFIG_FILE_PATH"
+       fi 
+    fi
+
 
     if which oc; then
         echo "oc=$(which oc)" >> "$PROVIDER_CONFIG_FILE_PATH"
