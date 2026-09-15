@@ -69,14 +69,15 @@ cluster-up:
 		echo "Then here: make cluster-sync && make functest"; \
 		exit 1; \
 	fi
-	eval "KUBEVIRT_RELEASE=${KUBEVIRT_RELEASE} ./cluster-up/up.sh"
+	@# kubevirt-cluster.sh sets KUBEVIRTCI_PODMAN_SOCKET from XDG_RUNTIME_DIR
+	. ./hack/kubevirt-cluster.sh && eval "KUBEVIRT_RELEASE=${KUBEVIRT_RELEASE} ./cluster-up/up.sh"
 
 cluster-down:
 	@if [ -n "$${KUBEVIRT_DIR}" ]; then \
 		echo "KUBEVIRT_DIR is set; tear down from that tree: cd $${KUBEVIRT_DIR} && make cluster-down"; \
 		exit 1; \
 	fi
-	./cluster-up/down.sh
+	. ./hack/kubevirt-cluster.sh && ./cluster-up/down.sh
 
 push-images:
 	eval "DOCKER_PREFIX=${DOCKER_PREFIX} DOCKER_TAG=${DOCKER_TAG}  ./hack/build/build-docker.sh push"

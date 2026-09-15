@@ -82,6 +82,9 @@ Default: **this repo’s kubevirtci**, independent of `~/devel/kubevirt`.
 export KUBEVIRT_MEMORY_SIZE=9216M
 export KUBEVIRT_PROVIDER=k8s-1.37    # k8s-1.34 .. k8s-1.37 in this kubevirtci pin
 export KUBEVIRT_RELEASE=latest_stable
+# podman-docker: kubevirtci ignores DOCKER_HOST and mounts /var/run/docker.sock
+# (rootful). make cluster-up sets KUBEVIRTCI_PODMAN_SOCKET from
+# $XDG_RUNTIME_DIR/podman/podman.sock when that socket exists.
 make cluster-up
 make cluster-sync                    # operator + MaroonedPodsConfig
 make functest

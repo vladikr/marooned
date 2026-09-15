@@ -12,6 +12,17 @@
 # default would steal KUBEVIRT_PROVIDER, skip this repo's cluster-up, and
 # test against whatever KubeVirt HEAD happens to be synced.
 
+# podman-docker: DOCKER_HOST in bashrc is not enough. kubevirtci bind-mounts
+# KUBEVIRTCI_PODMAN_SOCKET (default /run/podman/podman.sock, rootful). Use the
+# same rootless socket as DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock.
+if [ -z "${KUBEVIRTCI_PODMAN_SOCKET:-}" ] && [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -S "${XDG_RUNTIME_DIR}/podman/podman.sock" ]; then
+    export KUBEVIRTCI_PODMAN_SOCKET="${XDG_RUNTIME_DIR}/podman/podman.sock"
+    export KUBEVIRTCI_RUNTIME="${KUBEVIRTCI_RUNTIME:-podman}"
+fi
+if [ -z "${DOCKER_HOST:-}" ] && [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -S "${XDG_RUNTIME_DIR}/podman/podman.sock" ]; then
+    export DOCKER_HOST="unix://${XDG_RUNTIME_DIR}/podman/podman.sock"
+fi
+
 if [ -n "${KUBEVIRT_DIR:-}" ]; then
     if [ ! -d "${KUBEVIRT_DIR}/cluster-up" ]; then
         echo "KUBEVIRT_DIR=${KUBEVIRT_DIR} has no cluster-up/" >&2
