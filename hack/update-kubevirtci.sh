@@ -31,6 +31,23 @@ echo "KUBEVIRTCI_TAG=${kubevirtci_release_tag}" >>${SCRIPT_ROOT}/cluster-up/hack
 
 cat << 'EOF' >> ${SCRIPT_ROOT}/cluster-up/up.sh
 
+# Rootless podman: gocli's iptables-legacy MASQUERADE often fails (ip_tables
+# modprobe not permitted). Without it, nodes cannot pull from quay.io.
+ensure_vm_nat() {
+    local ctr="${KUBEVIRT_PROVIDER}-dnsmasq"
+    local cri=podman
+    if [ "${KUBEVIRTCI_RUNTIME:-}" = docker ]; then
+        cri=docker
+    fi
+    echo "Ensuring MASQUERADE on ${ctr} for VM outbound NAT"
+    ${cri} exec "${ctr}" sh -c '
+        sysctl -w net.ipv4.ip_forward=1 >/dev/null
+        iptables -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+        iptables -C FORWARD -i br0 -o eth0 -j ACCEPT 2>/dev/null || iptables -A FORWARD -i br0 -o eth0 -j ACCEPT
+    ' || echo "warning: could not add MASQUERADE on ${ctr}"
+}
+ensure_vm_nat
+
 kubectl() { ${KUBEVIRTCI_PATH}/kubectl.sh "$@"; }
 
 if [ "$KUBEVIRT_RELEASE" = "latest_nightly" ]; then
