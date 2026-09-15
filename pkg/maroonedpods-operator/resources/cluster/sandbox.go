@@ -34,7 +34,11 @@ func createInfraNamespace() *corev1.Namespace {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: utils2.DefaultInfraNamespace,
 			Labels: map[string]string{
-				utils2.MaroonedPodsLabel: "",
+				utils2.MaroonedPodsLabel:                       "",
+				"pod-security.kubernetes.io/enforce":           "privileged",
+				"pod-security.kubernetes.io/enforce-version":   "latest",
+				"pod-security.kubernetes.io/audit":             "privileged",
+				"pod-security.kubernetes.io/warn":              "privileged",
 			},
 		},
 	}

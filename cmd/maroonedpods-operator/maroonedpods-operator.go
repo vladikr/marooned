@@ -66,7 +66,8 @@ func main() {
 	}
 
 	managerOpts := manager.Options{
-		Namespace:                  namespace,
+		// Cluster-wide: shim SA/DaemonSet live in marooned-system, not the
+		// operator namespace. A namespaced cache makes Create() hit AlreadyExists.
 		LeaderElection:             true,
 		LeaderElectionNamespace:    namespace,
 		LeaderElectionID:           "maroonedpods-operator-leader-election-helper",

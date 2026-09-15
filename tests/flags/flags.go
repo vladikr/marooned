@@ -15,6 +15,10 @@ var (
 	DockerTag                *string
 )
 
+func init() {
+	InitFlags()
+}
+
 func InitFlags() {
 	KubeConfig = flag.String("kubeconfig", "", "Kubeconfig file path (optional)")
 	KubeURL = flag.String("kubeurl", "", "Kubernetes API server URL (optional)")

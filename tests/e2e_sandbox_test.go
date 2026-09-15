@@ -54,7 +54,7 @@ var _ = Describe("[e2e] Sandbox RuntimeClass", func() {
 
 		By("waiting for a hidden VMI in marooned-system")
 		Eventually(func() int {
-			list, err := f.KubevirtClient.VirtualMachineInstance(util.DefaultInfraNamespace).List(context.Background(), &metav1.ListOptions{
+			list, err := f.KubevirtClient.KubevirtV1().VirtualMachineInstances(util.DefaultInfraNamespace).List(context.Background(), metav1.ListOptions{
 				LabelSelector: util.WarmPoolClaimedByLabel + "=" + ns + "/" + podName,
 			})
 			if err != nil {

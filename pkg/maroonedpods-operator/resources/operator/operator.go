@@ -137,6 +137,22 @@ func getClusterPolicyRules() []rbacv1.PolicyRule {
 		},
 		{
 			APIGroups: []string{
+				"",
+			},
+			Resources: []string{
+				"serviceaccounts",
+			},
+			Verbs: []string{
+				"create",
+				"get",
+				"list",
+				"watch",
+				"update",
+				"delete",
+			},
+		},
+		{
+			APIGroups: []string{
 				"node.k8s.io",
 			},
 			Resources: []string{
@@ -357,6 +373,9 @@ func createMaroonedPodsConfigCRD() *extv1.CustomResourceDefinition {
 }
 
 func createOperatorEnvVar(operatorVersion, deployClusterResources, controllerImage, webhookServerImage, shimImage, verbosity, pullPolicy string) []corev1.EnvVar {
+	if shimImage == "" && controllerImage != "" {
+		shimImage = strings.Replace(controllerImage, "maroonedpods-controller", "marooned-shim", 1)
+	}
 	if shimImage == "" {
 		shimImage = "quay.io/vladikr/marooned-shim:latest"
 	}

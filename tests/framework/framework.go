@@ -11,20 +11,19 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	virtv1 "kubevirt.io/api/core/v1"
-	kubevirtclient "kubevirt.io/client-go/kubecli"
 
-	mpv1alpha1 "maroonedpods.io/maroonedpods/staging/src/maroonedpods.io/api/pkg/apis/core/v1alpha1"
+	kubevirtclient "maroonedpods.io/maroonedpods/pkg/generated/kubevirt/clientset/versioned"
 	"maroonedpods.io/maroonedpods/tests/flags"
 )
 
 // Framework provides access to Kubernetes and KubeVirt clients for tests
 type Framework struct {
-	K8sClient       kubernetes.Interface
-	KubevirtClient  kubevirtclient.KubevirtClient
-	RestConfig      *rest.Config
-	Namespace       *v1.Namespace
-	NamespaceName   string
-	mpNamespace     string
+	K8sClient      kubernetes.Interface
+	KubevirtClient kubevirtclient.Interface
+	RestConfig     *rest.Config
+	Namespace      *v1.Namespace
+	NamespaceName  string
+	mpNamespace    string
 }
 
 var (
@@ -66,7 +65,7 @@ func NewFramework() (*Framework, error) {
 	}
 
 	// Create KubeVirt client
-	f.KubevirtClient, err = kubevirtclient.GetKubevirtClientFromRESTConfig(f.RestConfig)
+	f.KubevirtClient, err = kubevirtclient.NewForConfig(f.RestConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kubevirt client: %v", err)
 	}
@@ -117,12 +116,12 @@ func (f *Framework) DeletePod(name string) error {
 
 // GetVMI gets a VirtualMachineInstance
 func (f *Framework) GetVMI(namespace, name string) (*virtv1.VirtualMachineInstance, error) {
-	return f.KubevirtClient.VirtualMachineInstance(namespace).Get(context.Background(), name, &metav1.GetOptions{})
+	return f.KubevirtClient.KubevirtV1().VirtualMachineInstances(namespace).Get(context.Background(), name, metav1.GetOptions{})
 }
 
 // ListVMIs lists VirtualMachineInstances in a namespace
 func (f *Framework) ListVMIs(namespace string) (*virtv1.VirtualMachineInstanceList, error) {
-	return f.KubevirtClient.VirtualMachineInstance(namespace).List(context.Background(), &metav1.ListOptions{})
+	return f.KubevirtClient.KubevirtV1().VirtualMachineInstances(namespace).List(context.Background(), metav1.ListOptions{})
 }
 
 // GetNode gets a node by name
