@@ -6,7 +6,9 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	virtv1 "kubevirt.io/api/core/v1"
 
 	"maroonedpods.io/maroonedpods/pkg/util"
 	"maroonedpods.io/maroonedpods/tests/builders"
@@ -38,7 +40,7 @@ var _ = Describe("[e2e] Sandbox RuntimeClass", func() {
 		}
 	})
 
-	It("should mutate a RuntimeClass pod and create the VMI in the same namespace", func() {
+	It("should mutate a RuntimeClass pod and run a same-namespace VMI", func() {
 		podName := "isolated-busybox"
 		pod := builders.NewSandboxPod(podName, ns)
 		created, err := f.CreatePod(pod)
@@ -52,25 +54,45 @@ var _ = Describe("[e2e] Sandbox RuntimeClass", func() {
 			Expect(gate.Name).ToNot(Equal(util.MaroonedPodsGate))
 		}
 
-		By("waiting for marooned-<pod-uid> in the application namespace")
-		var vmiName string
+		vmiName := "marooned-" + string(created.UID)
+		By("waiting for marooned-<pod-uid> Running in the application namespace")
+		var vmi *virtv1.VirtualMachineInstance
+		Eventually(func() virtv1.VirtualMachineInstancePhase {
+			got, err := f.GetVMI(ns, vmiName)
+			if err != nil {
+				return ""
+			}
+			vmi = got
+			return got.Status.Phase
+		}, testutils.DefaultTimeout, 2*time.Second).Should(Equal(virtv1.Running))
+		Expect(vmi.Namespace).To(Equal(ns))
+
+		By("virt-launcher must run next to the Pod, not in marooned-system")
 		Eventually(func() int {
-			list, err := f.ListVMIs(ns)
+			list, err := f.K8sClient.CoreV1().Pods(ns).List(context.Background(), metav1.ListOptions{
+				LabelSelector: "kubevirt.io=virt-launcher",
+			})
 			if err != nil {
 				return 0
 			}
-			if len(list.Items) > 0 {
-				vmiName = list.Items[0].Name
+			ready := 0
+			for _, p := range list.Items {
+				if p.Status.Phase == corev1.PodRunning {
+					ready++
+				}
 			}
-			return len(list.Items)
+			return ready
 		}, testutils.DefaultTimeout, 2*time.Second).Should(BeNumerically(">=", 1))
-		Expect(vmiName).To(Equal("marooned-" + string(created.UID)))
 
-		By("asserting no VMI was created in marooned-system for this pod")
-		list, err := f.ListVMIs(util.DefaultInfraNamespace)
+		infra, err := f.ListVMIs(util.DefaultInfraNamespace)
 		Expect(err).ToNot(HaveOccurred())
-		for _, v := range list.Items {
-			Expect(v.Labels[util.WarmPoolClaimedByLabel]).ToNot(Equal(ns + "/" + podName))
+		for _, v := range infra.Items {
+			Expect(v.Name).ToNot(Equal(vmiName))
 		}
+
+		By("not requiring the user Pod to be Ready (no marooned CRI handler on kubevirtci yet)")
+		userPod, err := f.GetPod(podName)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(userPod.Spec.NodeName).NotTo(BeEmpty())
 	})
 })

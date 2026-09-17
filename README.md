@@ -183,16 +183,10 @@ kubectl get pods -n maroonedpods
 
 ```bash
 kubectl apply -f examples/sandbox-pod.yaml
-kubectl wait pod/isolated-busybox --for=condition=Ready --timeout=120s
-kubectl exec isolated-busybox -- echo ok
-kubectl logs isolated-busybox
+kubectl get vmi                      # marooned-<pod-uid> Running in this namespace
 ```
 
-What you should see:
-
-```bash
-kubectl get vmi                      # marooned-<pod-uid> next to the Pod
-```
+v1 on kubevirtci: the **VMI** becomes Ready. The user Pod stays ContainerCreating until CRI-O has a `marooned` runtime handler (not wired yet). Do not wait on `pod/Ready` or `kubectl exec` for that Pod.
 
 ### Pod with a PVC
 
@@ -200,8 +194,7 @@ The VMI is still next to the Pod, so CSI can attach the claim.
 
 ```bash
 kubectl apply -f examples/sandbox-pod-pvc.yaml
-kubectl wait pod/isolated-pvc --for=condition=Ready --timeout=180s
-kubectl exec isolated-pvc -- sh -c 'echo x > /data/hi && cat /data/hi'
+kubectl get vmi                    # marooned-<pod-uid> Running in this namespace
 ```
 
 ```bash
