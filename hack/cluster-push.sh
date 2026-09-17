@@ -51,9 +51,26 @@ if [ -x "$K" ]; then
   $K rollout restart ds/marooned-shim -n marooned-system 2>/dev/null || true
   $K rollout status deploy/maroonedpods-controller -n maroonedpods --timeout=180s 2>/dev/null || true
   $K rollout status ds/marooned-shim -n marooned-system --timeout=180s 2>/dev/null || true
-  echo "point MaroonedPodsConfig at in-cluster guest images (idempotent):"
-  echo "  kubectl patch maroonedpodsconfig default --type merge -p '{\"spec\":{\"sandbox\":{\"rootfsImage\":\"registry:5000/${SANDBOX_IMAGE_NAME}:${DOCKER_TAG}\",\"kernelBoot\":{\"image\":\"registry:5000/${KERNEL_IMAGE_NAME}:${DOCKER_TAG}\",\"kernelPath\":\"/boot/vmlinuz\",\"initrdPath\":\"/boot/initrd\",\"kernelArgs\":\"root=/dev/vda rootfstype=ext4 rw console=ttyS0\"}}}}'"
+
+  if [ "${SKIP_GUEST_DISK:-0}" != "1" ]; then
+    echo "patching MaroonedPodsConfig default to registry:5000 guest images"
+    $K patch maroonedpodsconfig default --type merge -p "{
+      \"spec\": {
+        \"sandbox\": {
+          \"rootfsImage\": \"registry:5000/${SANDBOX_IMAGE_NAME}:${DOCKER_TAG}\",
+          \"kernelBoot\": {
+            \"image\": \"registry:5000/${KERNEL_IMAGE_NAME}:${DOCKER_TAG}\",
+            \"kernelPath\": \"/boot/vmlinuz\",
+            \"initrdPath\": \"/boot/initrd\",
+            \"kernelArgs\": \"root=/dev/vda rootfstype=ext4 rw console=ttyS0\"
+          }
+        }
+      }
+    }" || echo "warning: could not patch MaroonedPodsConfig (is the CR installed?)"
+  fi
 fi
 
-echo "if CRI-O does not yet have handler marooned:"
+echo
+echo "cluster-push finished."
+echo "If kubelet still says 'failed to find runtime handler marooned', once:"
 echo "  ./hack/kubevirtci-install-crio-handler.sh"
