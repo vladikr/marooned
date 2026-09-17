@@ -7,12 +7,7 @@ spec:
   defaultMode: Sandbox
   sandbox:
     infraNamespace: marooned-system
-    kernelBoot:
-      image: quay.io/vladikr/marooned-sandbox-kernel:latest
-      kernelPath: /boot/vmlinuz
-      initrdPath: /boot/initrd
-      kernelArgs: "console=hvc0 marooned.agent=vsock"
-    rootfsImage: quay.io/vladikr/marooned-sandbox:latest
+    rootfsImage: quay.io/kubevirt/cirros-container-disk-demo:latest
     agentListen: vsock
     warmPoolSize: 2
     poolSizeClasses:

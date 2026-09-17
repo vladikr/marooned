@@ -323,12 +323,12 @@ func TestMutateSandboxPodVolumesAnnotationRoundTrip(t *testing.T) {
 	}
 }
 
-func TestMutateSandboxPodDisklessPlacementInfra(t *testing.T) {
+func TestMutateSandboxPodDisklessPlacementUser(t *testing.T) {
 	pod := sandboxPod(nil)
 	if err := MutateSandboxPod(pod); err != nil {
 		t.Fatal(err)
 	}
-	if pod.Annotations[util.PlacementAnnotation] != util.PlacementInfra {
+	if pod.Annotations[util.PlacementAnnotation] != util.PlacementUser {
 		t.Fatalf("placement %s", pod.Annotations[util.PlacementAnnotation])
 	}
 }

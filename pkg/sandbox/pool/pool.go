@@ -98,7 +98,10 @@ func MarkClaimed(vmi *virtv1.VirtualMachineInstance, claimedBy, sandboxID string
 		out.Labels = map[string]string{}
 	}
 	out.Labels[util.WarmPoolStateLabel] = util.PoolStateClaimed
-	out.Labels[util.WarmPoolClaimedByLabel] = claimedBy
+	if out.Annotations == nil {
+		out.Annotations = map[string]string{}
+	}
+	out.Annotations[util.WarmPoolClaimedByLabel] = claimedBy
 	if sandboxID != "" {
 		out.Labels[util.SandboxIDLabel] = sandboxID
 	}
@@ -114,6 +117,9 @@ func MarkAvailable(vmi *virtv1.VirtualMachineInstance) *virtv1.VirtualMachineIns
 	out.Labels[util.WarmPoolStateLabel] = util.PoolStateAvailable
 	delete(out.Labels, util.WarmPoolClaimedByLabel)
 	delete(out.Labels, util.SandboxIDLabel)
+	if out.Annotations != nil {
+		delete(out.Annotations, util.WarmPoolClaimedByLabel)
+	}
 	out.OwnerReferences = nil
 	return out
 }

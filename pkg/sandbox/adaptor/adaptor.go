@@ -108,7 +108,13 @@ func (a *Adaptor) enqueueVMI(obj interface{}) {
 	if vmi.Labels == nil {
 		return
 	}
-	claimed := vmi.Labels[util.WarmPoolClaimedByLabel]
+	claimed := ""
+	if vmi.Annotations != nil {
+		claimed = vmi.Annotations[util.WarmPoolClaimedByLabel]
+	}
+	if claimed == "" && vmi.Labels != nil {
+		claimed = vmi.Labels[util.WarmPoolClaimedByLabel]
+	}
 	if claimed == "" {
 		return
 	}
@@ -242,7 +248,10 @@ func (a *Adaptor) ensureVMI(pod *corev1.Pod, cfg mpv1.SandboxConfig) (*virtv1.Vi
 	if !plan.OwnerPod {
 		vmi.Labels[util.WarmPoolStateLabel] = util.PoolStateClaimed
 	}
-	vmi.Labels[util.WarmPoolClaimedByLabel] = pod.Namespace + "/" + pod.Name
+	if vmi.Annotations == nil {
+		vmi.Annotations = map[string]string{}
+	}
+	vmi.Annotations[util.WarmPoolClaimedByLabel] = pod.Namespace + "/" + pod.Name
 	vmi.Labels[util.SandboxNodeLabel] = pod.Spec.NodeName
 	created, err := a.maroonedpodsCli.KubevirtClient().KubevirtV1().VirtualMachineInstances(plan.Namespace).Create(context.Background(), vmi, metav1.CreateOptions{})
 	if err != nil {
@@ -375,115 +384,13 @@ func (a *Adaptor) handleDelete(pod *corev1.Pod, cfg mpv1.SandboxConfig) (error, 
 }
 
 func (a *Adaptor) releaseOrDelete(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig) error {
-	if sandbox.NeedsUserNamespace(pod) || vmi.Labels == nil || vmi.Labels[util.WarmPoolStateLabel] == "" {
-		return a.maroonedpodsCli.KubevirtClient().KubevirtV1().VirtualMachineInstances(vmi.Namespace).Delete(context.Background(), vmi.Name, metav1.DeleteOptions{})
-	}
-	key := pool.Key{
-		Node:      vmi.Labels[util.SandboxNodeLabel],
-		SizeClass: vmi.Labels[util.SandboxSizeClassLabel],
-		TEE:       vmi.Labels[util.SandboxTEELabel],
-	}
-	available := 0
-	for _, obj := range a.vmiInformer.GetStore().List() {
-		other := obj.(*virtv1.VirtualMachineInstance)
-		if other.Labels == nil {
-			continue
-		}
-		if other.Labels[util.WarmPoolStateLabel] == util.PoolStateAvailable &&
-			other.Labels[util.SandboxNodeLabel] == key.Node &&
-			other.Labels[util.SandboxSizeClassLabel] == key.SizeClass &&
-			other.Labels[util.SandboxTEELabel] == key.TEE {
-			available++
-		}
-	}
-	if int32(available) < cfg.WarmPoolSize {
-		next := pool.MarkAvailable(vmi)
-		_, err := a.maroonedpodsCli.KubevirtClient().KubevirtV1().VirtualMachineInstances(next.Namespace).Update(context.Background(), next, metav1.UpdateOptions{})
-		return err
-	}
+	_ = pod
+	_ = cfg
 	return a.maroonedpodsCli.KubevirtClient().KubevirtV1().VirtualMachineInstances(vmi.Namespace).Delete(context.Background(), vmi.Name, metav1.DeleteOptions{})
 }
 
 func (a *Adaptor) reconcilePool() {
-	cfg := sandbox.EffectiveSandbox(a.getConfig())
-	if cfg.WarmPoolSize <= 0 {
-		return
-	}
-	var vmis []*virtv1.VirtualMachineInstance
-	for _, obj := range a.vmiInformer.GetStore().List() {
-		vmis = append(vmis, obj.(*virtv1.VirtualMachineInstance))
-	}
-	idx := pool.Index(vmis)
-	nodes := a.boundSandboxNodes()
-	classes := cfg.PoolSizeClasses
-	if len(classes) == 0 {
-		return
-	}
-	smallest := classes[0]
-	tees := []string{sandbox.TEEOff}
-	for _, node := range nodes {
-		for _, tee := range tees {
-			key := pool.Key{Node: node, SizeClass: smallest.Name, TEE: tee}
-			states := idx[key]
-			creating := int32(len(states[util.PoolStateCreating]))
-			available := int32(len(states[util.PoolStateAvailable]))
-			need := pool.Deficit(creating, available, cfg.WarmPoolSize)
-			for i := int32(0); i < need; i++ {
-				if err := a.createPoolVMI(cfg, node, smallest.Name, tee); err != nil {
-					klog.Errorf("pool create %s: %v", key, err)
-				}
-			}
-		}
-	}
-}
-
-func (a *Adaptor) boundSandboxNodes() []string {
-	seen := map[string]struct{}{}
-	for _, obj := range a.podInformer.GetStore().List() {
-		pod := obj.(*corev1.Pod)
-		if pod.Spec.NodeName != "" {
-			seen[pod.Spec.NodeName] = struct{}{}
-		}
-	}
-	for _, obj := range a.vmiInformer.GetStore().List() {
-		vmi := obj.(*virtv1.VirtualMachineInstance)
-		if vmi.Labels != nil {
-			if n := vmi.Labels[util.SandboxNodeLabel]; n != "" {
-				seen[n] = struct{}{}
-			}
-		}
-	}
-	var nodes []string
-	for n := range seen {
-		nodes = append(nodes, n)
-	}
-	return nodes
-}
-
-func (a *Adaptor) createPoolVMI(cfg mpv1.SandboxConfig, node, class, tee string) error {
-	placeholder := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: pool.GenerateName(), Namespace: "pool"},
-		Spec: corev1.PodSpec{
-			NodeName: node,
-			Containers: []corev1.Container{{
-				Name: "pause",
-				Resources: corev1.ResourceRequirements{
-					Requests: corev1.ResourceList{},
-				},
-			}},
-		},
-	}
-	tr := translate.Translate(translate.Input{Pod: placeholder, Config: cfg, Node: node, TEE: tee})
-	if len(tr.Errors) > 0 {
-		return tr.Errors[0]
-	}
-	vmi := tr.VMI
-	vmi.Name = placeholder.Name
-	vmi.Labels[util.WarmPoolStateLabel] = util.PoolStateCreating
-	vmi.Labels[util.SandboxSizeClassLabel] = class
-	delete(vmi.Labels, util.WarmPoolClaimedByLabel)
-	_, err := a.maroonedpodsCli.KubevirtClient().KubevirtV1().VirtualMachineInstances(cfg.InfraNamespace).Create(context.Background(), vmi, metav1.CreateOptions{})
-	return err
+	// v1: VMIs live in the Pod namespace. No infra warm pool.
 }
 
 func (a *Adaptor) publishEndpointSlice(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstance) error {

@@ -9,34 +9,16 @@ import (
 	"maroonedpods.io/maroonedpods/pkg/util"
 )
 
-// NeedsUserNamespace reports whether the sandbox VMI must live next to the Pod
-// so CSI can attach the user's claim. Diskless pods stay in the infra pool.
+// NeedsUserNamespace is always true in v1: every sandbox VMI lives next to
+// the Pod. A separate marooned-system pool is a second shape we are not
+// shipping yet.
 func NeedsUserNamespace(pod *corev1.Pod) bool {
-	if pod == nil {
-		return false
-	}
-	if pod.Annotations != nil {
-		switch pod.Annotations[util.PlacementAnnotation] {
-		case util.PlacementUser:
-			return true
-		case util.PlacementInfra:
-			return false
-		}
-	}
-	for _, vol := range VolumesOf(pod) {
-		if VolumeNeedsUserNamespace(vol) {
-			return true
-		}
-	}
-	return false
+	return pod != nil
 }
 
-// PlacementForPod is user|infra from the volume list.
+// PlacementForPod is always user. Infra placement is unused.
 func PlacementForPod(pod *corev1.Pod) string {
-	if NeedsUserNamespace(pod) {
-		return util.PlacementUser
-	}
-	return util.PlacementInfra
+	return util.PlacementUser
 }
 
 // VMIPlan is where the adaptor creates or claims a sandbox VMI.
@@ -52,23 +34,18 @@ func UserNamespaceVMIName(uid types.UID) string {
 	return util.UserNamespaceVMIPrefix + strings.ToLower(string(uid))
 }
 
-// PlanVMI decides namespace, name, and whether the infra warm pool may be used.
+// PlanVMI always places the VMI in the Pod namespace as marooned-<pod-uid>.
 func PlanVMI(pod *corev1.Pod, infraNamespace string) VMIPlan {
-	if infraNamespace == "" {
-		infraNamespace = util.DefaultInfraNamespace
-	}
-	if NeedsUserNamespace(pod) {
-		name := ""
-		if pod != nil && pod.UID != "" {
+	_ = infraNamespace
+	name := ""
+	ns := ""
+	if pod != nil {
+		ns = pod.Namespace
+		if pod.UID != "" {
 			name = UserNamespaceVMIName(pod.UID)
 		}
-		ns := ""
-		if pod != nil {
-			ns = pod.Namespace
-		}
-		return VMIPlan{Namespace: ns, Name: name, ClaimPool: false, OwnerPod: true}
 	}
-	return VMIPlan{Namespace: infraNamespace, ClaimPool: true, OwnerPod: false}
+	return VMIPlan{Namespace: ns, Name: name, ClaimPool: false, OwnerPod: true}
 }
 
 // WrongNamespace reports a pool/infra VMI that must be replaced by an in-ns VMI.

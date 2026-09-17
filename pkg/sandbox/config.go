@@ -29,13 +29,10 @@ func EffectiveSandbox(cfg *mpv1.MaroonedPodsConfig) mpv1.SandboxConfig {
 		AgentListen:         AgentListenVsock,
 		WarmPoolSize:        0,
 		PublishGuestIPOnPod: pointer.Bool(true),
-		KernelBoot: &mpv1.SandboxKernelBoot{
-			Image:      util.DefaultSandboxKernelImage,
-			KernelPath: "/boot/vmlinuz",
-			InitrdPath: "/boot/initrd",
-			KernelArgs: "console=hvc0 marooned.agent=vsock",
-		},
-		Network: &mpv1.SandboxNetwork{Binding: BindingL2Bridge},
+		// KernelBoot is optional. Empty means boot the rootfs containerDisk
+		// (cirros/fedora demo disks) instead of a separate kernel image.
+		KernelBoot: nil,
+		Network:    &mpv1.SandboxNetwork{Binding: BindingMasquerade},
 		PoolSizeClasses: []mpv1.SandboxSizeClass{
 			{Name: "s", GuestCPU: "1", GuestMemory: "512Mi"},
 			{Name: "m", GuestCPU: "2", GuestMemory: "2Gi"},
@@ -71,7 +68,10 @@ func EffectiveSandbox(cfg *mpv1.MaroonedPodsConfig) mpv1.SandboxConfig {
 	if in.DefaultSRIOVNetwork != "" {
 		out.DefaultSRIOVNetwork = in.DefaultSRIOVNetwork
 	}
-	if in.KernelBoot != nil {
+	if in.KernelBoot != nil && (in.KernelBoot.Image != "" || in.KernelBoot.KernelPath != "") {
+		if out.KernelBoot == nil {
+			out.KernelBoot = &mpv1.SandboxKernelBoot{}
+		}
 		if in.KernelBoot.Image != "" {
 			out.KernelBoot.Image = in.KernelBoot.Image
 		}

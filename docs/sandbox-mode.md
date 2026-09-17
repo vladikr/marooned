@@ -8,9 +8,8 @@ Pod. QEMU, CSI, SR-IOV, DRA, and hugepages stay on virt-launcher.
 
 | Kind of sandbox | VMI namespace |
 |---|---|
-| Pod has a PVC / ephemeral / block volume that must be *that* claim | same as the Pod (`marooned-<pod-uid>`) |
-| Diskless (no such volume) | `marooned-system` (warm pool allowed) |
-| Operator, shim, RuntimeClass, config | `marooned-system` |
+| Any RuntimeClass=marooned Pod | same as the Pod (`marooned-<pod-uid>`) |
+| Operator, shim, RuntimeClass | `marooned-system` |
 
 `kubectl get vmi` in the application namespace for a PVC pod is expected.
 Cross-namespace PVC attach is out of scope: Kubernetes will not bind a claim

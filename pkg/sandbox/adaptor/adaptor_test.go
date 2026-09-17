@@ -34,12 +34,12 @@ func TestPVCPodVMINamespaceIsPodNamespace(t *testing.T) {
 	}
 }
 
-func TestDisklessVMINamespaceIsInfra(t *testing.T) {
+func TestDisklessVMINamespaceIsPodNamespace(t *testing.T) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        "box",
-			Namespace:   "app",
-			Annotations: map[string]string{util.PlacementAnnotation: util.PlacementInfra},
+			Name:      "box",
+			Namespace: "app",
+			UID:       "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee",
 		},
 		Spec: corev1.PodSpec{
 			NodeName: "worker-1",
@@ -58,11 +58,11 @@ func TestDisklessVMINamespaceIsInfra(t *testing.T) {
 		Name:      plan.Name,
 		OwnerPod:  plan.OwnerPod,
 	})
-	if tr.VMI.Namespace != cfg.InfraNamespace {
-		t.Fatalf("VMI.namespace=%s want %s", tr.VMI.Namespace, cfg.InfraNamespace)
+	if tr.VMI.Namespace != pod.Namespace {
+		t.Fatalf("VMI.namespace=%s want %s", tr.VMI.Namespace, pod.Namespace)
 	}
-	if !plan.ClaimPool {
-		t.Fatal("diskless pod may claim the pool")
+	if plan.ClaimPool {
+		t.Fatal("v1 must not claim an infra pool")
 	}
 }
 

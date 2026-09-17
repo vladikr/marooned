@@ -79,7 +79,10 @@ func (f *Framework) CreateNamespace(name string) (*v1.Namespace, error) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 			Labels: map[string]string{
-				"test": "maroonedpods-e2e",
+				"test":                                 "maroonedpods-e2e",
+				"pod-security.kubernetes.io/enforce":   "privileged",
+				"pod-security.kubernetes.io/audit":     "privileged",
+				"pod-security.kubernetes.io/warn":      "privileged",
 			},
 		},
 	}

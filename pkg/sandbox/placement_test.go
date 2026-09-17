@@ -40,32 +40,13 @@ func TestNeedsUserNamespaceEphemeral(t *testing.T) {
 	}
 }
 
-func TestNeedsUserNamespaceEmptyDirIsInfra(t *testing.T) {
-	pod := &corev1.Pod{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{
-		Name:         "tmp",
-		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-	}}}}
-	if NeedsUserNamespace(pod) {
-		t.Fatal("emptyDir is guest tmpfs")
-	}
-}
-
-func TestNeedsUserNamespaceRespectsPlacementAnnotation(t *testing.T) {
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{util.PlacementAnnotation: util.PlacementUser},
-		},
-	}
+func TestNeedsUserNamespaceEmptyDirStillUserNS(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "app"}}
 	if !NeedsUserNamespace(pod) {
-		t.Fatal("placement annotation must win")
+		t.Fatal("v1 always places the VMI next to the Pod")
 	}
-	pod.Annotations[util.PlacementAnnotation] = util.PlacementInfra
-	pod.Spec.Volumes = []corev1.Volume{{
-		Name:         "data",
-		VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc"}},
-	}}
-	if NeedsUserNamespace(pod) {
-		t.Fatal("explicit infra placement must not be re-derived from a stripped or leftover spec")
+	if PlacementForPod(pod) != util.PlacementUser {
+		t.Fatal("placement")
 	}
 }
 
@@ -88,15 +69,15 @@ func TestPlanVMI(t *testing.T) {
 
 	diskless := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        "box",
-			Namespace:   "app",
-			Annotations: map[string]string{util.PlacementAnnotation: util.PlacementInfra},
+			Name: "box",
+			Namespace: "app",
+			UID:  "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee",
 		},
 		Spec: corev1.PodSpec{RuntimeClassName: pointer.String(util.RuntimeClassName)},
 	}
 	plan = PlanVMI(diskless, util.DefaultInfraNamespace)
-	if plan.Namespace != util.DefaultInfraNamespace || !plan.ClaimPool || plan.OwnerPod {
-		t.Fatalf("%+v", plan)
+	if plan.Namespace != "app" || plan.ClaimPool || !plan.OwnerPod {
+		t.Fatalf("diskless must also be in-ns: %+v", plan)
 	}
 }
 

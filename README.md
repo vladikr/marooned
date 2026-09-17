@@ -33,9 +33,7 @@ marooned-agent (inside the guest)
    │  claim or create
 maroonedpods-controller adaptor
    ▼
-VMI + virt-launcher
-   diskless:  marooned-system
-   with PVC:  same namespace as the Pod (marooned-<pod-uid>)
+VMI + virt-launcher  (same namespace as the Pod, name marooned-<pod-uid>)
 ```
 
 The webhook strips devices, hugepages, and PVCs from the **user** Pod so kubelet
@@ -193,14 +191,12 @@ kubectl logs isolated-busybox
 What you should see:
 
 ```bash
-kubectl get vmi -n marooned-system   # one claimed sandbox VMI
-kubectl get vmi                      # none in default
+kubectl get vmi                      # marooned-<pod-uid> next to the Pod
 ```
 
 ### Pod with a PVC
 
-A claim in namespace `app` cannot attach to a VMI in `marooned-system`.
-Those sandboxes create the VMI **next to the Pod**.
+The VMI is still next to the Pod, so CSI can attach the claim.
 
 ```bash
 kubectl apply -f examples/sandbox-pod-pvc.yaml
@@ -210,7 +206,6 @@ kubectl exec isolated-pvc -- sh -c 'echo x > /data/hi && cat /data/hi'
 
 ```bash
 kubectl get vmi                    # marooned-<pod-uid> in this namespace
-kubectl get vmi -n marooned-system # that VMI is not serving isolated-pvc
 ```
 
 The user Pod still has no PVC (webhook stripped it). virt-launcher in the **app**

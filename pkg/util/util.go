@@ -97,7 +97,7 @@ const (
 	UserNamespaceVMIPrefix         = "marooned-"
 	MaxVolumesAnnotationBytes      = 256 * 1024
 	DefaultInfraNamespace          = "marooned-system"
-	DefaultSandboxRootfsImage      = "quay.io/vladikr/marooned-sandbox:latest"
+	DefaultSandboxRootfsImage      = "quay.io/kubevirt/cirros-container-disk-demo:latest"
 	DefaultSandboxKernelImage      = "quay.io/vladikr/marooned-sandbox-kernel:latest"
 	ShimDaemonSetName              = "marooned-shim"
 	ShimServiceAccountName         = "marooned-shim"

@@ -38,7 +38,7 @@ var _ = Describe("[e2e] Sandbox RuntimeClass", func() {
 		}
 	})
 
-	It("should mutate a RuntimeClass pod without a scheduling gate and hide the VMI", func() {
+	It("should mutate a RuntimeClass pod and create the VMI in the same namespace", func() {
 		podName := "isolated-busybox"
 		pod := builders.NewSandboxPod(podName, ns)
 		created, err := f.CreatePod(pod)
@@ -52,20 +52,25 @@ var _ = Describe("[e2e] Sandbox RuntimeClass", func() {
 			Expect(gate.Name).ToNot(Equal(util.MaroonedPodsGate))
 		}
 
-		By("waiting for a hidden VMI in marooned-system")
+		By("waiting for marooned-<pod-uid> in the application namespace")
+		var vmiName string
 		Eventually(func() int {
-			list, err := f.KubevirtClient.KubevirtV1().VirtualMachineInstances(util.DefaultInfraNamespace).List(context.Background(), metav1.ListOptions{
-				LabelSelector: util.WarmPoolClaimedByLabel + "=" + ns + "/" + podName,
-			})
+			list, err := f.ListVMIs(ns)
 			if err != nil {
 				return 0
 			}
+			if len(list.Items) > 0 {
+				vmiName = list.Items[0].Name
+			}
 			return len(list.Items)
 		}, testutils.DefaultTimeout, 2*time.Second).Should(BeNumerically(">=", 1))
+		Expect(vmiName).To(Equal("marooned-" + string(created.UID)))
 
-		By("asserting no VMI was created in the app namespace")
-		list, err := f.ListVMIs(ns)
+		By("asserting no VMI was created in marooned-system for this pod")
+		list, err := f.ListVMIs(util.DefaultInfraNamespace)
 		Expect(err).ToNot(HaveOccurred())
-		Expect(list.Items).To(BeEmpty())
+		for _, v := range list.Items {
+			Expect(v.Labels[util.WarmPoolClaimedByLabel]).ToNot(Equal(ns + "/" + podName))
+		}
 	})
 })

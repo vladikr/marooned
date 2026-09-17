@@ -107,9 +107,13 @@ func Translate(in Input) Result {
 		vmi.Spec.NodeSelector["kubernetes.io/hostname"] = in.Node
 	}
 	if in.Pod != nil {
-		vmi.Labels[util.WarmPoolClaimedByLabel] = claimedBy(in.Pod)
-		vmi.Annotations = map[string]string{
-			util.VMIAnnotation: fmt.Sprintf("%s/%s", in.Pod.Namespace, in.Pod.Name),
+		if vmi.Annotations == nil {
+			vmi.Annotations = map[string]string{}
+		}
+		vmi.Annotations[util.WarmPoolClaimedByLabel] = claimedBy(in.Pod)
+		vmi.Annotations[util.VMIAnnotation] = fmt.Sprintf("%s/%s", in.Pod.Namespace, in.Pod.Name)
+		if in.Pod.UID != "" {
+			vmi.Labels[util.SandboxIDLabel] = string(in.Pod.UID)
 		}
 		if in.OwnerPod && in.Pod.UID != "" {
 			controller := true

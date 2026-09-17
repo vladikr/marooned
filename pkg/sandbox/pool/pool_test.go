@@ -153,12 +153,12 @@ func TestPVCPodDoesNotDecrementAvailablePool(t *testing.T) {
 
 func TestMarkAvailableClearsClaim(t *testing.T) {
 	vmi := poolVMI("a", "n1", "s", "off", util.PoolStateClaimed, "3")
-	vmi.Labels[util.WarmPoolClaimedByLabel] = "app/p"
+	vmi.Annotations = map[string]string{util.WarmPoolClaimedByLabel: "app/p"}
 	out := MarkAvailable(vmi)
 	if out.Labels[util.WarmPoolStateLabel] != util.PoolStateAvailable {
 		t.Fatal("state")
 	}
-	if _, ok := out.Labels[util.WarmPoolClaimedByLabel]; ok {
+	if out.Annotations[util.WarmPoolClaimedByLabel] != "" {
 		t.Fatal("claimed-by still set")
 	}
 }

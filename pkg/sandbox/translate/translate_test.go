@@ -284,15 +284,26 @@ func TestTranslateConfigMapFiles(t *testing.T) {
 	}
 }
 
-func TestTranslateNetworkL2BridgeDefault(t *testing.T) {
+func TestTranslateNetworkMasqueradeDefault(t *testing.T) {
 	p := podWithResources("1", "1Gi")
 	res := Translate(Input{Pod: p, Config: testConfig()})
 	iface := res.VMI.Spec.Domain.Devices.Interfaces[0]
-	if iface.Binding == nil || iface.Binding.Name != sandbox.BindingL2Bridge {
-		t.Fatalf("expected l2bridge plugin binding, got %+v", iface)
+	if iface.Masquerade == nil {
+		t.Fatalf("expected masquerade default, got %+v", iface)
 	}
 	if res.VMI.Spec.Networks[0].Pod == nil {
 		t.Fatal("network source must be pod: {}")
+	}
+}
+
+func TestTranslateNetworkL2BridgeWhenConfigured(t *testing.T) {
+	cfg := testConfig()
+	cfg.Network = &mpv1.SandboxNetwork{Binding: sandbox.BindingL2Bridge}
+	p := podWithResources("1", "1Gi")
+	res := Translate(Input{Pod: p, Config: cfg})
+	iface := res.VMI.Spec.Domain.Devices.Interfaces[0]
+	if iface.Binding == nil || iface.Binding.Name != sandbox.BindingL2Bridge {
+		t.Fatalf("expected l2bridge plugin binding, got %+v", iface)
 	}
 }
 
@@ -313,7 +324,7 @@ func TestTranslateHiddenVMILabels(t *testing.T) {
 	if res.VMI.Labels[util.SandboxModeLabel] != util.SandboxModeSandbox {
 		t.Fatal("mode label")
 	}
-	if res.VMI.Labels[util.WarmPoolClaimedByLabel] != "app/box" {
+	if res.VMI.Annotations[util.WarmPoolClaimedByLabel] != "app/box" {
 		t.Fatal("claimed-by")
 	}
 	if *res.VMI.Spec.Domain.Devices.AutoattachGraphicsDevice {
