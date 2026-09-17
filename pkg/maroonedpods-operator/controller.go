@@ -97,7 +97,9 @@ func newReconciler(mgr manager.Manager) (*ReconcileMaroonedPods, error) {
 		namespacedArgs: &namespacedArgs,
 	}
 	callbackDispatcher := callbacks.NewCallbackDispatcher(log, restClient, uncachedClient, scheme, namespace)
-	r.reconciler = sdkr.NewReconciler(r, log, restClient, callbackDispatcher, scheme, createVersionLabel, updateVersionLabel, LastAppliedConfigAnnotation, certPollInterval, finalizerName, true, recorder)
+	// uncachedClient can Get/Update SA and DaemonSet in marooned-system;
+	// the manager cache is namespaced to the operator install NS.
+	r.reconciler = sdkr.NewReconciler(r, log, uncachedClient, callbackDispatcher, scheme, createVersionLabel, updateVersionLabel, LastAppliedConfigAnnotation, certPollInterval, finalizerName, true, recorder)
 
 	r.registerHooks()
 

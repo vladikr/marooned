@@ -34,6 +34,8 @@ func getClusterPolicyRules() []rbacv1.PolicyRule {
 			Resources: []string{
 				"clusterrolebindings",
 				"clusterroles",
+				"rolebindings",
+				"roles",
 			},
 			Verbs: []string{
 				"create",
@@ -173,6 +175,9 @@ func getClusterPolicyRules() []rbacv1.PolicyRule {
 			},
 			Resources: []string{
 				"daemonsets",
+				"deployments",
+				"deployments/finalizers",
+				"replicasets",
 			},
 			Verbs: []string{
 				"create",
@@ -181,6 +186,26 @@ func getClusterPolicyRules() []rbacv1.PolicyRule {
 				"watch",
 				"update",
 				"delete",
+				"patch",
+			},
+		},
+		{
+			APIGroups: []string{
+				"",
+			},
+			Resources: []string{
+				"services",
+				"configmaps",
+				"secrets",
+			},
+			Verbs: []string{
+				"create",
+				"get",
+				"list",
+				"watch",
+				"update",
+				"delete",
+				"patch",
 			},
 		},
 	}
