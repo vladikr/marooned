@@ -13,8 +13,34 @@ mkdir -p "${out}/rootfs" "${out}/kernel"
 export GO111MODULE="${GO111MODULE:-on}"
 export GOFLAGS="${GOFLAGS:--mod=vendor}"
 
-echo "building marooned-agent"
-( cd "${root}" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "${out}/marooned-agent" ./cmd/marooned-agent )
+build_agent() {
+  echo "building marooned-agent"
+  local goflags=(-mod=vendor)
+  if [ -n "${GO:-}" ]; then
+    ( cd "${root}" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "$GO" build "${goflags[@]}" -o "${out}/marooned-agent" ./cmd/marooned-agent )
+    return
+  fi
+  if command -v go >/dev/null 2>&1; then
+    ( cd "${root}" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build "${goflags[@]}" -o "${out}/marooned-agent" ./cmd/marooned-agent )
+    return
+  fi
+  if [ -n "${GOROOT:-}" ] && [ -x "${GOROOT}/bin/go" ]; then
+    ( cd "${root}" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "${GOROOT}/bin/go" build "${goflags[@]}" -o "${out}/marooned-agent" ./cmd/marooned-agent )
+    return
+  fi
+  local cri=""
+  command -v podman >/dev/null 2>&1 && cri=podman
+  command -v docker >/dev/null 2>&1 && cri="${cri:-docker}"
+  if [ -n "$cri" ]; then
+    echo "host go not found; building agent with ${cri} golang:1.19-alpine"
+    $cri run --rm -v "${root}:/src:Z" -w /src golang:1.19-alpine \
+      sh -c 'CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=vendor -o /src/_out/sandbox-disk/marooned-agent ./cmd/marooned-agent'
+    return
+  fi
+  echo "go not found. Install Go, set GO=/path/to/go, or install podman/docker." >&2
+  exit 1
+}
+build_agent()
 
 echo "fetching alpine minirootfs + linux-lts"
 curl -fsSL -o "${out}/minirootfs.tgz" \
