@@ -5,7 +5,7 @@
 #
 #   export KUBEVIRT_PROVIDER=k8s-1.37
 #   ./hack/kubevirtci-install-crio-handler.sh
-set -euo pipefail
+set -eo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 cd "$root"
 # shellcheck source=hack/kubevirt-cluster.sh

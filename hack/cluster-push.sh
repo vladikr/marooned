@@ -7,9 +7,11 @@
 #
 # Then, once, on the nodes:
 #   ./hack/kubevirtci-install-crio-handler.sh
-set -euo pipefail
+set -eo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 cd "$root"
+# kubevirtci common.sh assigns KUBEVIRT_CUSTOM_AAQ_VERSION=${KUBEVIRT_CUSTOM_AAQ_VERSION}
+# (no default). nounset would abort there; cluster-sync does not use -u either.
 # shellcheck source=hack/kubevirt-cluster.sh
 source ./hack/kubevirt-cluster.sh
 source ./hack/build/config.sh
