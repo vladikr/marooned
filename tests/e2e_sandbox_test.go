@@ -90,7 +90,7 @@ var _ = Describe("[e2e] Sandbox RuntimeClass", func() {
 			Expect(v.Name).ToNot(Equal(vmiName))
 		}
 
-		By("not requiring the user Pod to be Ready (no marooned CRI handler on kubevirtci yet)")
+		By("not requiring the user Pod to be Ready until CRI-O has handler marooned")
 		userPod, err := f.GetPod(podName)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(userPod.Spec.NodeName).NotTo(BeEmpty())

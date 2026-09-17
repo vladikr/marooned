@@ -291,6 +291,9 @@ func TestTranslateNetworkMasqueradeDefault(t *testing.T) {
 	if iface.Masquerade == nil {
 		t.Fatalf("expected masquerade default, got %+v", iface)
 	}
+	if len(iface.Ports) != 1 || iface.Ports[0].Port != 1024 {
+		t.Fatalf("masquerade must expose agent port 1024, got %+v", iface.Ports)
+	}
 	if res.VMI.Spec.Networks[0].Pod == nil {
 		t.Fatal("network source must be pod: {}")
 	}

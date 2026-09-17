@@ -7,8 +7,15 @@ spec:
   defaultMode: Sandbox
   sandbox:
     infraNamespace: marooned-system
+    # After `make build-sandbox-disk` and pushing to the kubevirtci registry:
+    # rootfsImage: registry:5000/marooned-sandbox:latest
+    # kernelBoot:
+    #   image: registry:5000/marooned-kernel:latest
+    #   kernelPath: /boot/vmlinuz
+    #   initrdPath: /boot/initrd
+    #   kernelArgs: "root=/dev/vda rootfstype=ext4 rw console=ttyS0"
     rootfsImage: quay.io/kubevirt/cirros-container-disk-demo:latest
-    agentListen: vsock
+    agentListen: tcp
     warmPoolSize: 2
     poolSizeClasses:
       - name: s

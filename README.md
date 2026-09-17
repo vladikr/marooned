@@ -253,11 +253,27 @@ Vendored kubevirtci is tag `2609091017-ad4877a9` (`hack/update-kubevirtci.sh`).
 Do not inherit providers from `~/devel/kubevirt` unless you set `KUBEVIRT_DIR`
 on purpose.
 
-Images:
+Images (you build and push):
 
 ```bash
-make build-sandbox-image   # guest agent OS
+make build                              # includes marooned-oci
+make build-sandbox-disk                 # alpine + agent qcow2 + kernel/initrd
+# kubevirtci registry, e.g. localhost:$(cluster-up/_port registry)
+export DOCKER_PREFIX=localhost:44733
+podman build -t $DOCKER_PREFIX/marooned-sandbox:latest -f _out/sandbox-disk/Dockerfile.sandbox _out/sandbox-disk
+podman build -t $DOCKER_PREFIX/marooned-kernel:latest  -f _out/sandbox-disk/Dockerfile.kernel  _out/sandbox-disk
+podman push --tls-verify=false $DOCKER_PREFIX/marooned-sandbox:latest
+podman push --tls-verify=false $DOCKER_PREFIX/marooned-kernel:latest
+# then patch MaroonedPodsConfig sandbox.rootfsImage / kernelBoot to registry:5000/...
 ```
+
+CRI-O handler on kubevirtci nodes (after the shim DaemonSet is running):
+
+```bash
+./hack/kubevirtci-install-crio-handler.sh
+```
+
+That copies `/opt/marooned/marooned-oci` (placed by the shim) to `/usr/local/bin` and installs `hack/crio/20-marooned.conf`. Until that runs, the user Pod stays ContainerCreating even if the VMI is Running.
 
 ---
 

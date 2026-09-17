@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Install the marooned CRI-O runtime handler on kubevirtci nodes.
+# Run from the marooned repo after cluster-up and after the shim DaemonSet is running
+# (it copies marooned-oci to /opt/marooned on the node).
+#
+#   export KUBEVIRT_PROVIDER=k8s-1.37
+#   ./hack/kubevirtci-install-crio-handler.sh
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd -P)"
+cd "$root"
+# shellcheck source=hack/kubevirt-cluster.sh
+source ./hack/kubevirt-cluster.sh
+ssh="./cluster-up/ssh.sh"
+conf="${root}/hack/crio/20-marooned.conf"
+
+nodes="${KUBEVIRT_NUM_NODES:-1}"
+for i in $(seq 1 "$nodes"); do
+  node=$(printf 'node%02d' "$i")
+  echo "installing marooned CRI-O handler on $node"
+  "$ssh" "$node" "sudo mkdir -p /usr/local/bin /run/marooned-oci /etc/crio/crio.conf.d
+    if [ -x /opt/marooned/marooned-oci ]; then
+      sudo cp /opt/marooned/marooned-oci /usr/local/bin/marooned-oci
+    fi
+    sudo chmod 0755 /usr/local/bin/marooned-oci
+    file /usr/local/bin/marooned-oci
+    ls -l /usr/local/bin/marooned-oci"
+  # drop-in (small): pipe via ssh
+  "$ssh" "$node" "sudo tee /etc/crio/crio.conf.d/20-marooned.conf >/dev/null" < "$conf"
+  "$ssh" "$node" "sudo systemctl restart crio && sleep 2 && sudo systemctl is-active crio"
+done
+echo "done. RuntimeClass handler 'marooned' should resolve on the nodes."
+echo "Then: kubectl apply -f examples/sandbox-pod.yaml"

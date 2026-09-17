@@ -22,7 +22,9 @@
 		maroonedpods_operator \
 		marooned_shim \
 		marooned_agent \
+		marooned_oci \
 		build-sandbox-image \
+		build-sandbox-disk \
 		fmt \
 		goveralls \
 		release-description \
@@ -30,7 +32,7 @@
 		fossa
 all: build
 
-build:  maroonedpods_controller maroonedpods_server maroonedpods_operator marooned_shim marooned_agent
+build:  maroonedpods_controller maroonedpods_server maroonedpods_operator marooned_shim marooned_agent marooned_oci
 
 DOCKER?=1
 ifeq (${DOCKER}, 1)
@@ -130,6 +132,14 @@ marooned_agent:
 	go build -o marooned_agent -v cmd/marooned-agent/*.go
 	chmod 777 marooned_agent
 
+marooned_oci:
+	CGO_ENABLED=0 go build -o marooned_oci -v ./cmd/marooned-oci
+	chmod 777 marooned_oci
+
+# Bootable guest disk + kernel images (then podman build/push yourself)
+build-sandbox-disk:
+	./hack/build/build-sandbox-disk.sh
+
 # Build the sandbox guest image (agent OS, no kubelet)
 build-sandbox-image:
 	@echo "Building MaroonedPods sandbox image..."
@@ -144,7 +154,7 @@ csv-generator:
 	chmod 777 bin/csv-generator
 
 clean:
-	rm ./maroonedpods_controller ./maroonedpods_operator ./maroonedpods_server ./marooned_shim ./marooned_agent -f
+	rm ./maroonedpods_controller ./maroonedpods_operator ./maroonedpods_server ./marooned_shim ./marooned_agent ./marooned_oci -f
 
 
 fmt:

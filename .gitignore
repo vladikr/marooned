@@ -7,6 +7,7 @@ maroonedpods_operator
 maroonedpods_server
 marooned_shim
 marooned_agent
+marooned_oci
 tmp
 _ci-configs/*
 0

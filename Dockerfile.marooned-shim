@@ -12,9 +12,12 @@ COPY Makefile /workdir/app/Makefile
 
 WORKDIR /workdir/app
 
-RUN make marooned_shim
+RUN make marooned_shim marooned_oci
 
 FROM alpine:3.18
 COPY --from=builder /workdir/app/marooned_shim /app/marooned_shim
+COPY --from=builder /workdir/app/marooned_oci /app/marooned-oci
+COPY cmd/marooned-shim/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh /app/marooned-oci
 WORKDIR /app
-ENTRYPOINT ["/app/marooned_shim"]
+ENTRYPOINT ["/app/entrypoint.sh"]

@@ -328,6 +328,7 @@ func applyNetwork(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig) {
 	}
 	if binding == sandbox.BindingMasquerade {
 		iface.InterfaceBindingMethod = virtv1.InterfaceBindingMethod{Masquerade: &virtv1.InterfaceMasquerade{}}
+		iface.Ports = []virtv1.Port{{Name: "agent", Port: int32(sandbox.DefaultAgentPort), Protocol: "TCP"}}
 	} else {
 		iface.Binding = &virtv1.PluginBinding{Name: binding}
 	}

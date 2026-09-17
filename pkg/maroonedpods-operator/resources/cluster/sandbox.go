@@ -121,11 +121,12 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 							Name:            "shim",
 							Image:           image,
 							ImagePullPolicy: corev1.PullPolicy(pullPolicy),
-							Args:            []string{"-socket", "/var/run/marooned/cri.sock"},
+							Args:            []string{"-socket", "/var/run/marooned/cri.sock", "-agent-timeout", "3m"},
 							SecurityContext: &corev1.SecurityContext{Privileged: &priv},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "marooned-run", MountPath: "/var/run/marooned"},
 								{Name: "containerd", MountPath: "/run/containerd"},
+								{Name: "host-opt", MountPath: "/host-opt"},
 							},
 						},
 					},
@@ -140,6 +141,12 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 							Name: "containerd",
 							VolumeSource: corev1.VolumeSource{
 								HostPath: &corev1.HostPathVolumeSource{Path: "/run/containerd", Type: &hostPathDir},
+							},
+						},
+						{
+							Name: "host-opt",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{Path: "/opt/marooned", Type: &hostPathDir},
 							},
 						},
 					},
