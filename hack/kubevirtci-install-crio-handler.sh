@@ -17,15 +17,18 @@ nodes="${KUBEVIRT_NUM_NODES:-1}"
 for i in $(seq 1 "$nodes"); do
   node=$(printf 'node%02d' "$i")
   echo "installing marooned CRI-O handler on $node"
-  "$ssh" "$node" "sudo mkdir -p /usr/local/bin /run/marooned-oci /etc/crio/crio.conf.d
-    if [ -x /opt/marooned/marooned-oci ]; then
-      sudo cp /opt/marooned/marooned-oci /usr/local/bin/marooned-oci
-    fi
-    sudo chmod 0755 /usr/local/bin/marooned-oci
-    file /usr/local/bin/marooned-oci
+  "$ssh" "$node" "sudo mkdir -p /usr/local/bin /run/marooned-oci /etc/crio/crio.conf.d; \
+    if [ -x /opt/marooned/marooned-oci ]; then \
+      sudo cp /opt/marooned/marooned-oci /usr/local/bin/marooned-oci; \
+    fi; \
+    sudo chmod 0755 /usr/local/bin/marooned-oci; \
+    file /usr/local/bin/marooned-oci; \
     ls -l /usr/local/bin/marooned-oci"
   # drop-in (small): pipe via ssh
-  "$ssh" "$node" "sudo tee /etc/crio/crio.conf.d/20-marooned.conf >/dev/null" < "$conf"
+  #"$ssh" "$node" "sudo tee /etc/crio/crio.conf.d/20-marooned.conf >/dev/null" < "$conf"
+  # Encode as a single string to survive the ssh.sh wrapper's newline flattening
+  conf_b64=$(base64 -w0 "$conf")
+  "$ssh" "$node" "echo ${conf_b64} | base64 -d | sudo tee /etc/crio/crio.conf.d/20-marooned.conf >/dev/null"
   "$ssh" "$node" "sudo systemctl restart crio && sleep 2 && sudo systemctl is-active crio"
 done
 echo "done. RuntimeClass handler 'marooned' should resolve on the nodes."

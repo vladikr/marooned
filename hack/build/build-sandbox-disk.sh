@@ -40,9 +40,9 @@ build_agent() {
   echo "go not found. Install Go, set GO=/path/to/go, or install podman/docker." >&2
   exit 1
 }
-build_agent()
+build_agent
 
-echo "fetching alpine minirootfs + linux-lts"
+echo "fetching alpine minirootfs and linux-lts"
 curl -fsSL -o "${out}/minirootfs.tgz" \
   https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/x86_64/alpine-minirootfs-3.18.6-x86_64.tar.gz
 apk_index="$(curl -fsSL https://dl-cdn.alpinelinux.org/alpine/v3.18/main/x86_64/APKINDEX.tar.gz | tar -xzO APKINDEX | grep -A1 '^P:linux-lts$' | grep '^V:' | head -1 | cut -d: -f2)"
