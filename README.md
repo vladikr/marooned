@@ -253,19 +253,15 @@ Vendored kubevirtci is tag `2609091017-ad4877a9` (`hack/update-kubevirtci.sh`).
 Do not inherit providers from `~/devel/kubevirt` unless you set `KUBEVIRT_DIR`
 on purpose.
 
-Images (you build and push):
+Images (against a running kubevirtci cluster):
 
 ```bash
-make build                              # includes marooned-oci
-make build-sandbox-disk                 # alpine + agent qcow2 + kernel/initrd
-# kubevirtci registry, e.g. localhost:$(cluster-up/_port registry)
-export DOCKER_PREFIX=localhost:44733
-podman build -t $DOCKER_PREFIX/marooned-sandbox:latest -f _out/sandbox-disk/Dockerfile.sandbox _out/sandbox-disk
-podman build -t $DOCKER_PREFIX/marooned-kernel:latest  -f _out/sandbox-disk/Dockerfile.kernel  _out/sandbox-disk
-podman push --tls-verify=false $DOCKER_PREFIX/marooned-sandbox:latest
-podman push --tls-verify=false $DOCKER_PREFIX/marooned-kernel:latest
-# then patch MaroonedPodsConfig sandbox.rootfsImage / kernelBoot to registry:5000/...
+export KUBEVIRT_PROVIDER=k8s-1.37
+make cluster-push
+# SKIP_GUEST_DISK=1 make cluster-push   # operator/shim only
 ```
+
+That builds and pushes controller, server, operator, shim, `marooned-sandbox`, and `marooned-kernel` to the in-cluster registry, then restarts controller and shim.
 
 CRI-O handler on kubevirtci nodes (after the shim DaemonSet is running):
 

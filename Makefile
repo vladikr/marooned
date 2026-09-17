@@ -25,6 +25,7 @@
 		marooned_oci \
 		build-sandbox-image \
 		build-sandbox-disk \
+		cluster-push \
 		fmt \
 		goveralls \
 		release-description \
@@ -94,6 +95,10 @@ cluster-clean-maroonedpods:
 
 cluster-sync: cluster-clean-maroonedpods
 	./cluster-sync/sync.sh MAROONEDPODS_AVAILABLE_TIMEOUT=${MAROONEDPODS_AVAILABLE_TIMEOUT} DOCKER_PREFIX=${DOCKER_PREFIX} DOCKER_TAG=${DOCKER_TAG} PULL_POLICY=${PULL_POLICY} MAROONEDPODS_NAMESPACE=${MAROONEDPODS_NAMESPACE}
+
+# Rebuild/push operator+shim+guest disks into the running kubevirtci registry.
+cluster-push:
+	./hack/cluster-push.sh
 
 test: WHAT = ./pkg/... ./cmd/...
 test: bootstrap-ginkgo
