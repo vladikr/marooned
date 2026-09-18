@@ -18,7 +18,7 @@ import (
 func createMaroonedPodsServerResources(args *FactoryArgs) []client.Object {
 	return []client.Object{
 		createMaroonedPodsServerRole(),
-		createMaroonedPodsServerRoleBinding(),
+		createMaroonedPodsServerRoleBinding(args.Namespace),
 		createMaroonedPodsServerServiceAccount(),
 		createMaroonedPodsServerService(),
 		createMaroonedPodsServerDeployment(args.MaroonedPodsServerImage, args.PullPolicy, args.ImagePullSecrets, args.PriorityClassName, args.Verbosity, args.InfraNodePlacement),
@@ -157,8 +157,10 @@ func createMaroonedPodsServerPorts() []corev1.ContainerPort {
 	}
 }
 
-func createMaroonedPodsServerRoleBinding() *rbacv1.RoleBinding {
-	return utils2.ResourceBuilder.CreateRoleBinding(utils2.MaroonedPodsServerResourceName, utils2.MaroonedPodsServerResourceName, utils2.MaroonedPodsServerResourceName, "")
+func createMaroonedPodsServerRoleBinding(namespace string) *rbacv1.RoleBinding {
+	rb := utils2.ResourceBuilder.CreateRoleBinding(utils2.MaroonedPodsServerResourceName, utils2.MaroonedPodsServerResourceName, utils2.MaroonedPodsServerResourceName, namespace)
+	rb.Namespace = namespace
+	return rb
 }
 func createMaroonedPodsServerRole() *rbacv1.Role {
 	rules := []rbacv1.PolicyRule{
