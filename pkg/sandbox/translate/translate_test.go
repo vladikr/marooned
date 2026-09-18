@@ -91,6 +91,30 @@ func TestTranslateCPUMemory(t *testing.T) {
 	}
 }
 
+func TestTranslateDefaultAgentDisk(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})
+	if len(res.Errors) != 0 {
+		t.Fatalf("errors: %v", res.Errors)
+	}
+	found := false
+	for _, vol := range res.VMI.Spec.Volumes {
+		if vol.ContainerDisk != nil && vol.ContainerDisk.Image == util.DefaultSandboxRootfsImage {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected rootfs %s", util.DefaultSandboxRootfsImage)
+	}
+	fw := res.VMI.Spec.Domain.Firmware
+	if fw == nil || fw.KernelBoot == nil || fw.KernelBoot.Container == nil {
+		t.Fatal("non-TEE guest must kernelBoot the agent disk")
+	}
+	if fw.KernelBoot.Container.Image != util.DefaultSandboxKernelImage {
+		t.Fatalf("kernel image %s", fw.KernelBoot.Container.Image)
+	}
+}
+
 func TestTranslateHugepages(t *testing.T) {
 	p := podWithResources("1", "1Gi")
 	p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("hugepages-2Mi")] = resource.MustParse("64Mi")

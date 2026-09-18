@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	"kubevirt.io/controller-lifecycle-operator-sdk/pkg/sdk/callbacks"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -95,9 +96,27 @@ func (r *ReconcileMaroonedPods) configMapOwnerDeleted(cm *corev1.ConfigMap) (boo
 }
 
 func (r *ReconcileMaroonedPods) registerHooks() {
+	// client.Get leaves TypeMeta empty. lastApplied JSON includes
+	// apiVersion/kind, so the SDK three-way merge trips
+	// RequireKeyUnchanged unless current has the same GVK. Nil-key
+	// callbacks run for every resource type.
+	r.reconciler.AddCallback(nil, copyTypeMetaOnRead)
 	r.reconciler.
 		WithPreCreateHook(r.preCreate).
 		WithWatchRegistrator(r.watch).
 		WithSanityChecker(r.checkSanity).
 		WithPerishablesSynchronizer(r.sync)
+}
+
+func copyTypeMetaOnRead(args *callbacks.ReconcileCallbackArgs) error {
+	if args.State != callbacks.ReconcileStatePostRead {
+		return nil
+	}
+	if args.DesiredObject == nil || args.CurrentObject == nil {
+		return nil
+	}
+	if gvk := args.DesiredObject.GetObjectKind().GroupVersionKind(); gvk.Kind != "" {
+		args.CurrentObject.GetObjectKind().SetGroupVersionKind(gvk)
+	}
+	return nil
 }
