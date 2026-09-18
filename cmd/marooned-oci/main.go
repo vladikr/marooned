@@ -60,6 +60,9 @@ func main() {
 	cmd := filtered[0]
 	rest := filtered[1:]
 	switch cmd {
+	case "pause":
+		// Dummy init for conmon. CRI-O/SELinux often denies exec of /usr/bin/sleep.
+		select {}
 	case "create":
 		os.Exit(doCreate(root, rest))
 	case "start":
@@ -100,12 +103,18 @@ func doCreate(root string, args []string) int {
 	}
 	dir := filepath.Join(root, id)
 	_ = os.MkdirAll(dir, 0755)
-	sleep := exec.Command("sleep", "infinity")
-	sleep.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := sleep.Start(); err != nil {
-		fatal("sleep: %v", err)
+	self, err := os.Executable()
+	if err != nil {
+		self = os.Args[0]
 	}
-	st := state{OCIVersion: "1.0.2", ID: id, Status: "created", PID: sleep.Process.Pid, Bundle: bundle}
+	pause := exec.Command(self, "pause")
+	pause.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := pause.Start(); err != nil {
+		fatal("pause: %v", err)
+	}
+	pid := pause.Process.Pid
+	_ = pause.Process.Release()
+	st := state{OCIVersion: "1.0.2", ID: id, Status: "created", PID: pid, Bundle: bundle}
 	writeState(dir, st)
 	if pidFile != "" {
 		_ = os.WriteFile(pidFile, []byte(strconv.Itoa(st.PID)), 0644)
@@ -128,7 +137,10 @@ func doCreate(root string, args []string) int {
 func doStart(root string, args []string) int {
 	id := lastID(args)
 	dir := filepath.Join(root, id)
-	st := readState(dir)
+	st, err := readState(dir)
+	if err != nil {
+		fatal("start: %v", err)
+	}
 	st.Status = "running"
 	writeState(dir, st)
 	bundle := strings.TrimSpace(string(mustRead(filepath.Join(dir, "bundle"))))
@@ -149,26 +161,50 @@ func doStart(root string, args []string) int {
 
 func doState(root string, args []string) int {
 	id := lastID(args)
-	st := readState(filepath.Join(root, id))
+	st, err := readState(filepath.Join(root, id))
+	if err != nil {
+		fatal("state: %v", err)
+	}
+	if st.PID > 1 && !pidAlive(st.PID) {
+		st.Status = "stopped"
+	}
 	enc := json.NewEncoder(os.Stdout)
 	_ = enc.Encode(st)
 	return 0
 }
 
 func doKill(root string, args []string) int {
-	id := lastID(args)
-	st := readState(filepath.Join(root, id))
+	id, sig, all := parseKillArgs(args)
+	dir := filepath.Join(root, id)
+	st, err := readState(dir)
+	if err != nil {
+		return 0
+	}
 	if st.PID > 1 {
-		_ = syscall.Kill(st.PID, syscall.SIGKILL)
+		target := st.PID
+		if all {
+			target = -st.PID
+		}
+		if err := syscall.Kill(target, sig); err != nil && err != syscall.ESRCH {
+			if all {
+				_ = syscall.Kill(st.PID, sig)
+			}
+		}
 	}
 	st.Status = "stopped"
-	writeState(filepath.Join(root, id), st)
+	writeState(dir, st)
 	return 0
 }
 
 func doDelete(root string, args []string) int {
 	id := lastID(args)
-	_ = os.RemoveAll(filepath.Join(root, id))
+	dir := filepath.Join(root, id)
+	st, err := readState(dir)
+	if err == nil && st.PID > 1 && pidAlive(st.PID) {
+		_ = syscall.Kill(-st.PID, syscall.SIGKILL)
+		_ = syscall.Kill(st.PID, syscall.SIGKILL)
+	}
+	_ = os.RemoveAll(dir)
 	return 0
 }
 
@@ -203,8 +239,45 @@ func doExec(root string, args []string) int {
 }
 
 func lastID(args []string) string {
-	id := ""
+	id := firstPositional(args)
+	if id == "" {
+		fatal("missing id")
+	}
+	return id
+}
+
+// parseKillArgs implements runc's kill CLI: kill [-a] <id> [<signal>]
+// CRI-O calls: marooned-oci kill <container-id> 15
+func parseKillArgs(args []string) (id string, sig syscall.Signal, all bool) {
+	sig = syscall.SIGTERM
+	var pos []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-a" || a == "--all":
+			all = true
+		case a == "--force" || a == "--systemd-cgroup":
+		case strings.HasPrefix(a, "-"):
+			if !strings.Contains(a, "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+			}
+		default:
+			pos = append(pos, a)
+		}
+	}
+	if len(pos) == 0 {
+		fatal("kill: missing id")
+	}
+	id = pos[0]
+	if len(pos) > 1 {
+		sig = parseSignal(pos[1])
+	}
+	return id, sig, all
+}
+
+func firstPositional(args []string) string {
 	skipVal := false
+	id := ""
 	for _, a := range args {
 		if skipVal {
 			skipVal = false
@@ -214,17 +287,44 @@ func lastID(args []string) string {
 			break
 		}
 		if strings.HasPrefix(a, "-") {
-			if !strings.Contains(a, "=") && a != "--systemd-cgroup" && a != "--force" {
+			if !strings.Contains(a, "=") && a != "--systemd-cgroup" && a != "--force" && a != "-a" && a != "--all" {
 				skipVal = true
 			}
 			continue
 		}
-		id = a
-	}
-	if id == "" {
-		fatal("missing id")
+		if id == "" {
+			id = a
+		}
 	}
 	return id
+}
+
+func parseSignal(s string) syscall.Signal {
+	s = strings.TrimPrefix(strings.ToUpper(s), "SIG")
+	if n, err := strconv.Atoi(s); err == nil {
+		return syscall.Signal(n)
+	}
+	switch s {
+	case "KILL":
+		return syscall.SIGKILL
+	case "TERM":
+		return syscall.SIGTERM
+	case "INT":
+		return syscall.SIGINT
+	case "HUP":
+		return syscall.SIGHUP
+	case "QUIT":
+		return syscall.SIGQUIT
+	default:
+		return syscall.SIGTERM
+	}
+}
+
+func pidAlive(pid int) bool {
+	if pid <= 1 {
+		return false
+	}
+	return syscall.Kill(pid, 0) == nil
 }
 
 func writeState(dir string, st state) {
@@ -233,14 +333,14 @@ func writeState(dir string, st state) {
 	_ = os.WriteFile(filepath.Join(dir, "state.json"), b, 0644)
 }
 
-func readState(dir string) state {
+func readState(dir string) (state, error) {
 	b, err := os.ReadFile(filepath.Join(dir, "state.json"))
 	if err != nil {
-		fatal("state: %v", err)
+		return state{}, err
 	}
 	var st state
 	_ = json.Unmarshal(b, &st)
-	return st
+	return st, nil
 }
 
 func mustRead(p string) []byte {

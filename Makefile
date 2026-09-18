@@ -13,7 +13,7 @@
 #limitations under the License.
 
 .PHONY: manifests \
-		cluster-up cluster-down cluster-sync \
+		cluster-up cluster-down cluster-sync cluster-dev \
 		test test-functional test-unit test-lint \
 		functest functest-full build-functest \
 		publish \
@@ -99,6 +99,10 @@ cluster-sync: cluster-clean-maroonedpods
 # Rebuild/push operator+shim+guest disks into the running kubevirtci registry.
 cluster-push:
 	./hack/cluster-push.sh
+
+# After cluster-up: sync + push (guest disks required) + CRI-O handler.
+cluster-dev:
+	./hack/cluster-dev.sh
 
 test: WHAT = ./pkg/... ./cmd/...
 test: bootstrap-ginkgo

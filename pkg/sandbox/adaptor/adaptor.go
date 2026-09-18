@@ -170,6 +170,7 @@ func (a *Adaptor) execute(key string) (error, enqueueState) {
 	if pod.Spec.RuntimeClassName == nil || *pod.Spec.RuntimeClassName != util.RuntimeClassName {
 		return nil, Forget
 	}
+	klog.Infof("sandbox adaptor reconciling %s (runtimeclass=%s node=%s)", key, util.RuntimeClassName, pod.Spec.NodeName)
 	cfg := sandbox.EffectiveSandbox(a.getConfig())
 
 	if pod.DeletionTimestamp != nil {

@@ -45,7 +45,11 @@ for target in ${PUSH_TARGETS[@]}; do
     if [ "${opt}" == "build" ]; then
         (
             pwd
-            ${cri_cmd} "${opt}" -t ${IMAGE} . -f Dockerfile.${BIN_NAME}
+            cache=()
+            if [ "${NO_CACHE:-0}" = "1" ]; then
+                cache=(--no-cache)
+            fi
+            ${cri_cmd} "${opt}" "${cache[@]}" -t ${IMAGE} . -f Dockerfile.${BIN_NAME}
         )
     elif [ "${opt}" == "push" ]; then
         ${cri_cmd} "${opt}" ${insecure} "${IMAGE}"

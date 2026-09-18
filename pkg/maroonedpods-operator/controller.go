@@ -22,6 +22,7 @@ import (
 	mpnamespaced "maroonedpods.io/maroonedpods/pkg/maroonedpods-operator/resources/namespaced"
 
 	"maroonedpods.io/maroonedpods/pkg/util"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -77,13 +78,16 @@ func newReconciler(mgr manager.Manager) (*ReconcileMaroonedPods, error) {
 	log.Info("", "VARS", fmt.Sprintf("%+v", namespacedArgs))
 
 	scheme := mgr.GetScheme()
-	uncachedClient, err := client.New(mgr.GetConfig(), client.Options{
+	rawClient, err := client.New(mgr.GetConfig(), client.Options{
 		Scheme: scheme,
 		Mapper: mgr.GetRESTMapper(),
 	})
 	if err != nil {
 		return nil, err
 	}
+	// typed Get leaves TypeMeta empty; the SDK three-way merge then
+	// trips RequireKeyUnchanged(apiVersion/kind). Fill GVK from the scheme.
+	uncachedClient := &gvkClient{Client: rawClient, scheme: scheme}
 
 	recorder := mgr.GetEventRecorderFor("operator-controller")
 
@@ -104,6 +108,36 @@ func newReconciler(mgr manager.Manager) (*ReconcileMaroonedPods, error) {
 	r.registerHooks()
 
 	return r, nil
+}
+
+// gvkClient fills TypeMeta on Get so library-go/jsonmergepatch preconditions pass.
+type gvkClient struct {
+	client.Client
+	scheme *runtime.Scheme
+}
+
+func (g *gvkClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if err := g.Client.Get(ctx, key, obj, opts...); err != nil {
+		return err
+	}
+	if obj.GetObjectKind().GroupVersionKind().Kind != "" {
+		return nil
+	}
+	gvks, _, err := g.scheme.ObjectKinds(obj)
+	if err != nil || len(gvks) == 0 {
+		return nil
+	}
+	var gvk schema.GroupVersionKind
+	for _, candidate := range gvks {
+		if candidate.Kind != "" && candidate.Version != "" {
+			gvk = candidate
+			break
+		}
+	}
+	if gvk.Kind != "" {
+		obj.GetObjectKind().SetGroupVersionKind(gvk)
+	}
+	return nil
 }
 
 var _ reconcile.Reconciler = &ReconcileMaroonedPods{}
