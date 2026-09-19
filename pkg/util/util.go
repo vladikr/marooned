@@ -91,6 +91,8 @@ const (
 	VMIAnnotation                  = "maroonedpods.io/vmi"
 	GuestIPAnnotation              = "maroonedpods.io/guest-ip"
 	VsockCIDAnnotation             = "maroonedpods.io/vsock-cid"
+	// SelinuxContextAnnotation is vmi.status.selinuxContext (container_file_t + MCS).
+	SelinuxContextAnnotation = "maroonedpods.io/selinux-context"
 	TEEAnnotation                  = "maroonedpods.io/tee"
 	SRIOVNetworkAnnotation         = "maroonedpods.io/sriov-network"
 	AgentReadyAnnotation           = "maroonedpods.io/agent-ready"

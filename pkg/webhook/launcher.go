@@ -152,9 +152,10 @@ func vsockfwdSecurityContext(pod *corev1.Pod) *corev1.SecurityContext {
 			g = *sc.RunAsGroup
 		}
 	}
-	// Do not copy compute's SELinux/seccomp. virt-launcher is container_t
-	// with MCS; hostPath unix bind then returns EACCES. spc_t is what the
-	// shim already runs as and can write /var/run/marooned.
+	// Align with compute: uid 107, no extra caps. Do not set
+	// seLinuxOptions.type (especially not spc_t). Inherit the virt-launcher
+	// pod's container_t + MCS. hostPath is relabeled to container_file_t
+	// with that MCS by the shim using vmi.status.selinuxContext.
 	return &corev1.SecurityContext{
 		RunAsUser:                &u,
 		RunAsGroup:               &g,
@@ -162,7 +163,6 @@ func vsockfwdSecurityContext(pod *corev1.Pod) *corev1.SecurityContext {
 		Privileged:               &priv,
 		AllowPrivilegeEscalation: &allowEsc,
 		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-		SELinuxOptions:           &corev1.SELinuxOptions{Type: "spc_t"},
 	}
 }
 

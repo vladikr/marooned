@@ -81,8 +81,16 @@ func waitForVMI(kube *kubernetes.Clientset, timeout time.Duration) func(ctx cont
 				return "", "", fmt.Errorf("pod %s/%s is deleting", ns, name)
 			}
 			if pod.UID != "" {
-				if err := vsock.EnsureSandboxDir(vsock.DefaultHostDir, string(pod.UID)); err != nil {
-					klog.V(2).Infof("ensure sandbox dir %s: %v", pod.UID, err)
+				uid := string(pod.UID)
+				if err := vsock.EnsureSandboxDir(vsock.DefaultHostDir, uid); err != nil {
+					klog.V(2).Infof("ensure sandbox dir %s: %v", uid, err)
+				}
+				if pod.Annotations != nil {
+					if se := pod.Annotations[util.SelinuxContextAnnotation]; se != "" {
+						if err := vsock.RelabelTree(vsock.DirFor(vsock.DefaultHostDir, uid), se); err != nil {
+							klog.V(2).Infof("relabel sandbox dir %s: %v", uid, err)
+						}
+					}
 				}
 			}
 			if pod.Annotations == nil {
@@ -98,6 +106,14 @@ func waitForVMI(kube *kubernetes.Clientset, timeout time.Duration) func(ctx cont
 				uid := string(pod.UID)
 				if err := vsock.WriteCIDFile(vsock.DefaultHostDir, uid, cid); err != nil {
 					klog.Infof("write cid file for %s: %v", uid, err)
+				}
+				if se := pod.Annotations[util.SelinuxContextAnnotation]; se != "" {
+					dir := vsock.DirFor(vsock.DefaultHostDir, uid)
+					if err := vsock.RelabelTree(dir, se); err != nil {
+						klog.Infof("relabel %s to %s: %v", dir, se, err)
+						time.Sleep(time.Second)
+						continue
+					}
 				}
 				return vmi, vsock.UnixDialAddr(vsock.DefaultHostDir, uid), nil
 			}

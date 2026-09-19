@@ -14,6 +14,15 @@ func TestUnixDialAddr(t *testing.T) {
 	}
 }
 
+func TestRelabelEmptyIsNoop(t *testing.T) {
+	if err := Relabel("", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RelabelTree(t.TempDir(), ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestEnsureSandboxDirIs0777(t *testing.T) {
 	root := t.TempDir()
 	if err := EnsureSandboxDir(root, "uid-1"); err != nil {

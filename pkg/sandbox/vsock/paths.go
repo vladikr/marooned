@@ -109,3 +109,22 @@ func ResolveGuestCIDWithMode(nsMode, cidFile string) (uint32, error) {
 func ResolveGuestCID(hostDir, uid string) (uint32, error) {
 	return ResolveGuestCIDWithMode(ReadNSMode(), CIDPath(hostDir, uid))
 }
+
+// RelabelTree sets the virt-launcher file context on dir and its children
+// so container_t can bind agent.sock and read cid.
+func RelabelTree(dir, context string) error {
+	if err := Relabel(dir, context); err != nil {
+		return err
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var last error
+	for _, e := range ents {
+		if err := Relabel(filepath.Join(dir, e.Name()), context); err != nil {
+			last = err
+		}
+	}
+	return last
+}

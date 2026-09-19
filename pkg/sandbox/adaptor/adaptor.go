@@ -339,7 +339,8 @@ func (a *Adaptor) annotatePod(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstanc
 	if vmi.Status.VSOCKCID != nil {
 		cid = strconv.FormatUint(uint64(*vmi.Status.VSOCKCID), 10)
 	}
-	if pod.Annotations != nil && pod.Annotations[util.VMIAnnotation] == want && pod.Annotations[util.GuestIPAnnotation] == ip && pod.Annotations[util.VsockCIDAnnotation] == cid {
+	se := vmi.Status.SelinuxContext
+	if pod.Annotations != nil && pod.Annotations[util.VMIAnnotation] == want && pod.Annotations[util.GuestIPAnnotation] == ip && pod.Annotations[util.VsockCIDAnnotation] == cid && pod.Annotations[util.SelinuxContextAnnotation] == se {
 		return nil
 	}
 	copyPod := pod.DeepCopy()
@@ -354,6 +355,9 @@ func (a *Adaptor) annotatePod(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstanc
 		copyPod.Annotations[util.VsockCIDAnnotation] = cid
 		// The node-local shim writes /var/run/marooned/<pod-uid>/cid from
 		// this annotation; the adaptor is not on the node.
+	}
+	if se != "" {
+		copyPod.Annotations[util.SelinuxContextAnnotation] = se
 	}
 	_, err := a.maroonedpodsCli.CoreV1().Pods(copyPod.Namespace).Update(context.Background(), copyPod, metav1.UpdateOptions{})
 	return err
