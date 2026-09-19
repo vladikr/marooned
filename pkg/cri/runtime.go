@@ -223,40 +223,43 @@ func (r *Runtime) RunPodSandbox(ctx context.Context, req *RunPodSandboxRequest) 
 	if existing := r.store.GetSandbox(id); existing != nil && existing.State == "SANDBOX_READY" && r.store.AgentAddr(id) != "" {
 		return existing, nil
 	}
-	vmi, addr, err := r.waitVM(ctx, req.PodNamespace, req.PodName)
-	if err != nil {
-		return nil, err
-	}
-	r.store.SetAgentAddr(id, addr)
-	if r.dial != nil {
-		var last error
-		n := 0
-		for {
-			cli, err := r.dial(id)
+	var last error
+	n := 0
+	for {
+		vmi, addr, err := r.waitVM(ctx, req.PodNamespace, req.PodName)
+		if err != nil {
+			if last != nil {
+				return nil, fmt.Errorf("agent ping: %v; %w", last, err)
+			}
+			return nil, err
+		}
+		r.store.SetAgentAddr(id, addr)
+		if r.dial == nil {
+			sb := &PodSandbox{ID: id, Name: req.PodName, Namespace: req.PodNamespace, UID: req.PodUID, State: "SANDBOX_READY", VMI: vmi}
+			r.store.PutSandbox(sb)
+			return sb, nil
+		}
+		cli, err := r.dial(id)
+		if err == nil {
+			err = cli.Ping(3 * time.Second)
+			_ = cli.Close()
 			if err == nil {
-				err = cli.Ping(3 * time.Second)
-				_ = cli.Close()
-				if err == nil {
-					sb := &PodSandbox{ID: id, Name: req.PodName, Namespace: req.PodNamespace, UID: req.PodUID, State: "SANDBOX_READY", VMI: vmi}
-					r.store.PutSandbox(sb)
-					return sb, nil
-				}
-			}
-			last = err
-			n++
-			if n == 1 || n%5 == 0 {
-				klog.Infof("waiting for guest agent at %s (%d): %v", addr, n, last)
-			}
-			select {
-			case <-ctx.Done():
-				return nil, fmt.Errorf("agent ping: %w", last)
-			case <-time.After(time.Second):
+				sb := &PodSandbox{ID: id, Name: req.PodName, Namespace: req.PodNamespace, UID: req.PodUID, State: "SANDBOX_READY", VMI: vmi}
+				r.store.PutSandbox(sb)
+				return sb, nil
 			}
 		}
+		last = err
+		n++
+		if n == 1 || n%5 == 0 {
+			klog.Infof("waiting for guest agent at %s (%d): %v", addr, n, last)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("agent ping: %w", last)
+		case <-time.After(time.Second):
+		}
 	}
-	sb := &PodSandbox{ID: id, Name: req.PodName, Namespace: req.PodNamespace, UID: req.PodUID, State: "SANDBOX_READY", VMI: vmi}
-	r.store.PutSandbox(sb)
-	return sb, nil
 }
 
 func (r *Runtime) StopPodSandbox(_ context.Context, id string) error {

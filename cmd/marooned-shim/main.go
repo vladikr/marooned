@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -69,9 +70,15 @@ func waitForVMI(kube *kubernetes.Clientset, timeout time.Duration) func(ctx cont
 			default:
 			}
 			pod, err := kube.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
+			if k8serrors.IsNotFound(err) {
+				return "", "", fmt.Errorf("pod %s/%s is gone", ns, name)
+			}
 			if err != nil {
 				time.Sleep(time.Second)
 				continue
+			}
+			if pod.DeletionTimestamp != nil && !pod.DeletionTimestamp.IsZero() {
+				return "", "", fmt.Errorf("pod %s/%s is deleting", ns, name)
 			}
 			if pod.UID != "" {
 				if err := vsock.EnsureSandboxDir(vsock.DefaultHostDir, string(pod.UID)); err != nil {

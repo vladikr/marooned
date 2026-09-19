@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +50,32 @@ func TestRunPodSandboxNotReadyUntilPing(t *testing.T) {
 	}
 	if sb := store.GetSandbox("uid"); sb != nil && sb.State == "SANDBOX_READY" {
 		t.Fatal("sandbox must not be READY before a successful ping")
+	}
+}
+
+func TestRunPodSandboxAbortsWhenPodGone(t *testing.T) {
+	store := NewStore()
+	n := 0
+	r := NewRuntime(store, func(context.Context, string, string) (string, string, error) {
+		n++
+		if n > 2 {
+			return "", "", fmt.Errorf("pod ns/p is gone")
+		}
+		return "vmi", "unix:/tmp/missing.sock", nil
+	}, func(string) (*agentproto.Client, error) {
+		return nil, fmt.Errorf("no such file or directory")
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := r.RunPodSandbox(ctx, &RunPodSandboxRequest{PodName: "p", PodNamespace: "ns", PodUID: "uid"})
+	if err == nil {
+		t.Fatal("expected abort")
+	}
+	if !strings.Contains(err.Error(), "gone") {
+		t.Fatalf("got %v", err)
+	}
+	if store.GetSandbox("uid") != nil {
+		t.Fatal("must not mark ready")
 	}
 }
 
