@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -60,9 +61,17 @@ func main() {
 	cmd := filtered[0]
 	rest := filtered[1:]
 	switch cmd {
+	case "pause-daemon":
+		os.Exit(runPauseDaemon())
 	case "pause":
-		// Dummy init for conmon. CRI-O/SELinux often denies exec of /usr/bin/sleep.
-		select {}
+		// Do not use select{}: the runtime treats "all goroutines asleep"
+		// as a deadlock and exits 2. Block on SIGTERM so CRI-O kill works.
+		signal.Ignore(syscall.SIGHUP, syscall.SIGPIPE)
+		detachFromRuntimeCgroup(os.Getpid())
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
+		<-ch
+		os.Exit(0)
 	case "create":
 		os.Exit(doCreate(root, rest))
 	case "start":
@@ -103,21 +112,12 @@ func doCreate(root string, args []string) int {
 	}
 	dir := filepath.Join(root, id)
 	_ = os.MkdirAll(dir, 0755)
-	self, err := os.Executable()
-	if err != nil {
-		self = os.Args[0]
-	}
-	pause := exec.Command(self, "pause")
-	pause.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := pause.Start(); err != nil {
-		fatal("pause: %v", err)
-	}
-	pid := pause.Process.Pid
-	_ = pause.Process.Release()
+	pid := startPause(id)
 	st := state{OCIVersion: "1.0.2", ID: id, Status: "created", PID: pid, Bundle: bundle}
 	writeState(dir, st)
 	if pidFile != "" {
 		_ = os.WriteFile(pidFile, []byte(strconv.Itoa(st.PID)), 0644)
+		_ = os.WriteFile(filepath.Join(dir, "pidfile"), []byte(pidFile), 0644)
 	}
 	_ = os.WriteFile(filepath.Join(dir, "bundle"), []byte(bundle), 0644)
 	ns, name, sandbox := podFromBundle(bundle)
@@ -140,6 +140,12 @@ func doStart(root string, args []string) int {
 	st, err := readState(dir)
 	if err != nil {
 		fatal("start: %v", err)
+	}
+	if st.PID <= 1 || !pidAlive(st.PID) {
+		st.PID = startPause(id)
+		if pf := strings.TrimSpace(string(mustRead(filepath.Join(dir, "pidfile")))); pf != "" {
+			_ = os.WriteFile(pf, []byte(strconv.Itoa(st.PID)), 0644)
+		}
 	}
 	st.Status = "running"
 	writeState(dir, st)
@@ -180,6 +186,7 @@ func doKill(root string, args []string) int {
 	if err != nil {
 		return 0
 	}
+	_ = exec.Command("systemctl", "stop", pauseUnit(id)).Run()
 	if st.PID > 1 {
 		target := st.PID
 		if all {
@@ -199,6 +206,7 @@ func doKill(root string, args []string) int {
 func doDelete(root string, args []string) int {
 	id := lastID(args)
 	dir := filepath.Join(root, id)
+	_ = exec.Command("systemctl", "stop", pauseUnit(id)).Run()
 	st, err := readState(dir)
 	if err == nil && st.PID > 1 && pidAlive(st.PID) {
 		_ = syscall.Kill(-st.PID, syscall.SIGKILL)
@@ -325,6 +333,97 @@ func pidAlive(pid int) bool {
 		return false
 	}
 	return syscall.Kill(pid, 0) == nil
+}
+
+func startPause(id string) int {
+	if pid := startPauseSystemd(id); pid > 1 && pidAlive(pid) {
+		return pid
+	}
+	return startPauseFork()
+}
+
+func pauseUnit(id string) string {
+	return "marooned-oci-" + id + ".service"
+}
+
+func startPauseSystemd(id string) int {
+	self, err := os.Executable()
+	if err != nil {
+		self = os.Args[0]
+	}
+	unit := pauseUnit(id)
+	_ = exec.Command("systemctl", "stop", unit).Run()
+	cmd := exec.Command("systemd-run", "--unit="+unit, "--collect", self, "pause")
+	if err := cmd.Run(); err != nil {
+		return 0
+	}
+	for i := 0; i < 20; i++ {
+		out, err := exec.Command("systemctl", "show", "-p", "MainPID", "--value", unit).Output()
+		if err == nil {
+			pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+			if pid > 1 && pidAlive(pid) {
+				return pid
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return 0
+}
+
+func startPauseFork() int {
+	self, err := os.Executable()
+	if err != nil {
+		self = os.Args[0]
+	}
+	cmd := exec.Command(self, "pause-daemon")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	out, err := cmd.Output()
+	if err != nil {
+		fatal("pause-daemon: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pid <= 1 {
+		fatal("pause-daemon pid %q", strings.TrimSpace(string(out)))
+	}
+	detachFromRuntimeCgroup(pid)
+	if !pidAlive(pid) {
+		fatal("pause pid %d not alive after start", pid)
+	}
+	return pid
+}
+
+func runPauseDaemon() int {
+	self, err := os.Executable()
+	if err != nil {
+		self = os.Args[0]
+	}
+	inner := exec.Command(self, "pause")
+	inner.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	inner.Stdin = nil
+	inner.Stdout = nil
+	inner.Stderr = nil
+	if err := inner.Start(); err != nil {
+		fatal("pause: %v", err)
+	}
+	pid := inner.Process.Pid
+	_ = inner.Process.Release()
+	detachFromRuntimeCgroup(pid)
+	fmt.Println(pid)
+	return 0
+}
+
+// Move the dummy out of the runtime's transient systemd cgroup so it
+// survives marooned-oci create exiting.
+func detachFromRuntimeCgroup(pid int) {
+	if pid <= 1 {
+		return
+	}
+	b := []byte(strconv.Itoa(pid))
+	for _, p := range []string{"/sys/fs/cgroup/cgroup.procs", "/sys/fs/cgroup/unified/cgroup.procs"} {
+		if err := os.WriteFile(p, b, 0644); err == nil {
+			return
+		}
+	}
 }
 
 func writeState(dir string, st state) {

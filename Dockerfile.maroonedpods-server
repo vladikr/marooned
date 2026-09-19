@@ -4,7 +4,7 @@ FROM golang:1.19-alpine as builder
 # Install make
 RUN apk update && apk add make
 
-# Copy the source code from the host to the container
+ARG CACHEBUST=0
 COPY pkg /workdir/app/pkg
 COPY staging /workdir/app/staging
 COPY cmd /workdir/app/cmd

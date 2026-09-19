@@ -99,3 +99,13 @@ func pvcSandboxPod() *corev1.Pod {
 	pod.Spec.Containers[0].VolumeMounts = nil
 	return pod
 }
+
+func TestStripSandboxFinalizer(t *testing.T) {
+	got := stripSandboxFinalizer([]string{"a", util.SandboxFinalizer, "b"})
+	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("got %v", got)
+	}
+	if stripSandboxFinalizer(nil) != nil && len(stripSandboxFinalizer(nil)) != 0 {
+		t.Fatal("nil")
+	}
+}

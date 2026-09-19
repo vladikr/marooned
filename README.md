@@ -13,7 +13,8 @@ spec:
   runtimeClassName: marooned
   containers:
   - name: box
-    image: busybox
+    image: docker.io/library/busybox:latest
+    imagePullPolicy: IfNotPresent
     command: ["sleep", "3600"]
 ```
 

@@ -38,8 +38,9 @@ func (b *PodBuilder) WithLabel(key, value string) *PodBuilder {
 // WithContainer adds a container to the pod
 func (b *PodBuilder) WithContainer(name, image string) *PodBuilder {
 	container := v1.Container{
-		Name:  name,
-		Image: image,
+		Name:            name,
+		Image:           image,
+		ImagePullPolicy: v1.PullIfNotPresent,
 	}
 	b.pod.Spec.Containers = append(b.pod.Spec.Containers, container)
 	return b

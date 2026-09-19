@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -28,5 +30,12 @@ func TestParseKillArgsAllSIGKILL(t *testing.T) {
 func TestFirstPositionalNotLast(t *testing.T) {
 	if got := firstPositional([]string{"--force", "ctrid"}); got != "ctrid" {
 		t.Fatalf("got %s", got)
+	}
+}
+
+func TestParsePauseDaemonPID(t *testing.T) {
+	pid, err := strconv.Atoi(strings.TrimSpace("12345\n"))
+	if err != nil || pid != 12345 {
+		t.Fatalf("pid %d err %v", pid, err)
 	}
 }

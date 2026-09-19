@@ -352,6 +352,17 @@ func (a *Adaptor) handleDelete(pod *corev1.Pod, cfg mpv1.SandboxConfig) (error, 
 	if !hasFinalizer(pod.Finalizers, util.SandboxFinalizer) {
 		return nil, Forget
 	}
+	a.deleteSandboxVMI(pod, cfg)
+	copyPod := pod.DeepCopy()
+	copyPod.Finalizers = stripSandboxFinalizer(copyPod.Finalizers)
+	_, err := a.maroonedpodsCli.CoreV1().Pods(copyPod.Namespace).Update(context.Background(), copyPod, metav1.UpdateOptions{})
+	if err != nil {
+		return err, BackOff
+	}
+	return nil, Forget
+}
+
+func (a *Adaptor) deleteSandboxVMI(pod *corev1.Pod, cfg mpv1.SandboxConfig) {
 	ref := ""
 	if pod.Annotations != nil {
 		ref = pod.Annotations[util.VMIAnnotation]
@@ -359,29 +370,31 @@ func (a *Adaptor) handleDelete(pod *corev1.Pod, cfg mpv1.SandboxConfig) (error, 
 	if ref != "" {
 		ns, name := splitRef(ref)
 		obj, exists, err := a.vmiInformer.GetStore().GetByKey(ns + "/" + name)
-		if err != nil {
-			return err, BackOff
-		}
-		if exists {
+		if err == nil && exists {
 			vmi := obj.(*virtv1.VirtualMachineInstance)
 			if err := a.releaseOrDelete(pod, vmi, cfg); err != nil {
-				return err, BackOff
+				klog.Warningf("delete sandbox VMI %s/%s: %v", ns, name, err)
 			}
+			return
 		}
 	}
-	copyPod := pod.DeepCopy()
-	finalizers := copyPod.Finalizers[:0]
-	for _, f := range copyPod.Finalizers {
+	if pod.UID == "" {
+		return
+	}
+	name := util.UserNamespaceVMIPrefix + string(pod.UID)
+	if err := a.maroonedpodsCli.KubevirtClient().KubevirtV1().VirtualMachineInstances(pod.Namespace).Delete(context.Background(), name, metav1.DeleteOptions{}); err != nil {
+		klog.V(3).Infof("delete implied VMI %s/%s: %v", pod.Namespace, name, err)
+	}
+}
+
+func stripSandboxFinalizer(finalizers []string) []string {
+	out := finalizers[:0]
+	for _, f := range finalizers {
 		if f != util.SandboxFinalizer {
-			finalizers = append(finalizers, f)
+			out = append(out, f)
 		}
 	}
-	copyPod.Finalizers = finalizers
-	_, err := a.maroonedpodsCli.CoreV1().Pods(copyPod.Namespace).Update(context.Background(), copyPod, metav1.UpdateOptions{})
-	if err != nil {
-		return err, BackOff
-	}
-	return nil, Forget
+	return out
 }
 
 func (a *Adaptor) releaseOrDelete(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig) error {
