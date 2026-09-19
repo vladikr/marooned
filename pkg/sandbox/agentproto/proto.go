@@ -12,6 +12,7 @@ import (
 
 const (
 	MethodPing       = "Ping"
+	MethodRootfs     = "Rootfs"
 	MethodStart      = "Start"
 	MethodStop       = "Stop"
 	MethodWait       = "Wait"
@@ -41,6 +42,13 @@ type StartRequest struct {
 	Mounts      []Mount  `json:"mounts"`
 	Privileged  bool     `json:"privileged"`
 	Stdin       bool     `json:"stdin"`
+}
+
+// RootfsChunk is a piece of the container rootfs tarball (OCI bundle root).
+type RootfsChunk struct {
+	ContainerID string `json:"containerID"`
+	Data        []byte `json:"data"`
+	EOF         bool   `json:"eof"`
 }
 
 // Mount is a guest path already backed by a virtio disk or tmpfs.
@@ -161,4 +169,30 @@ func (c *Client) Call(method string, payload interface{}, timeout time.Duration)
 func (c *Client) Ping(timeout time.Duration) error {
 	_, err := c.Call(MethodPing, nil, timeout)
 	return err
+}
+
+const rootfsChunk = 256 * 1024
+
+// PutRootfs streams a tar of the container rootfs to the guest agent.
+func (c *Client) PutRootfs(containerID string, r io.Reader, timeout time.Duration) error {
+	if timeout > 0 {
+		_ = c.conn.SetDeadline(time.Now().Add(timeout))
+		defer c.conn.SetDeadline(time.Time{})
+	}
+	buf := make([]byte, rootfsChunk)
+	for {
+		n, err := io.ReadFull(r, buf)
+		if n > 0 {
+			if _, callErr := c.Call(MethodRootfs, RootfsChunk{ContainerID: containerID, Data: buf[:n]}, 0); callErr != nil {
+				return callErr
+			}
+		}
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			_, err = c.Call(MethodRootfs, RootfsChunk{ContainerID: containerID, EOF: true}, 0)
+			return err
+		}
+		if err != nil {
+			return err
+		}
+	}
 }

@@ -160,13 +160,13 @@ func doStart(root string, args []string) int {
 		return 0
 	}
 	bundle := strings.TrimSpace(string(mustRead(filepath.Join(dir, "bundle"))))
-	argsCmd, _ := processArgs(bundle)
+	spec := readProcessSpec(bundle)
 	podUID := strings.TrimSpace(string(mustRead(filepath.Join(dir, "poduid"))))
 	ctrName := strings.TrimSpace(string(mustRead(filepath.Join(dir, "ctrname"))))
 	if ctrName == "" {
 		ctrName = "box"
 	}
-	if len(argsCmd) > 0 && podUID != "" {
+	if len(spec.Args) > 0 && podUID != "" {
 		pod := strings.TrimSpace(string(mustRead(filepath.Join(dir, "pod"))))
 		ns, name, _ := strings.Cut(pod, "/")
 		if ns != "" && name != "" {
@@ -178,9 +178,17 @@ func doStart(root string, args []string) int {
 		}
 		criID := podUID + "-" + ctrName
 		_ = os.WriteFile(filepath.Join(dir, "criid"), []byte(criID), 0644)
+		ctr := map[string]interface{}{"name": ctrName, "command": spec.Args, "env": spec.Env, "workDir": spec.Cwd}
+		if spec.Root != "" {
+			tarPath := filepath.Join("/var/run/marooned", podUID, "rootfs-"+ctrName+".tar")
+			if err := tarDirectory(spec.Root, tarPath); err != nil {
+				fatal("tar rootfs: %v", err)
+			}
+			ctr["rootfsPath"] = tarPath
+		}
 		if _, err := shimJSON("POST", "/v1/CreateContainer", map[string]interface{}{
 			"sandboxID": podUID,
-			"container": map[string]interface{}{"name": ctrName, "command": argsCmd},
+			"container": ctr,
 		}); err != nil {
 			fatal("CreateContainer: %v", err)
 		}

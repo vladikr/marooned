@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -39,12 +40,13 @@ type RunPodSandboxRequest struct {
 }
 
 type CreateContainerRequest struct {
-	Name    string
-	Image   string
-	Command []string
-	Args    []string
-	Env     []string
-	WorkDir string
+	Name       string
+	Image      string
+	Command    []string
+	Args       []string
+	Env        []string
+	WorkDir    string
+	RootfsPath string
 }
 
 type PodSandbox struct {
@@ -64,8 +66,9 @@ type Container struct {
 	Command   []string
 	Args      []string
 	Env       []string
-	WorkDir   string
-	State     string
+	WorkDir    string
+	RootfsPath string
+	State      string
 }
 
 // UnimplementedRuntime is the Phase 0 shim.
@@ -286,7 +289,7 @@ func (r *Runtime) PodSandboxStatus(_ context.Context, id string) (*PodSandbox, e
 
 func (r *Runtime) CreateContainer(_ context.Context, sandboxID string, req *CreateContainerRequest) (*Container, error) {
 	id := sandboxID + "-" + req.Name
-	c := &Container{ID: id, SandboxID: sandboxID, Name: req.Name, Image: req.Image, Command: req.Command, Args: req.Args, Env: req.Env, WorkDir: req.WorkDir, State: "CONTAINER_CREATED"}
+	c := &Container{ID: id, SandboxID: sandboxID, Name: req.Name, Image: req.Image, Command: req.Command, Args: req.Args, Env: req.Env, WorkDir: req.WorkDir, RootfsPath: req.RootfsPath, State: "CONTAINER_CREATED"}
 	r.store.PutContainer(c)
 	return c, nil
 }
@@ -306,6 +309,17 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 		return err
 	}
 	defer cli.Close()
+	if c.RootfsPath != "" {
+		f, err := os.Open(c.RootfsPath)
+		if err != nil {
+			return fmt.Errorf("rootfs %s: %w", c.RootfsPath, err)
+		}
+		putErr := cli.PutRootfs(id, f, 3*time.Minute)
+		_ = f.Close()
+		if putErr != nil {
+			return fmt.Errorf("rootfs upload: %w", putErr)
+		}
+	}
 	_, err = cli.Call(agentproto.MethodStart, agentproto.StartRequest{
 		ContainerID: id,
 		Image:       c.Image,

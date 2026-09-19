@@ -31,8 +31,9 @@ type container struct {
 }
 
 type agent struct {
-	mu   sync.Mutex
-	ctrs map[string]*container
+	mu       sync.Mutex
+	ctrs     map[string]*container
+	tarFiles map[string]*os.File
 }
 
 func main() {
@@ -40,7 +41,7 @@ func main() {
 	listen := flag.String("listen", "vsock://:1024", "listen address: vsock://:port, tcp://host:port, or unix:///path")
 	flag.Parse()
 
-	a := &agent{ctrs: map[string]*container{}}
+	a := &agent{ctrs: map[string]*container{}, tarFiles: map[string]*os.File{}}
 	ln, err := vsock.Listen(*listen)
 	if err != nil {
 		klog.Warningf("listen %s: %v; falling back to tcp://0.0.0.0:1024", *listen, err)
@@ -82,6 +83,8 @@ func (a *agent) handle(env agentproto.Envelope) agentproto.Envelope {
 	var err error
 	switch env.Method {
 	case agentproto.MethodPing:
+	case agentproto.MethodRootfs:
+		err = a.rootfs(env.Payload)
 	case agentproto.MethodStart:
 		err = a.start(env.Payload)
 	case agentproto.MethodStop:
@@ -124,16 +127,25 @@ func (a *agent) start(payload json.RawMessage) error {
 			return err
 		}
 	}
-	argv := append(append([]string{}, req.Command...), req.Args...)
-	if len(argv) == 0 {
-		argv = []string{"/bin/sh", "-c", "sleep infinity"}
+	root := filepath.Join(ctrRoot, req.ContainerID, "rootfs")
+	var cmd *exec.Cmd
+	if st, err := os.Stat(root); err == nil && st.IsDir() {
+		cmd, err = startInRoot(root, req)
+		if err != nil {
+			return err
+		}
+	} else {
+		argv := append(append([]string{}, req.Command...), req.Args...)
+		if len(argv) == 0 {
+			argv = []string{"/bin/sh", "-c", "sleep infinity"}
+		}
+		cmd = exec.Command(argv[0], argv[1:]...)
+		if req.WorkDir != "" {
+			cmd.Dir = req.WorkDir
+		}
+		cmd.Env = append(os.Environ(), req.Env...)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
-	cmd := exec.Command(argv[0], argv[1:]...)
-	if req.WorkDir != "" {
-		cmd.Dir = req.WorkDir
-	}
-	cmd.Env = append(os.Environ(), req.Env...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	ctr := &container{id: req.ContainerID, cmd: cmd}
 	cmd.Stdout = &ctr.stdout
 	cmd.Stderr = &ctr.stderr
