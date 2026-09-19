@@ -66,6 +66,7 @@ func dirSize(root string) int64 {
 		return 0
 	}
 	rootDev := fileDev(st)
+	seen := map[uint64]struct{}{}
 	var n int64
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info == nil {
@@ -84,9 +85,16 @@ func dirSize(root string) int64 {
 			}
 			return nil
 		}
-		if info.Mode().IsRegular() {
-			n += info.Size()
+		if !info.Mode().IsRegular() {
+			return nil
 		}
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
+			if _, dup := seen[st.Ino]; dup {
+				return nil
+			}
+			seen[st.Ino] = struct{}{}
+		}
+		n += info.Size()
 		return nil
 	})
 	return n
@@ -109,6 +117,7 @@ func tarDirectory(src, dst string) error {
 		return err
 	}
 	srcDev := fileDev(st)
+	hardlinks := map[uint64]string{}
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -137,6 +146,15 @@ func tarDirectory(src, dst string) error {
 			return err
 		}
 		hdr.Name = rel
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && info.Mode().IsRegular() && st.Nlink > 1 {
+			if first, ok := hardlinks[st.Ino]; ok {
+				hdr.Typeflag = tar.TypeLink
+				hdr.Linkname = first
+				hdr.Size = 0
+				return tw.WriteHeader(hdr)
+			}
+			hardlinks[st.Ino] = rel
+		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			link, err := os.Readlink(path)
 			if err != nil {

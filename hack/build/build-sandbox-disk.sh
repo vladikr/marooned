@@ -78,8 +78,16 @@ extract_apk() {
 extract_apk e2fsprogs
 extract_apk e2fsprogs-libs
 extract_apk util-linux-libs || extract_apk libblkid || true
+extract_apk libcom_err || true
+extract_apk libuuid || true
+# musl loads from /lib; alpine apks often put .so files in /usr/lib
+mkdir -p "${out}/rootfs/lib"
+if [ -d "${out}/rootfs/usr/lib" ]; then
+  find "${out}/rootfs/usr/lib" -maxdepth 1 -name '*.so*' -exec cp -a {} "${out}/rootfs/lib/" \;
+fi
 # apk metadata is not needed in the guest
 rm -rf "${out}/rootfs/.PKGINFO" "${out}/rootfs/.SIGN"* "${out}/rootfs/.[A-Z]"* 2>/dev/null || true
+ls -l "${out}/rootfs/lib"/libext2fs.so* "${out}/rootfs/lib"/libcom_err.so* "${out}/rootfs/lib"/libuuid.so* 2>/dev/null || true
 rm -f "${out}/rootfs/sbin/init"
 cat > "${out}/rootfs/sbin/init" << 'INIT'
 #!/bin/sh

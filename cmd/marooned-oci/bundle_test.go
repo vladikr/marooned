@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,6 +42,44 @@ func TestDirSize(t *testing.T) {
 	}
 	if dirSize(dir) != 5 {
 		t.Fatalf("size %d want 5 (proc skipped)", dirSize(dir))
+	}
+}
+
+func TestDirSizeHardlinksOnce(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "busybox"), []byte("1234567890"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(dir, "busybox"), filepath.Join(dir, "ls")); err != nil {
+		t.Fatal(err)
+	}
+	if dirSize(dir) != 10 {
+		t.Fatalf("size %d want 10 (hardlinks counted once)", dirSize(dir))
+	}
+}
+
+func TestTarDirectoryHardlinks(t *testing.T) {
+	src := t.TempDir()
+	body := bytes.Repeat([]byte("busybox-binary"), 100)
+	if err := os.WriteFile(filepath.Join(src, "busybox"), body, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"ls", "cat", "sh", "cp", "mv"} {
+		if err := os.Link(filepath.Join(src, "busybox"), filepath.Join(src, n)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tarPath := filepath.Join(t.TempDir(), "rootfs.tar")
+	if err := tarDirectory(src, tarPath); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(tarPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One copy of the payload plus headers, not 6 full copies.
+	if st.Size() > int64(len(body)*2+4096) {
+		t.Fatalf("tar %d too large; hardlinks not preserved", st.Size())
 	}
 }
 
