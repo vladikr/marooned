@@ -33,8 +33,14 @@ func TestDirSize(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "a"), []byte("12345"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Mkdir(filepath.Join(dir, "proc"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "proc", "huge"), []byte(make([]byte, 1<<20)), 0644); err != nil {
+		t.Fatal(err)
+	}
 	if dirSize(dir) != 5 {
-		t.Fatalf("size %d", dirSize(dir))
+		t.Fatalf("size %d want 5 (proc skipped)", dirSize(dir))
 	}
 }
 

@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 )
 
 type processSpec struct {
@@ -41,10 +43,48 @@ func readProcessSpec(bundle string) processSpec {
 	return processSpec{Args: cfg.Process.Args, Env: cfg.Process.Env, Cwd: cfg.Process.Cwd, Root: root}
 }
 
+func skipRootfsPath(rel string) bool {
+	first, _, _ := strings.Cut(rel, string(os.PathSeparator))
+	switch first {
+	case "proc", "sys", "dev", "run", "tmp":
+		return true
+	}
+	return false
+}
+
+func fileDev(info os.FileInfo) uint64 {
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		return st.Dev
+	}
+	return 0
+}
+
 func dirSize(root string) int64 {
+	root = filepath.Clean(root)
+	st, err := os.Stat(root)
+	if err != nil {
+		return 0
+	}
+	rootDev := fileDev(st)
 	var n int64
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err == nil && info != nil && info.Mode().IsRegular() {
+		if err != nil || info == nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		if rel != "." && skipRootfsPath(rel) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if rootDev != 0 && fileDev(info) != 0 && fileDev(info) != rootDev {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.Mode().IsRegular() {
 			n += info.Size()
 		}
 		return nil
@@ -64,6 +104,11 @@ func tarDirectory(src, dst string) error {
 	tw := tar.NewWriter(f)
 	defer tw.Close()
 	src = filepath.Clean(src)
+	st, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	srcDev := fileDev(st)
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -73,6 +118,18 @@ func tarDirectory(src, dst string) error {
 			return err
 		}
 		if rel == "." {
+			return nil
+		}
+		if skipRootfsPath(rel) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if srcDev != 0 && fileDev(info) != 0 && fileDev(info) != srcDev {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		hdr, err := tar.FileInfoHeader(info, "")

@@ -60,13 +60,26 @@ cp "${out}/marooned-agent" "${out}/rootfs/usr/local/bin/marooned-agent"
 chmod +x "${out}/rootfs/usr/local/bin/marooned-agent"
 # vsock is insmod'd in initrd. Copying the full linux-lts module tree
 # fills a 512M disk (~hundreds of MiB) so user rootfs unpack hits ENOSPC.
-if ! "${out}/rootfs/bin/busybox" --list 2>/dev/null | grep -qx mkfs.ext2; then
-  echo "fetching e2fsprogs for mkfs on user-rootfs emptyDisk"
-  e2fs_ver="$(curl -fsSL https://dl-cdn.alpinelinux.org/alpine/v3.18/main/x86_64/APKINDEX.tar.gz | tar -xzO APKINDEX | grep -A1 '^P:e2fsprogs$' | grep '^V:' | head -1 | cut -d: -f2)"
-  curl -fsSL -o "${out}/e2fsprogs.apk" \
-    "https://dl-cdn.alpinelinux.org/alpine/v3.18/main/x86_64/e2fsprogs-${e2fs_ver}.apk"
-  tar -C "${out}/rootfs" -xzf "${out}/e2fsprogs.apk" 2>/dev/null || tar -C "${out}/rootfs" -xf "${out}/e2fsprogs.apk"
-fi
+# mke2fs needs e2fsprogs-libs (libext2fs) and util-linux-libs (libblkid).
+apkindex="${out}/APKINDEX"
+curl -fsSL https://dl-cdn.alpinelinux.org/alpine/v3.18/main/x86_64/APKINDEX.tar.gz | tar -xzO APKINDEX >"$apkindex"
+apk_ver() {
+  awk -v p="$1" '$0=="P:"p {want=1} want && /^V:/ {print substr($0,3); exit}' "$apkindex"
+}
+extract_apk() {
+  local pkg="$1" ver
+  ver="$(apk_ver "$pkg")"
+  [ -n "$ver" ] || { echo "no alpine package $pkg" >&2; return 1; }
+  echo "fetching ${pkg}-${ver}"
+  curl -fsSL -o "${out}/${pkg}.apk" \
+    "https://dl-cdn.alpinelinux.org/alpine/v3.18/main/x86_64/${pkg}-${ver}.apk"
+  tar -C "${out}/rootfs" -xzf "${out}/${pkg}.apk" 2>/dev/null || tar -C "${out}/rootfs" -xf "${out}/${pkg}.apk"
+}
+extract_apk e2fsprogs
+extract_apk e2fsprogs-libs
+extract_apk util-linux-libs || extract_apk libblkid || true
+# apk metadata is not needed in the guest
+rm -rf "${out}/rootfs/.PKGINFO" "${out}/rootfs/.SIGN"* "${out}/rootfs/.[A-Z]"* 2>/dev/null || true
 rm -f "${out}/rootfs/sbin/init"
 cat > "${out}/rootfs/sbin/init" << 'INIT'
 #!/bin/sh

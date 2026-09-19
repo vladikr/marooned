@@ -104,9 +104,9 @@ func hasExtSuperblock(dev string) bool {
 
 func mkfs(dev string) error {
 	cmds := [][]string{
-		{"mkfs.ext4", "-F", dev},
-		{"mkfs.ext2", "-F", dev},
 		{"/bin/busybox", "mkfs.ext2", "-F", dev},
+		{"mkfs.ext2", "-F", dev},
+		{"mkfs.ext4", "-F", dev},
 		{"mke2fs", "-t", "ext4", "-F", dev},
 	}
 	var last error
