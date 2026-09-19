@@ -80,6 +80,9 @@ func TestMutateVirtLauncherInjectsSidecar(t *testing.T) {
 	if side.SecurityContext.Privileged != nil && *side.SecurityContext.Privileged {
 		t.Fatal("sidecar must not be privileged")
 	}
+	if side.SecurityContext.SELinuxOptions == nil || side.SecurityContext.SELinuxOptions.Type != "spc_t" {
+		t.Fatal("sidecar must use spc_t so hostPath unix bind is allowed")
+	}
 	if pod.Spec.ShareProcessNamespace != nil && *pod.Spec.ShareProcessNamespace {
 		t.Fatal("must not set shareProcessNamespace")
 	}

@@ -139,22 +139,39 @@ func vsockfwdContainer(pod *corev1.Pod, image, uid string) corev1.Container {
 }
 
 func vsockfwdSecurityContext(pod *corev1.Pod) *corev1.SecurityContext {
-	for i := range pod.Spec.Containers {
-		c := &pod.Spec.Containers[i]
-		if c.Name == "compute" && c.SecurityContext != nil {
-			sc := c.SecurityContext.DeepCopy()
-			sc.Privileged = nil
-			if sc.Capabilities == nil {
-				sc.Capabilities = &corev1.Capabilities{}
-			}
-			sc.Capabilities.Add = nil
-			return sc
+	u := qemuUser
+	g := qemuUser
+	nonRoot := true
+	priv := false
+	allowEsc := false
+	if sc := computeSecurityContext(pod); sc != nil {
+		if sc.RunAsUser != nil {
+			u = *sc.RunAsUser
+		}
+		if sc.RunAsGroup != nil {
+			g = *sc.RunAsGroup
 		}
 	}
-	u := qemuUser
-	priv := false
+	// Do not copy compute's SELinux/seccomp. virt-launcher is container_t
+	// with MCS; hostPath unix bind then returns EACCES. spc_t is what the
+	// shim already runs as and can write /var/run/marooned.
 	return &corev1.SecurityContext{
-		RunAsUser:  &u,
-		Privileged: &priv,
+		RunAsUser:                &u,
+		RunAsGroup:               &g,
+		RunAsNonRoot:             &nonRoot,
+		Privileged:               &priv,
+		AllowPrivilegeEscalation: &allowEsc,
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		SELinuxOptions:           &corev1.SELinuxOptions{Type: "spc_t"},
 	}
+}
+
+func computeSecurityContext(pod *corev1.Pod) *corev1.SecurityContext {
+	for i := range pod.Spec.Containers {
+		c := &pod.Spec.Containers[i]
+		if c.Name == "compute" {
+			return c.SecurityContext
+		}
+	}
+	return nil
 }
