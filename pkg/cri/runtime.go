@@ -10,6 +10,7 @@ import (
 
 	"k8s.io/klog/v2"
 
+	"maroonedpods.io/maroonedpods/pkg/sandbox"
 	"maroonedpods.io/maroonedpods/pkg/sandbox/agentproto"
 )
 
@@ -37,6 +38,7 @@ type RunPodSandboxRequest struct {
 	PodNamespace string
 	PodUID       string
 	Attempt      uint32
+	RootfsBytes  int64
 }
 
 type CreateContainerRequest struct {
@@ -46,7 +48,8 @@ type CreateContainerRequest struct {
 	Args       []string
 	Env        []string
 	WorkDir    string
-	RootfsPath string
+	RootfsPath  string
+	RootfsBytes int64
 }
 
 type PodSandbox struct {
@@ -67,8 +70,9 @@ type Container struct {
 	Args      []string
 	Env       []string
 	WorkDir    string
-	RootfsPath string
-	State      string
+	RootfsPath  string
+	RootfsBytes int64
+	State       string
 }
 
 // UnimplementedRuntime is the Phase 0 shim.
@@ -208,13 +212,18 @@ type AgentDialer func(sandboxID string) (*agentproto.Client, error)
 
 // Runtime is the Phase 2 CRI implementation.
 type Runtime struct {
-	store  *Store
-	dial   AgentDialer
-	waitVM func(ctx context.Context, podNamespace, podName string) (vmiRef, agentAddr string, err error)
+	store    *Store
+	dial     AgentDialer
+	waitVM   func(ctx context.Context, podNamespace, podName string) (vmiRef, agentAddr string, err error)
+	noteSize func(ns, name string, n int64)
 }
 
 func NewRuntime(store *Store, waitVM func(context.Context, string, string) (string, string, error), dial AgentDialer) *Runtime {
 	return &Runtime{store: store, waitVM: waitVM, dial: dial}
+}
+
+func (r *Runtime) SetNoteSize(fn func(ns, name string, n int64)) {
+	r.noteSize = fn
 }
 
 func (r *Runtime) RunPodSandbox(ctx context.Context, req *RunPodSandboxRequest) (*PodSandbox, error) {
@@ -223,6 +232,9 @@ func (r *Runtime) RunPodSandbox(ctx context.Context, req *RunPodSandboxRequest) 
 		id = req.PodNamespace + "-" + req.PodName
 	}
 	klog.Infof("RunPodSandbox %s/%s", req.PodNamespace, req.PodName)
+	if r.noteSize != nil && req.RootfsBytes > 0 {
+		r.noteSize(req.PodNamespace, req.PodName, req.RootfsBytes)
+	}
 	if existing := r.store.GetSandbox(id); existing != nil && existing.State == "SANDBOX_READY" && r.store.AgentAddr(id) != "" {
 		return existing, nil
 	}
@@ -289,7 +301,7 @@ func (r *Runtime) PodSandboxStatus(_ context.Context, id string) (*PodSandbox, e
 
 func (r *Runtime) CreateContainer(_ context.Context, sandboxID string, req *CreateContainerRequest) (*Container, error) {
 	id := sandboxID + "-" + req.Name
-	c := &Container{ID: id, SandboxID: sandboxID, Name: req.Name, Image: req.Image, Command: req.Command, Args: req.Args, Env: req.Env, WorkDir: req.WorkDir, RootfsPath: req.RootfsPath, State: "CONTAINER_CREATED"}
+	c := &Container{ID: id, SandboxID: sandboxID, Name: req.Name, Image: req.Image, Command: req.Command, Args: req.Args, Env: req.Env, WorkDir: req.WorkDir, RootfsPath: req.RootfsPath, RootfsBytes: req.RootfsBytes, State: "CONTAINER_CREATED"}
 	r.store.PutContainer(c)
 	return c, nil
 }
@@ -309,6 +321,22 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 		return err
 	}
 	defer cli.Close()
+	imageBytes := c.RootfsBytes
+	if imageBytes == 0 && c.RootfsPath != "" {
+		if st, err := os.Stat(c.RootfsPath); err == nil {
+			imageBytes = st.Size()
+		}
+	}
+	qty := sandbox.UserRootfsCapacity(imageBytes)
+	disk := qty.Value()
+	if _, err := cli.Call(agentproto.MethodPrepareRootfs, agentproto.PrepareRootfsRequest{
+		ContainerID: id,
+		Serial:      sandbox.UserRootfsSerial,
+		ImageBytes:  imageBytes,
+		DiskBytes:   disk,
+	}, 90*time.Second); err != nil {
+		return fmt.Errorf("prepare user-rootfs (image %d bytes, disk %d bytes): %w", imageBytes, disk, err)
+	}
 	if c.RootfsPath != "" {
 		f, err := os.Open(c.RootfsPath)
 		if err != nil {

@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,7 +15,7 @@ import (
 	"maroonedpods.io/maroonedpods/pkg/sandbox/agentproto"
 )
 
-const ctrRoot = "/var/lib/marooned"
+const ctrRoot = "/run/marooned"
 
 type unpackJob struct {
 	w   *io.PipeWriter
@@ -30,7 +31,7 @@ func (a *agent) rootfs(payload []byte) error {
 		return fmt.Errorf("containerID required")
 	}
 	dir := filepath.Join(ctrRoot, req.ContainerID)
-	dest := filepath.Join(dir, "rootfs")
+	dest := filepath.Join(dir, "root")
 	a.mu.Lock()
 	job := a.unpackers[req.ContainerID]
 	a.mu.Unlock()
@@ -60,9 +61,17 @@ func (a *agent) rootfs(payload []byte) error {
 	_ = job.w.Close()
 	err := <-job.err
 	a.mu.Lock()
+	img, disk := a.imageBytes[req.ContainerID], a.diskBytes[req.ContainerID]
 	delete(a.unpackers, req.ContainerID)
 	a.mu.Unlock()
+	if err != nil && isENOSPC(err) {
+		return fmt.Errorf("no space left unpacking image (%d bytes) onto user-rootfs disk (%d bytes): %w", img, disk, err)
+	}
 	return err
+}
+
+func isENOSPC(err error) bool {
+	return errors.Is(err, syscall.ENOSPC)
 }
 
 func unpackTar(r io.Reader, dest string) error {

@@ -113,6 +113,32 @@ func TestTranslateSandboxLauncherLabel(t *testing.T) {
 	}
 }
 
+func TestTranslateUserRootfsEmptyDisk(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1", RootfsBytes: 5 * 1024 * 1024})
+	found := false
+	for _, vol := range res.VMI.Spec.Volumes {
+		if vol.Name == sandbox.UserRootfsVolume && vol.EmptyDisk != nil {
+			found = true
+			if vol.EmptyDisk.Capacity.Value() != 256*1024*1024 {
+				t.Fatalf("capacity %d", vol.EmptyDisk.Capacity.Value())
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing user-rootfs emptyDisk")
+	}
+	serial := false
+	for _, d := range res.VMI.Spec.Domain.Devices.Disks {
+		if d.Name == sandbox.UserRootfsVolume && d.Serial == sandbox.UserRootfsSerial {
+			serial = true
+		}
+	}
+	if !serial {
+		t.Fatal("user-rootfs disk serial")
+	}
+}
+
 func TestTranslateAutoattachVSOCK(t *testing.T) {
 	p := podWithResources("1", "512Mi")
 	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})

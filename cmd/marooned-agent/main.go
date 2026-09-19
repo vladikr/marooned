@@ -31,9 +31,11 @@ type container struct {
 }
 
 type agent struct {
-	mu        sync.Mutex
-	ctrs      map[string]*container
-	unpackers map[string]*unpackJob
+	mu         sync.Mutex
+	ctrs       map[string]*container
+	unpackers  map[string]*unpackJob
+	imageBytes map[string]int64
+	diskBytes  map[string]int64
 }
 
 func main() {
@@ -41,7 +43,12 @@ func main() {
 	listen := flag.String("listen", "vsock://:1024", "listen address: vsock://:port, tcp://host:port, or unix:///path")
 	flag.Parse()
 
-	a := &agent{ctrs: map[string]*container{}, unpackers: map[string]*unpackJob{}}
+	a := &agent{
+		ctrs:       map[string]*container{},
+		unpackers:  map[string]*unpackJob{},
+		imageBytes: map[string]int64{},
+		diskBytes:  map[string]int64{},
+	}
 	ln, err := vsock.Listen(*listen)
 	if err != nil {
 		klog.Warningf("listen %s: %v; falling back to tcp://0.0.0.0:1024", *listen, err)
@@ -83,6 +90,8 @@ func (a *agent) handle(env agentproto.Envelope) agentproto.Envelope {
 	var err error
 	switch env.Method {
 	case agentproto.MethodPing:
+	case agentproto.MethodPrepareRootfs:
+		err = a.prepareRootfs(env.Payload)
 	case agentproto.MethodRootfs:
 		err = a.rootfs(env.Payload)
 	case agentproto.MethodStart:
@@ -127,7 +136,7 @@ func (a *agent) start(payload json.RawMessage) error {
 			return err
 		}
 	}
-	root := filepath.Join(ctrRoot, req.ContainerID, "rootfs")
+	root := filepath.Join(ctrRoot, req.ContainerID, "root")
 	var cmd *exec.Cmd
 	if st, err := os.Stat(root); err == nil && st.IsDir() {
 		cmd, err = startInRoot(root, req)

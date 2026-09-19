@@ -28,6 +28,16 @@ func TestReadProcessSpec(t *testing.T) {
 	}
 }
 
+func TestDirSize(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a"), []byte("12345"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if dirSize(dir) != 5 {
+		t.Fatalf("size %d", dirSize(dir))
+	}
+}
+
 func TestTarDirectoryRoundTrip(t *testing.T) {
 	src := t.TempDir()
 	if err := os.WriteFile(filepath.Join(src, "hello"), []byte("world"), 0644); err != nil {

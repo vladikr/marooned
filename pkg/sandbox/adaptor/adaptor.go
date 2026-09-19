@@ -184,7 +184,13 @@ func (a *Adaptor) execute(key string) (error, enqueueState) {
 		return nil, Forget
 	}
 
-	vmi, err := a.ensureVMI(pod, cfg)
+	rootfsBytes := rootfsBytesFromPod(pod)
+	if rootfsBytes == 0 && time.Since(pod.CreationTimestamp.Time) < 20*time.Second {
+		klog.V(3).Infof("sandbox pod %s waiting for rootfs size hint", key)
+		return nil, Immediate
+	}
+
+	vmi, err := a.ensureVMI(pod, cfg, rootfsBytes)
 	if err != nil {
 		a.recorder.Eventf(pod, corev1.EventTypeWarning, "SandboxVMIFailed", "%v", err)
 		return err, BackOff
@@ -205,7 +211,7 @@ func (a *Adaptor) execute(key string) (error, enqueueState) {
 	return nil, Forget
 }
 
-func (a *Adaptor) ensureVMI(pod *corev1.Pod, cfg mpv1.SandboxConfig) (*virtv1.VirtualMachineInstance, error) {
+func (a *Adaptor) ensureVMI(pod *corev1.Pod, cfg mpv1.SandboxConfig, rootfsBytes int64) (*virtv1.VirtualMachineInstance, error) {
 	plan := sandbox.PlanVMI(pod, cfg.InfraNamespace)
 	if plan.OwnerPod && plan.Name == "" {
 		return nil, fmt.Errorf("waiting for pod UID to name in-namespace VMI")
@@ -219,12 +225,13 @@ func (a *Adaptor) ensureVMI(pod *corev1.Pod, cfg mpv1.SandboxConfig) (*virtv1.Vi
 
 	trPod := sandbox.RestoreVolumes(pod)
 	tr := translate.Translate(translate.Input{
-		Pod:       trPod,
-		Config:    cfg,
-		Node:      pod.Spec.NodeName,
-		Namespace: plan.Namespace,
-		Name:      plan.Name,
-		OwnerPod:  plan.OwnerPod,
+		Pod:         trPod,
+		Config:      cfg,
+		Node:        pod.Spec.NodeName,
+		Namespace:   plan.Namespace,
+		Name:        plan.Name,
+		OwnerPod:    plan.OwnerPod,
+		RootfsBytes: rootfsBytes,
 	})
 	if len(tr.Errors) > 0 {
 		return nil, tr.Errors[0]
@@ -400,6 +407,21 @@ func (a *Adaptor) deleteSandboxVMI(pod *corev1.Pod, cfg mpv1.SandboxConfig) {
 	if err := a.maroonedpodsCli.KubevirtClient().KubevirtV1().VirtualMachineInstances(pod.Namespace).Delete(context.Background(), name, metav1.DeleteOptions{}); err != nil {
 		klog.V(3).Infof("delete implied VMI %s/%s: %v", pod.Namespace, name, err)
 	}
+}
+
+func rootfsBytesFromPod(pod *corev1.Pod) int64 {
+	if pod.Annotations == nil {
+		return 0
+	}
+	s := pod.Annotations[util.RootfsBytesAnnotation]
+	if s == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 func stripSandboxFinalizer(finalizers []string) []string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strconv"
 	"time"
 
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -37,7 +38,9 @@ func main() {
 			klog.Fatalf("kube client: %v", err)
 		}
 		store := cri.NewStore()
-		runtime = cri.NewRuntime(store, waitForVMI(kube, *agentTimeout), dialAgent(store))
+		rt := cri.NewRuntime(store, waitForVMI(kube, *agentTimeout), dialAgent(store))
+		rt.SetNoteSize(annotateRootfsBytes(kube))
+		runtime = rt
 	}
 
 	srv := &cri.Server{Runtime: runtime, Socket: *socket}
@@ -121,6 +124,30 @@ func waitForVMI(kube *kubernetes.Clientset, timeout time.Duration) func(ctx cont
 			time.Sleep(time.Second)
 		}
 		return "", "", fmt.Errorf("timed out waiting for sandbox VMI annotation on %s/%s", ns, name)
+	}
+}
+
+func annotateRootfsBytes(kube *kubernetes.Clientset) func(ns, name string, n int64) {
+	return func(ns, name string, n int64) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		pod, err := kube.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			klog.Infof("annotate rootfs-bytes %s/%s: %v", ns, name, err)
+			return
+		}
+		want := strconv.FormatInt(n, 10)
+		if pod.Annotations != nil && pod.Annotations[util.RootfsBytesAnnotation] == want {
+			return
+		}
+		copyPod := pod.DeepCopy()
+		if copyPod.Annotations == nil {
+			copyPod.Annotations = map[string]string{}
+		}
+		copyPod.Annotations[util.RootfsBytesAnnotation] = want
+		if _, err := kube.CoreV1().Pods(ns).Update(ctx, copyPod, metav1.UpdateOptions{}); err != nil {
+			klog.Infof("annotate rootfs-bytes %s/%s: %v", ns, name, err)
+		}
 	}
 }
 

@@ -132,9 +132,14 @@ func doCreate(root string, args []string) int {
 	// CRI-O often has drop_infra_ctr: there is no pause sandbox, only the
 	// user container. Always register the sandbox before start.
 	if meta.Namespace != "" && meta.UID != "" {
-		if _, err := shimJSON("POST", "/v1/RunPodSandbox", map[string]string{
+		spec := readProcessSpec(bundle)
+		hint := map[string]interface{}{
 			"podName": meta.Name, "podNamespace": meta.Namespace, "podUID": meta.UID,
-		}); err != nil {
+		}
+		if spec.Root != "" {
+			hint["rootfsBytes"] = dirSize(spec.Root)
+		}
+		if _, err := shimJSON("POST", "/v1/RunPodSandbox", hint); err != nil {
 			fatal("RunPodSandbox: %v", err)
 		}
 	}
@@ -180,6 +185,7 @@ func doStart(root string, args []string) int {
 		_ = os.WriteFile(filepath.Join(dir, "criid"), []byte(criID), 0644)
 		ctr := map[string]interface{}{"name": ctrName, "command": spec.Args, "env": spec.Env, "workDir": spec.Cwd}
 		if spec.Root != "" {
+			ctr["rootfsBytes"] = dirSize(spec.Root)
 			tarPath := filepath.Join("/var/run/marooned", podUID, "rootfs-"+ctrName+".tar")
 			if err := tarDirectory(spec.Root, tarPath); err != nil {
 				fatal("tar rootfs: %v", err)

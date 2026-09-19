@@ -47,11 +47,12 @@ type Mount struct {
 type Input struct {
 	Pod       *corev1.Pod
 	Config    mpv1.SandboxConfig
-	Node      string
-	TEE       string
-	Namespace string
-	Name      string
-	OwnerPod  bool
+	Node        string
+	TEE         string
+	Namespace   string
+	Name        string
+	OwnerPod    bool
+	RootfsBytes int64
 }
 
 // Translate builds a hidden sandbox VMI from a user Pod.
@@ -135,6 +136,7 @@ func Translate(in Input) Result {
 	applyBoot(vmi, in.Config, res.TEE)
 	applyNetwork(vmi, in.Config)
 	applyRootfs(vmi, in.Config, res.TEE)
+	applyUserRootfs(vmi, in.RootfsBytes)
 	hugepage, hugepageErr := applyHugepages(vmi, in.Pod)
 	if hugepageErr != nil {
 		res.Errors = append(res.Errors, hugepageErr)
@@ -362,6 +364,23 @@ func applyRootfs(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig, tee
 		},
 	})
 	_ = tee
+}
+
+func applyUserRootfs(vmi *virtv1.VirtualMachineInstance, imageBytes int64) {
+	cap := sandbox.UserRootfsCapacity(imageBytes)
+	vmi.Spec.Domain.Devices.Disks = append(vmi.Spec.Domain.Devices.Disks, virtv1.Disk{
+		Name:   sandbox.UserRootfsVolume,
+		Serial: sandbox.UserRootfsSerial,
+		DiskDevice: virtv1.DiskDevice{
+			Disk: &virtv1.DiskTarget{Bus: virtv1.DiskBusVirtio},
+		},
+	})
+	vmi.Spec.Volumes = append(vmi.Spec.Volumes, virtv1.Volume{
+		Name: sandbox.UserRootfsVolume,
+		VolumeSource: virtv1.VolumeSource{
+			EmptyDisk: &virtv1.EmptyDiskSource{Capacity: cap},
+		},
+	})
 }
 
 func applyHugepages(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod) (string, error) {

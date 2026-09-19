@@ -12,8 +12,9 @@ import (
 
 const (
 	MethodPing       = "Ping"
-	MethodRootfs     = "Rootfs"
-	MethodStart      = "Start"
+	MethodRootfs        = "Rootfs"
+	MethodPrepareRootfs = "PrepareRootfs"
+	MethodStart         = "Start"
 	MethodStop       = "Stop"
 	MethodWait       = "Wait"
 	MethodExec       = "Exec"
@@ -49,6 +50,14 @@ type RootfsChunk struct {
 	ContainerID string `json:"containerID"`
 	Data        []byte `json:"data"`
 	EOF         bool   `json:"eof"`
+}
+
+// PrepareRootfsRequest asks the agent to mkfs+mount the user-rootfs emptyDisk.
+type PrepareRootfsRequest struct {
+	ContainerID string `json:"containerID"`
+	Serial      string `json:"serial"`
+	ImageBytes  int64  `json:"imageBytes"`
+	DiskBytes   int64  `json:"diskBytes"`
 }
 
 // Mount is a guest path already backed by a virtio disk or tmpfs.
