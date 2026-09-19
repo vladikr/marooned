@@ -31,9 +31,9 @@ type container struct {
 }
 
 type agent struct {
-	mu       sync.Mutex
-	ctrs     map[string]*container
-	tarFiles map[string]*os.File
+	mu        sync.Mutex
+	ctrs      map[string]*container
+	unpackers map[string]*unpackJob
 }
 
 func main() {
@@ -41,7 +41,7 @@ func main() {
 	listen := flag.String("listen", "vsock://:1024", "listen address: vsock://:port, tcp://host:port, or unix:///path")
 	flag.Parse()
 
-	a := &agent{ctrs: map[string]*container{}, tarFiles: map[string]*os.File{}}
+	a := &agent{ctrs: map[string]*container{}, unpackers: map[string]*unpackJob{}}
 	ln, err := vsock.Listen(*listen)
 	if err != nil {
 		klog.Warningf("listen %s: %v; falling back to tcp://0.0.0.0:1024", *listen, err)

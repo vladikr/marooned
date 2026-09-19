@@ -24,8 +24,13 @@ func TestUnpackTar(t *testing.T) {
 	}
 	_ = tw.Close()
 	_ = f.Close()
+	in, err := os.Open(tarPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
 	dest := filepath.Join(src, "root")
-	if err := unpackTar(tarPath, dest); err != nil {
+	if err := unpackTar(in, dest); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dest, "bin/busybox"))

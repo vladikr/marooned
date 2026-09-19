@@ -16,6 +16,11 @@ import (
 
 const ctrRoot = "/var/lib/marooned"
 
+type unpackJob struct {
+	w   *io.PipeWriter
+	err chan error
+}
+
 func (a *agent) rootfs(payload []byte) error {
 	var req agentproto.RootfsChunk
 	if err := json.Unmarshal(payload, &req); err != nil {
@@ -25,49 +30,43 @@ func (a *agent) rootfs(payload []byte) error {
 		return fmt.Errorf("containerID required")
 	}
 	dir := filepath.Join(ctrRoot, req.ContainerID)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-	tarPath := filepath.Join(dir, "rootfs.tar")
+	dest := filepath.Join(dir, "rootfs")
 	a.mu.Lock()
-	f := a.tarFiles[req.ContainerID]
+	job := a.unpackers[req.ContainerID]
 	a.mu.Unlock()
-	if f == nil {
-		var err error
-		f, err = os.OpenFile(tarPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-		if err != nil {
+	if job == nil {
+		if err := os.MkdirAll(dest, 0755); err != nil {
 			return err
 		}
+		pr, pw := io.Pipe()
+		errc := make(chan error, 1)
+		go func() {
+			errc <- unpackTar(pr, dest)
+			_ = pr.Close()
+		}()
+		job = &unpackJob{w: pw, err: errc}
 		a.mu.Lock()
-		a.tarFiles[req.ContainerID] = f
+		a.unpackers[req.ContainerID] = job
 		a.mu.Unlock()
 	}
 	if len(req.Data) > 0 {
-		if _, err := f.Write(req.Data); err != nil {
+		if _, err := job.w.Write(req.Data); err != nil {
 			return err
 		}
 	}
 	if !req.EOF {
 		return nil
 	}
-	_ = f.Close()
+	_ = job.w.Close()
+	err := <-job.err
 	a.mu.Lock()
-	delete(a.tarFiles, req.ContainerID)
+	delete(a.unpackers, req.ContainerID)
 	a.mu.Unlock()
-	dest := filepath.Join(dir, "rootfs")
-	if err := os.MkdirAll(dest, 0755); err != nil {
-		return err
-	}
-	return unpackTar(tarPath, dest)
+	return err
 }
 
-func unpackTar(tarPath, dest string) error {
-	f, err := os.Open(tarPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	tr := tar.NewReader(f)
+func unpackTar(r io.Reader, dest string) error {
+	tr := tar.NewReader(r)
 	dest = filepath.Clean(dest)
 	for {
 		hdr, err := tr.Next()

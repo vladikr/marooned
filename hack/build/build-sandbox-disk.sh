@@ -58,10 +58,8 @@ tar -C "${out}/kpkg" -xzf "${out}/linux-lts.apk" 2>/dev/null || tar -C "${out}/k
 find "${out}/kpkg" -name 'vmlinuz*' | head -1 | xargs -I{} cp {} "${out}/kernel/vmlinuz"
 cp "${out}/marooned-agent" "${out}/rootfs/usr/local/bin/marooned-agent"
 chmod +x "${out}/rootfs/usr/local/bin/marooned-agent"
-if [ -d "${out}/kpkg/lib/modules" ]; then
-  mkdir -p "${out}/rootfs/lib"
-  cp -a "${out}/kpkg/lib/modules" "${out}/rootfs/lib/"
-fi
+# vsock is insmod'd in initrd. Copying the full linux-lts module tree
+# fills a 512M disk (~hundreds of MiB) so user rootfs unpack hits ENOSPC.
 rm -f "${out}/rootfs/sbin/init"
 cat > "${out}/rootfs/sbin/init" << 'INIT'
 #!/bin/sh
@@ -145,7 +143,7 @@ gzip -dc "${out}/kernel/initrd" | cpio -t | grep -E '^\./init$|busybox|^./bin/sh
 
 echo "creating ext4 qcow2"
 rm -f "${out}/disk.raw" "${out}/disk.qcow2"
-truncate -s 512M "${out}/disk.raw"
+truncate -s 2G "${out}/disk.raw"
 mke2fs -t ext4 -d "${out}/rootfs" -E root_owner=0:0 -F "${out}/disk.raw"
 qemu-img convert -f raw -O qcow2 "${out}/disk.raw" "${out}/disk.qcow2"
 
