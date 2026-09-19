@@ -73,7 +73,7 @@ cluster-up:
 		exit 1; \
 	fi
 	@# kubevirt-cluster.sh sets KUBEVIRTCI_PODMAN_SOCKET from XDG_RUNTIME_DIR
-	. ./hack/kubevirt-cluster.sh && ensure_host_iptables_modules && eval "KUBEVIRT_RELEASE=${KUBEVIRT_RELEASE} ./cluster-up/up.sh"
+	. ./hack/kubevirt-cluster.sh && ensure_host_iptables_modules && ensure_host_vsock && eval "KUBEVIRT_RELEASE=${KUBEVIRT_RELEASE} ./cluster-up/up.sh"
 
 cluster-down:
 	@if [ -n "$${KUBEVIRT_DIR}" ]; then \

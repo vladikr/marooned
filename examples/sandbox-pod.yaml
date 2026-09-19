@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: isolated-busybox
+  name: isolated-busybox1
 spec:
   runtimeClassName: marooned
   containers:
   - name: box
     image: docker.io/library/busybox:latest
-    imagePullPolicy: IfNotPresent
+    imagePullPolicy: Always
     command: ["sleep", "3600"]

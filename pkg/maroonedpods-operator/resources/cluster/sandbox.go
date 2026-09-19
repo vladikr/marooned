@@ -56,8 +56,8 @@ func createRuntimeClass() *nodev1.RuntimeClass {
 		Handler: utils2.RuntimeHandler,
 		Overhead: &nodev1.Overhead{
 			PodFixed: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("100m"),
-				corev1.ResourceMemory: resource.MustParse("128Mi"),
+				corev1.ResourceCPU:    resource.MustParse("25m"),
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
 			},
 		},
 	}
@@ -115,8 +115,10 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: utils2.ShimServiceAccountName,
-					HostNetwork:        false,
-					HostPID:            true,
+					// vsock CIDs of KubeVirt guests are in the node's vsock
+					// namespace; a pod netns cannot connect (timeout).
+					HostNetwork: true,
+					HostPID:     true,
 					Containers: []corev1.Container{
 						{
 							Name:            "shim",

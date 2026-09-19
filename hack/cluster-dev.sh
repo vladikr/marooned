@@ -16,7 +16,16 @@ export SKIP_GUEST_DISK=0
 export CACHEBUST="${CACHEBUST:-$(date +%s)}"
 export PULL_POLICY="${PULL_POLICY:-Always}"
 provider="${KUBEVIRT_PROVIDER:-k8s-1.37}"
-echo "CACHEBUST=${CACHEBUST} PULL_POLICY=${PULL_POLICY}"
+echo "CACHEBUST=${CACHEBUST} PULL_POLICY=${PULL_POLICY} KUBEVIRT_MEMORY_SIZE=${KUBEVIRT_MEMORY_SIZE:-5120M}"
+if [ "${KUBEVIRT_MEMORY_SIZE:-5120M}" = "5120M" ] && [ "$provider" != "external" ]; then
+  echo "NOTE: kubevirtci default node RAM is 5Gi. KubeVirt + a 512Mi guest is tight."
+  echo "      Rebuild the cluster with:  export KUBEVIRT_MEMORY_SIZE=16384M"
+fi
+
+if [ "$provider" != "external" ]; then
+  echo "==> vhost-vsock + KubeVirt VSOCK gate"
+  ./hack/ensure-vsock.sh
+fi
 
 echo "==> cluster-sync (CRDs + operator + config)"
 make cluster-sync

@@ -17,6 +17,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"maroonedpods.io/maroonedpods/pkg/sandbox/agentproto"
+	"maroonedpods.io/maroonedpods/pkg/sandbox/vsock"
 )
 
 type container struct {
@@ -36,15 +37,19 @@ type agent struct {
 
 func main() {
 	klog.InitFlags(nil)
-	listen := flag.String("listen", "tcp://0.0.0.0:1024", "listen address: tcp://host:port or unix:///path")
+	listen := flag.String("listen", "vsock://:1024", "listen address: vsock://:port, tcp://host:port, or unix:///path")
 	flag.Parse()
 
 	a := &agent{ctrs: map[string]*container{}}
-	ln, err := listenAddr(*listen)
+	ln, err := vsock.Listen(*listen)
+	if err != nil {
+		klog.Warningf("listen %s: %v; falling back to tcp://0.0.0.0:1024", *listen, err)
+		ln, err = vsock.Listen("tcp://0.0.0.0:1024")
+	}
 	if err != nil {
 		klog.Fatalf("listen: %v", err)
 	}
-	klog.Infof("marooned-agent listening on %s", *listen)
+	klog.Infof("marooned-agent listening on %s (%T)", ln.Addr().String(), ln)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -52,19 +57,6 @@ func main() {
 			continue
 		}
 		go a.serve(conn)
-	}
-}
-
-func listenAddr(addr string) (net.Listener, error) {
-	switch {
-	case len(addr) >= 6 && addr[:6] == "tcp://":
-		return net.Listen("tcp", addr[6:])
-	case len(addr) >= 7 && addr[:7] == "unix://":
-		path := addr[7:]
-		_ = os.Remove(path)
-		return net.Listen("unix", path)
-	default:
-		return net.Listen("tcp", addr)
 	}
 }
 

@@ -3,6 +3,7 @@ package adaptor
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -153,7 +154,8 @@ func (a *Adaptor) Execute() bool {
 	case Forget:
 		a.queue.Forget(key)
 	case Immediate:
-		a.queue.Add(key)
+		// Do not tight-loop: that starves handleDelete on other pods.
+		a.queue.AddAfter(key, 2*time.Second)
 	}
 	return true
 }
@@ -333,7 +335,11 @@ func (a *Adaptor) applyTranslation(vmi *virtv1.VirtualMachineInstance, tr transl
 func (a *Adaptor) annotatePod(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstance) error {
 	want := fmt.Sprintf("%s/%s", vmi.Namespace, vmi.Name)
 	ip := guestIP(vmi)
-	if pod.Annotations != nil && pod.Annotations[util.VMIAnnotation] == want && pod.Annotations[util.GuestIPAnnotation] == ip {
+	cid := ""
+	if vmi.Status.VSOCKCID != nil {
+		cid = strconv.FormatUint(uint64(*vmi.Status.VSOCKCID), 10)
+	}
+	if pod.Annotations != nil && pod.Annotations[util.VMIAnnotation] == want && pod.Annotations[util.GuestIPAnnotation] == ip && pod.Annotations[util.VsockCIDAnnotation] == cid {
 		return nil
 	}
 	copyPod := pod.DeepCopy()
@@ -343,6 +349,9 @@ func (a *Adaptor) annotatePod(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstanc
 	copyPod.Annotations[util.VMIAnnotation] = want
 	if ip != "" {
 		copyPod.Annotations[util.GuestIPAnnotation] = ip
+	}
+	if cid != "" {
+		copyPod.Annotations[util.VsockCIDAnnotation] = cid
 	}
 	_, err := a.maroonedpodsCli.CoreV1().Pods(copyPod.Namespace).Update(context.Background(), copyPod, metav1.UpdateOptions{})
 	return err

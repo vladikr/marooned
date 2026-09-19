@@ -82,25 +82,21 @@ func waitForVMI(kube *kubernetes.Clientset, timeout time.Duration) func(ctx cont
 				time.Sleep(time.Second)
 				continue
 			}
-			addr := agentAddr(pod.Annotations[util.GuestIPAnnotation])
-			return vmi, addr, nil
+			if cid := pod.Annotations[util.VsockCIDAnnotation]; cid != "" {
+				return vmi, fmt.Sprintf("vsock:%s:1024", cid), nil
+			}
+			klog.V(2).Infof("waiting for vsock CID annotation on %s/%s (vmi %s)", ns, name, vmi)
+			time.Sleep(time.Second)
 		}
 		return "", "", fmt.Errorf("timed out waiting for sandbox VMI annotation on %s/%s", ns, name)
 	}
-}
-
-func agentAddr(guestIP string) string {
-	if guestIP != "" {
-		return fmt.Sprintf("tcp:%s:%d", guestIP, 1024)
-	}
-	return "vsock:3:1024"
 }
 
 func dialAgent(store *cri.Store) cri.AgentDialer {
 	return func(sandboxID string) (*agentproto.Client, error) {
 		addr := store.AgentAddr(sandboxID)
 		if addr == "" {
-			addr = "vsock:3:1024"
+			return nil, fmt.Errorf("no agent address for sandbox %s (RunPodSandbox did not run)", sandboxID)
 		}
 		conn, err := vsock.Dial(addr, 5*time.Second)
 		if err != nil {

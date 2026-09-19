@@ -104,12 +104,14 @@ if [ -x "$K" ] || command -v "$K" >/dev/null 2>&1; then
     exit 1
   fi
 
-  echo "restarting operator, controller, and shim"
+  echo "restarting operator, controller, webhook server, and shim"
   $K rollout restart deploy/maroonedpods-operator -n maroonedpods 2>/dev/null || true
   $K rollout restart deploy/maroonedpods-controller -n maroonedpods 2>/dev/null || true
+  $K rollout restart deploy/maroonedpods-server -n maroonedpods 2>/dev/null || true
   $K rollout restart ds/marooned-shim -n marooned-system 2>/dev/null || true
   $K rollout status deploy/maroonedpods-operator -n maroonedpods --timeout=180s 2>/dev/null || true
   $K rollout status deploy/maroonedpods-controller -n maroonedpods --timeout=180s 2>/dev/null || true
+  $K rollout status deploy/maroonedpods-server -n maroonedpods --timeout=180s 2>/dev/null || true
   $K rollout status ds/marooned-shim -n marooned-system --timeout=180s 2>/dev/null || true
 
   if [ "${SKIP_GUEST_DISK:-0}" != "1" ]; then

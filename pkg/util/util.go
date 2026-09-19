@@ -87,6 +87,7 @@ const (
 	SandboxSizeClassLabel          = "maroonedpods.io/size-class"
 	VMIAnnotation                  = "maroonedpods.io/vmi"
 	GuestIPAnnotation              = "maroonedpods.io/guest-ip"
+	VsockCIDAnnotation             = "maroonedpods.io/vsock-cid"
 	TEEAnnotation                  = "maroonedpods.io/tee"
 	SRIOVNetworkAnnotation         = "maroonedpods.io/sriov-network"
 	AgentReadyAnnotation           = "maroonedpods.io/agent-ready"

@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	virtv1 "kubevirt.io/api/core/v1"
 
@@ -90,9 +91,20 @@ var _ = Describe("[e2e] Sandbox RuntimeClass", func() {
 			Expect(v.Name).ToNot(Equal(vmiName))
 		}
 
-		By("not requiring the user Pod to be Ready until CRI-O has handler marooned")
-		userPod, err := f.GetPod(podName)
-		Expect(err).ToNot(HaveOccurred())
-		Expect(userPod.Spec.NodeName).NotTo(BeEmpty())
+		By("user Pod should run (dummy CRI-O pid) once the handler is installed")
+		Eventually(func() corev1.PodPhase {
+			userPod, err := f.GetPod(podName)
+			if err != nil {
+				return ""
+			}
+			return userPod.Status.Phase
+		}, testutils.DefaultTimeout, 2*time.Second).Should(Equal(corev1.PodRunning))
+
+		By("deleting the Pod must delete the sandbox VMI")
+		Expect(f.DeletePod(podName)).To(Succeed())
+		Eventually(func() bool {
+			_, err := f.GetVMI(ns, vmiName)
+			return k8serrors.IsNotFound(err)
+		}, testutils.DefaultTimeout, 2*time.Second).Should(BeTrue())
 	})
 })

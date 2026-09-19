@@ -28,6 +28,11 @@ func IsSandboxPod(pod *corev1.Pod) bool {
 // persist stripped volume spec, set placement, finalizer, mode label,
 // strip devices/hugepages/PVCs. CPU/memory requests stay.
 func MutateSandboxPod(pod *corev1.Pod) error {
+	// Do not re-add the finalizer on a deleting pod; that traps the object
+	// in Terminating (adaptor strips it, webhook puts it back).
+	if pod.DeletionTimestamp != nil && !pod.DeletionTimestamp.IsZero() {
+		return nil
+	}
 	if pod.Labels == nil {
 		pod.Labels = map[string]string{}
 	}

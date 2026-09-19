@@ -116,3 +116,11 @@ until kubectl wait -n kubevirt kv kubevirt --for condition=Available --timeout 5
     echo "Error waiting for KubeVirt to be Available, sleeping 1m and retrying"
     sleep 1m
 done
+
+# Sandbox VMIs set autoattachVSOCK. virt-handler only advertises
+# devices.kubevirt.io/vhost-vsock when this gate is on.
+if [ -x "${KUBEVIRTCI_PATH}/../hack/ensure-vsock.sh" ]; then
+    "${KUBEVIRTCI_PATH}/../hack/ensure-vsock.sh"
+elif [ -x "$(dirname "${BASH_SOURCE[0]}")/../hack/ensure-vsock.sh" ]; then
+    "$(dirname "${BASH_SOURCE[0]}")/../hack/ensure-vsock.sh"
+fi

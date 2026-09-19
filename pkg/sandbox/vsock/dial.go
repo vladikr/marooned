@@ -3,10 +3,42 @@ package vsock
 import (
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// Listen starts a guest-side agent listener.
+// addr is "tcp://host:port", "unix:///path", or "vsock://:port".
+func Listen(addr string) (net.Listener, error) {
+	switch {
+	case strings.HasPrefix(addr, "tcp://"):
+		return net.Listen("tcp", strings.TrimPrefix(addr, "tcp://"))
+	case strings.HasPrefix(addr, "unix://"):
+		path := strings.TrimPrefix(addr, "unix://")
+		_ = os.Remove(path)
+		return net.Listen("unix", path)
+	case strings.HasPrefix(addr, "vsock://"):
+		rest := strings.TrimPrefix(addr, "vsock://")
+		if rest == "" {
+			rest = ":1024"
+		}
+		if !strings.Contains(rest, ":") {
+			rest = ":" + rest
+		}
+		if strings.HasPrefix(rest, ":") {
+			rest = "0" + rest
+		}
+		_, port, err := parseHostPort(rest)
+		if err != nil {
+			return nil, err
+		}
+		return listenVsock(port)
+	default:
+		return net.Listen("tcp", addr)
+	}
+}
 
 // Dial opens a connection to the guest agent.
 // addr is "tcp:host:port" or "vsock:cid:port".

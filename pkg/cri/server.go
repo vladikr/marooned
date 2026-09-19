@@ -95,7 +95,7 @@ func (s *Server) runPodSandbox(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
 	defer cancel()
 	sb, err := s.Runtime.RunPodSandbox(ctx, &req)
 	if err != nil {

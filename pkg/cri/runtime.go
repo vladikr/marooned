@@ -220,24 +220,42 @@ func (r *Runtime) RunPodSandbox(ctx context.Context, req *RunPodSandboxRequest) 
 		id = req.PodNamespace + "-" + req.PodName
 	}
 	klog.Infof("RunPodSandbox %s/%s", req.PodNamespace, req.PodName)
+	if existing := r.store.GetSandbox(id); existing != nil && existing.State == "SANDBOX_READY" && r.store.AgentAddr(id) != "" {
+		return existing, nil
+	}
 	vmi, addr, err := r.waitVM(ctx, req.PodNamespace, req.PodName)
 	if err != nil {
 		return nil, err
 	}
-	sb := &PodSandbox{ID: id, Name: req.PodName, Namespace: req.PodNamespace, UID: req.PodUID, State: "SANDBOX_READY", VMI: vmi}
-	r.store.PutSandbox(sb)
 	r.store.SetAgentAddr(id, addr)
 	if r.dial != nil {
-		cli, err := r.dial(id)
-		if err != nil {
-			return nil, fmt.Errorf("agent ping: %w", err)
+		var last error
+		n := 0
+		for {
+			cli, err := r.dial(id)
+			if err == nil {
+				err = cli.Ping(3 * time.Second)
+				_ = cli.Close()
+				if err == nil {
+					sb := &PodSandbox{ID: id, Name: req.PodName, Namespace: req.PodNamespace, UID: req.PodUID, State: "SANDBOX_READY", VMI: vmi}
+					r.store.PutSandbox(sb)
+					return sb, nil
+				}
+			}
+			last = err
+			n++
+			if n == 1 || n%5 == 0 {
+				klog.Infof("waiting for guest agent at %s (%d): %v", addr, n, last)
+			}
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("agent ping: %w", last)
+			case <-time.After(time.Second):
+			}
 		}
-		if err := cli.Ping(5 * time.Second); err != nil {
-			_ = cli.Close()
-			return nil, fmt.Errorf("agent ping: %w", err)
-		}
-		_ = cli.Close()
 	}
+	sb := &PodSandbox{ID: id, Name: req.PodName, Namespace: req.PodNamespace, UID: req.PodUID, State: "SANDBOX_READY", VMI: vmi}
+	r.store.PutSandbox(sb)
 	return sb, nil
 }
 

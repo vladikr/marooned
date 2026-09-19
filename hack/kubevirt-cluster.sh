@@ -97,3 +97,24 @@ ensure_host_iptables_modules() {
     echo "  printf '%s\\n' $mods | sudo tee /etc/modules-load.d/kubevirtci.conf" >&2
     return 1
 }
+
+# virt-handler only advertises devices.kubevirt.io/vhost-vsock when the
+# VSOCK feature gate is on and /dev/vhost-vsock exists on the node.
+ensure_host_vsock() {
+    if [ -e /dev/vhost-vsock ]; then
+        return 0
+    fi
+    local mods="vsock vhost_vsock"
+    echo "Host /dev/vhost-vsock is missing (needed for nested virtio-vsock)."
+    if sudo -n true 2>/dev/null; then
+        # shellcheck disable=SC2086
+        sudo -n modprobe $mods || true
+        if [ -e /dev/vhost-vsock ]; then
+            echo "Loaded host vhost_vsock."
+            return 0
+        fi
+    fi
+    echo "Load vhost_vsock, then retry:" >&2
+    echo "  sudo modprobe vsock vhost_vsock" >&2
+    return 1
+}

@@ -120,16 +120,23 @@ func doCreate(root string, args []string) int {
 		_ = os.WriteFile(filepath.Join(dir, "pidfile"), []byte(pidFile), 0644)
 	}
 	_ = os.WriteFile(filepath.Join(dir, "bundle"), []byte(bundle), 0644)
-	ns, name, sandbox := podFromBundle(bundle)
-	if ns != "" {
-		_ = os.WriteFile(filepath.Join(dir, "pod"), []byte(ns+"/"+name), 0644)
+	meta := podFromBundle(bundle)
+	if meta.Namespace != "" {
+		_ = os.WriteFile(filepath.Join(dir, "pod"), []byte(meta.Namespace+"/"+meta.Name), 0644)
+		_ = os.WriteFile(filepath.Join(dir, "poduid"), []byte(meta.UID), 0644)
+		_ = os.WriteFile(filepath.Join(dir, "ctrname"), []byte(meta.Container), 0644)
 	}
-	if sandbox && ns != "" {
-		go func() {
-			_, _ = shimJSON("POST", "/v1/RunPodSandbox", map[string]string{
-				"podName": name, "podNamespace": ns, "podUID": id,
-			})
-		}()
+	if meta.Sandbox {
+		_ = os.WriteFile(filepath.Join(dir, "sandbox"), []byte("1"), 0644)
+	}
+	// CRI-O often has drop_infra_ctr: there is no pause sandbox, only the
+	// user container. Always register the sandbox before start.
+	if meta.Namespace != "" && meta.UID != "" {
+		if _, err := shimJSON("POST", "/v1/RunPodSandbox", map[string]string{
+			"podName": meta.Name, "podNamespace": meta.Namespace, "podUID": meta.UID,
+		}); err != nil {
+			fatal("RunPodSandbox: %v", err)
+		}
 	}
 	return 0
 }
@@ -149,18 +156,37 @@ func doStart(root string, args []string) int {
 	}
 	st.Status = "running"
 	writeState(dir, st)
+	if strings.TrimSpace(string(mustRead(filepath.Join(dir, "sandbox")))) == "1" {
+		return 0
+	}
 	bundle := strings.TrimSpace(string(mustRead(filepath.Join(dir, "bundle"))))
 	argsCmd, _ := processArgs(bundle)
-	pod := strings.TrimSpace(string(mustRead(filepath.Join(dir, "pod"))))
-	if len(argsCmd) > 0 && pod != "" {
-		go func() {
-			cid := id
-			_, _ = shimJSON("POST", "/v1/CreateContainer", map[string]interface{}{
-				"sandboxID": pod,
-				"container": map[string]interface{}{"name": "box", "command": argsCmd},
-			})
-			_, _ = shimJSON("POST", "/v1/StartContainer", map[string]string{"id": cid})
-		}()
+	podUID := strings.TrimSpace(string(mustRead(filepath.Join(dir, "poduid"))))
+	ctrName := strings.TrimSpace(string(mustRead(filepath.Join(dir, "ctrname"))))
+	if ctrName == "" {
+		ctrName = "box"
+	}
+	if len(argsCmd) > 0 && podUID != "" {
+		pod := strings.TrimSpace(string(mustRead(filepath.Join(dir, "pod"))))
+		ns, name, _ := strings.Cut(pod, "/")
+		if ns != "" && name != "" {
+			if _, err := shimJSON("POST", "/v1/RunPodSandbox", map[string]string{
+				"podName": name, "podNamespace": ns, "podUID": podUID,
+			}); err != nil {
+				fatal("RunPodSandbox: %v", err)
+			}
+		}
+		criID := podUID + "-" + ctrName
+		_ = os.WriteFile(filepath.Join(dir, "criid"), []byte(criID), 0644)
+		if _, err := shimJSON("POST", "/v1/CreateContainer", map[string]interface{}{
+			"sandboxID": podUID,
+			"container": map[string]interface{}{"name": ctrName, "command": argsCmd},
+		}); err != nil {
+			fatal("CreateContainer: %v", err)
+		}
+		if _, err := shimJSON("POST", "/v1/StartContainer", map[string]string{"id": criID}); err != nil {
+			fatal("StartContainer: %v", err)
+		}
 	}
 	return 0
 }
@@ -187,6 +213,7 @@ func doKill(root string, args []string) int {
 		return 0
 	}
 	_ = exec.Command("systemctl", "stop", pauseUnit(id)).Run()
+	stopGuest(dir)
 	if st.PID > 1 {
 		target := st.PID
 		if all {
@@ -207,6 +234,7 @@ func doDelete(root string, args []string) int {
 	id := lastID(args)
 	dir := filepath.Join(root, id)
 	_ = exec.Command("systemctl", "stop", pauseUnit(id)).Run()
+	stopGuest(dir)
 	st, err := readState(dir)
 	if err == nil && st.PID > 1 && pidAlive(st.PID) {
 		_ = syscall.Kill(-st.PID, syscall.SIGKILL)
@@ -447,20 +475,46 @@ func mustRead(p string) []byte {
 	return b
 }
 
-func podFromBundle(bundle string) (ns, name string, sandbox bool) {
+type bundleMeta struct {
+	Namespace string
+	Name      string
+	UID       string
+	Container string
+	Sandbox   bool
+}
+
+func podFromBundle(bundle string) bundleMeta {
 	b, err := os.ReadFile(filepath.Join(bundle, "config.json"))
 	if err != nil {
-		return "", "", false
+		return bundleMeta{}
 	}
 	var cfg struct {
 		Annotations map[string]string `json:"annotations"`
 	}
 	_ = json.Unmarshal(b, &cfg)
-	ns = firstAnno(cfg.Annotations, "io.kubernetes.cri.sandbox-namespace", "io.kubernetes.pod.namespace")
-	name = firstAnno(cfg.Annotations, "io.kubernetes.cri.sandbox-name", "io.kubernetes.pod.name")
 	ct := firstAnno(cfg.Annotations, "io.kubernetes.cri-o.ContainerType", "io.kubernetes.cri.container-type")
-	sandbox = ct == "sandbox"
-	return ns, name, sandbox
+	return bundleMeta{
+		Namespace: firstAnno(cfg.Annotations, "io.kubernetes.cri.sandbox-namespace", "io.kubernetes.pod.namespace"),
+		Name:      firstAnno(cfg.Annotations, "io.kubernetes.cri.sandbox-name", "io.kubernetes.pod.name"),
+		UID:       firstAnno(cfg.Annotations, "io.kubernetes.pod.uid", "io.kubernetes.cri.sandbox-uid"),
+		Container: firstAnno(cfg.Annotations, "io.kubernetes.container.name", "io.kubernetes.cri.container-name"),
+		Sandbox:   ct == "sandbox",
+	}
+}
+
+func stopGuest(dir string) {
+	if strings.TrimSpace(string(mustRead(filepath.Join(dir, "sandbox")))) == "1" {
+		uid := strings.TrimSpace(string(mustRead(filepath.Join(dir, "poduid"))))
+		if uid != "" {
+			_, _ = shimJSON("POST", "/v1/StopPodSandbox", map[string]string{"id": uid})
+			_, _ = shimJSON("POST", "/v1/RemovePodSandbox", map[string]string{"id": uid})
+		}
+		return
+	}
+	criID := strings.TrimSpace(string(mustRead(filepath.Join(dir, "criid"))))
+	if criID != "" {
+		_, _ = shimJSON("POST", "/v1/StopContainer", map[string]interface{}{"id": criID, "timeout": 15})
+	}
 }
 
 func firstAnno(m map[string]string, keys ...string) string {
@@ -503,14 +557,21 @@ func shimJSON(method, path string, payload interface{}) ([]byte, error) {
 				return net.Dial("unix", shimSock)
 			},
 		},
-		Timeout: 90 * time.Second,
+		Timeout: 4 * time.Minute,
 	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return body, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	return body, nil
 }
 
 func fatal(f string, a ...interface{}) {

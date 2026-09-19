@@ -91,6 +91,24 @@ func TestTranslateCPUMemory(t *testing.T) {
 	}
 }
 
+func TestTranslateMemoryFloor(t *testing.T) {
+	p := podWithResources("", "")
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})
+	got := res.GuestMem.Value()
+	min := int64(512 * 1024 * 1024)
+	if got < min {
+		t.Fatalf("guest memory %d below 512Mi floor (was ExtraGuestOverhead-only 64Mi; guest OOM panics)", got)
+	}
+}
+
+func TestTranslateAutoattachVSOCK(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})
+	if res.VMI.Spec.Domain.Devices.AutoattachVSOCK == nil || !*res.VMI.Spec.Domain.Devices.AutoattachVSOCK {
+		t.Fatal("sandbox VMI must autoattach vsock")
+	}
+}
+
 func TestTranslateDefaultAgentDisk(t *testing.T) {
 	p := podWithResources("1", "512Mi")
 	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})
