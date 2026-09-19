@@ -13,7 +13,8 @@ spec:
   runtimeClassName: marooned
   containers:
   - name: box
-    image: busybox
+    image: docker.io/library/busybox:latest
+    imagePullPolicy: IfNotPresent
     command: ["sleep", "3600"]
 ```
 
@@ -158,6 +159,11 @@ spec:
   sandbox:
     infraNamespace: marooned-system
     rootfsImage: quay.io/vladikr/marooned-sandbox:latest
+    kernelBoot:
+      image: quay.io/vladikr/marooned-kernel:latest
+      kernelPath: /boot/vmlinuz
+      initrdPath: /boot/initrd
+      kernelArgs: "root=/dev/vda rootfstype=ext4 rw console=ttyS0"
     warmPoolSize: 2
     network:
       binding: masquerade   # use l2bridge when the cluster has primary UDN

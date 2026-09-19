@@ -91,6 +91,48 @@ func TestTranslateCPUMemory(t *testing.T) {
 	}
 }
 
+func TestTranslateMemoryFloor(t *testing.T) {
+	p := podWithResources("", "")
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})
+	got := res.GuestMem.Value()
+	min := int64(512 * 1024 * 1024)
+	if got < min {
+		t.Fatalf("guest memory %d below 512Mi floor (was ExtraGuestOverhead-only 64Mi; guest OOM panics)", got)
+	}
+}
+
+func TestTranslateAutoattachVSOCK(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})
+	if res.VMI.Spec.Domain.Devices.AutoattachVSOCK == nil || !*res.VMI.Spec.Domain.Devices.AutoattachVSOCK {
+		t.Fatal("sandbox VMI must autoattach vsock")
+	}
+}
+
+func TestTranslateDefaultAgentDisk(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})
+	if len(res.Errors) != 0 {
+		t.Fatalf("errors: %v", res.Errors)
+	}
+	found := false
+	for _, vol := range res.VMI.Spec.Volumes {
+		if vol.ContainerDisk != nil && vol.ContainerDisk.Image == util.DefaultSandboxRootfsImage {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected rootfs %s", util.DefaultSandboxRootfsImage)
+	}
+	fw := res.VMI.Spec.Domain.Firmware
+	if fw == nil || fw.KernelBoot == nil || fw.KernelBoot.Container == nil {
+		t.Fatal("non-TEE guest must kernelBoot the agent disk")
+	}
+	if fw.KernelBoot.Container.Image != util.DefaultSandboxKernelImage {
+		t.Fatalf("kernel image %s", fw.KernelBoot.Container.Image)
+	}
+}
+
 func TestTranslateHugepages(t *testing.T) {
 	p := podWithResources("1", "1Gi")
 	p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("hugepages-2Mi")] = resource.MustParse("64Mi")

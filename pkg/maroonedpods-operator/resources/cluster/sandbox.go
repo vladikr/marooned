@@ -56,8 +56,8 @@ func createRuntimeClass() *nodev1.RuntimeClass {
 		Handler: utils2.RuntimeHandler,
 		Overhead: &nodev1.Overhead{
 			PodFixed: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("100m"),
-				corev1.ResourceMemory: resource.MustParse("128Mi"),
+				corev1.ResourceCPU:    resource.MustParse("25m"),
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
 			},
 		},
 	}
@@ -115,7 +115,10 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: utils2.ShimServiceAccountName,
-					HostNetwork:        false,
+					// vsock CIDs of KubeVirt guests are in the node's vsock
+					// namespace; a pod netns cannot connect (timeout).
+					HostNetwork: true,
+					HostPID:     true,
 					Containers: []corev1.Container{
 						{
 							Name:            "shim",
@@ -127,6 +130,8 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 								{Name: "marooned-run", MountPath: "/var/run/marooned"},
 								{Name: "containerd", MountPath: "/run/containerd"},
 								{Name: "host-opt", MountPath: "/host-opt"},
+								{Name: "host-usr-local-bin", MountPath: "/host-usr-local-bin"},
+								{Name: "host-crio-dropin", MountPath: "/host-crio-dropin"},
 							},
 						},
 					},
@@ -147,6 +152,18 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 							Name: "host-opt",
 							VolumeSource: corev1.VolumeSource{
 								HostPath: &corev1.HostPathVolumeSource{Path: "/opt/marooned", Type: &hostPathDir},
+							},
+						},
+						{
+							Name: "host-usr-local-bin",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{Path: "/usr/local/bin", Type: &hostPathDir},
+							},
+						},
+						{
+							Name: "host-crio-dropin",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{Path: "/etc/crio/crio.conf.d", Type: &hostPathDir},
 							},
 						},
 					},

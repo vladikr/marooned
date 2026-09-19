@@ -40,9 +40,9 @@ build_agent() {
   echo "go not found. Install Go, set GO=/path/to/go, or install podman/docker." >&2
   exit 1
 }
-build_agent()
+build_agent
 
-echo "fetching alpine minirootfs + linux-lts"
+echo "fetching alpine minirootfs and linux-lts"
 curl -fsSL -o "${out}/minirootfs.tgz" \
   https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/x86_64/alpine-minirootfs-3.18.6-x86_64.tar.gz
 apk_index="$(curl -fsSL https://dl-cdn.alpinelinux.org/alpine/v3.18/main/x86_64/APKINDEX.tar.gz | tar -xzO APKINDEX | grep -A1 '^P:linux-lts$' | grep '^V:' | head -1 | cut -d: -f2)"
@@ -58,6 +58,10 @@ tar -C "${out}/kpkg" -xzf "${out}/linux-lts.apk" 2>/dev/null || tar -C "${out}/k
 find "${out}/kpkg" -name 'vmlinuz*' | head -1 | xargs -I{} cp {} "${out}/kernel/vmlinuz"
 cp "${out}/marooned-agent" "${out}/rootfs/usr/local/bin/marooned-agent"
 chmod +x "${out}/rootfs/usr/local/bin/marooned-agent"
+if [ -d "${out}/kpkg/lib/modules" ]; then
+  mkdir -p "${out}/rootfs/lib"
+  cp -a "${out}/kpkg/lib/modules" "${out}/rootfs/lib/"
+fi
 rm -f "${out}/rootfs/sbin/init"
 cat > "${out}/rootfs/sbin/init" << 'INIT'
 #!/bin/sh
@@ -66,10 +70,13 @@ mount -t proc proc /proc 2>/dev/null || true
 mount -t sysfs sysfs /sys 2>/dev/null || true
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 mkdir -p /dev/pts /run /tmp
+modprobe vsock 2>/dev/null || true
+modprobe virtio_vsock 2>/dev/null || true
+modprobe vmw_vsock_virtio_transport 2>/dev/null || true
 ip link set lo up 2>/dev/null || true
 ip link set eth0 up 2>/dev/null || true
 udhcpc -i eth0 -n -q -t 8 2>/dev/null || true
-exec /usr/local/bin/marooned-agent -listen tcp://0.0.0.0:1024
+exec /usr/local/bin/marooned-agent -listen vsock://:1024
 INIT
 chmod +x "${out}/rootfs/sbin/init"
 
@@ -77,8 +84,15 @@ echo "packing virtio+ext4 initramfs"
 ird="${out}/initrd-root"
 rm -rf "$ird"
 mkdir -p "$ird"/{bin,dev,proc,sys,newroot,lib/modules}
-cp "${out}/rootfs/bin/busybox" "$ird/bin/busybox"
-chmod +x "$ird/bin/busybox"
+# Copy the real binary; alpine's /bin/busybox is often a symlink.
+cp -L "${out}/rootfs/bin/busybox" "$ird/bin/busybox"
+chmod 0755 "$ird/bin/busybox"
+ln -sf busybox "$ird/bin/sh"
+# busybox is dynamically linked against musl. Without the loader, the kernel
+# reports Failed to execute /init (error -2).
+mkdir -p "$ird/lib"
+cp -L "${out}/rootfs/lib/ld-musl-x86_64.so.1" "$ird/lib/"
+ln -sf ld-musl-x86_64.so.1 "$ird/lib/libc.musl-x86_64.so.1"
 modroot=$(find "${out}/kpkg" -type d -name '6.*-lts' | head -1)
 copy_mod() {
   local n="$1"
@@ -87,24 +101,47 @@ copy_mod() {
   [ -n "$f" ] || return 0
   gzip -dc "$f" > "$ird/lib/modules/${n}.ko"
 }
-for m in virtio virtio_ring virtio_pci virtio_pci_legacy_dev virtio_pci_modern_dev virtio_blk crc16 mbcache jbd2 ext4; do
+for m in virtio virtio_ring virtio_pci virtio_pci_legacy_dev virtio_pci_modern_dev virtio_blk \
+         crc16 libcrc32c crc32c_generic crc32c-intel mbcache jbd2 ext4 \
+         vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
   copy_mod "$m"
 done
+# Kernel looks for /init. Shebang must resolve inside the initramfs (ENOENT
+# on /bin/busybox was "Failed to execute /init (error -2)").
 cat > "$ird/init" << 'IR'
-#!/bin/busybox sh
+#!/bin/sh
 BB=/bin/busybox
+exec > /dev/console 2>&1
+echo "marooned-initrd: start"
 $BB mount -t proc proc /proc
 $BB mount -t sysfs sys /sys
-$BB mount -t devtmpfs dev /dev
-for m in virtio virtio_ring virtio_pci_legacy_dev virtio_pci_modern_dev virtio_pci virtio_blk crc16 mbcache jbd2 ext4; do
-  [ -f /lib/modules/${m}.ko ] && $BB insmod /lib/modules/${m}.ko
+$BB mount -t devtmpfs dev /dev || $BB mount -t tmpfs tmpfs /dev
+mkdir -p /newroot
+for m in virtio virtio_ring virtio_pci_legacy_dev virtio_pci_modern_dev virtio_pci virtio_blk \
+         crc16 libcrc32c crc32c_generic crc32c-intel mbcache jbd2 ext4 \
+         vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
+  [ -f /lib/modules/${m}.ko ] && $BB insmod /lib/modules/${m}.ko && echo "insmod $m"
 done
-$BB sleep 1
-$BB mount -t ext4 /dev/vda /newroot || $BB mount -t ext4 /dev/vda1 /newroot
+i=0
+while [ "$i" -lt 20 ]; do
+  [ -b /dev/vda ] || [ -b /dev/vda1 ] && break
+  $BB sleep 1
+  i=$((i+1))
+done
+$BB ls -l /dev/vd* /dev/nvme* /dev/sda* 2>/dev/null || true
+if ! $BB mount -t ext4 /dev/vda /newroot; then
+  if ! $BB mount -t ext4 /dev/vda1 /newroot; then
+    echo "marooned-initrd: mount root failed"
+    exec $BB sh
+  fi
+fi
+echo "marooned-initrd: switch_root"
 exec $BB switch_root /newroot /sbin/init
 IR
-chmod +x "$ird/init"
-( cd "$ird" && find . | cpio -o -H newc 2>/dev/null | gzip -9 > "${out}/kernel/initrd" )
+chmod 0755 "$ird/init"
+( cd "$ird" && find . | cpio -o -H newc | gzip -9 > "${out}/kernel/initrd" )
+echo "initrd contains:"
+gzip -dc "${out}/kernel/initrd" | cpio -t | grep -E '^\./init$|busybox|^./bin/sh' || true
 
 echo "creating ext4 qcow2"
 rm -f "${out}/disk.raw" "${out}/disk.qcow2"

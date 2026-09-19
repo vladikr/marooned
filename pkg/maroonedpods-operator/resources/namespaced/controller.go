@@ -16,13 +16,15 @@ import (
 func createMaroonedPodsControllerResources(args *FactoryArgs) []client.Object {
 	return []client.Object{
 		createMaroonedPodsControllerServiceAccount(),
-		createControllerRoleBinding(),
+		createControllerRoleBinding(args.Namespace),
 		createControllerRole(),
 		createMaroonedPodsControllerDeployment(args.ControllerImage, args.Verbosity, args.PullPolicy, args.ImagePullSecrets, args.PriorityClassName, args.InfraNodePlacement),
 	}
 }
-func createControllerRoleBinding() *rbacv1.RoleBinding {
-	return utils2.ResourceBuilder.CreateRoleBinding(utils2.ControllerResourceName, utils2.ControllerResourceName, utils2.ControllerServiceAccountName, "")
+func createControllerRoleBinding(namespace string) *rbacv1.RoleBinding {
+	rb := utils2.ResourceBuilder.CreateRoleBinding(utils2.ControllerResourceName, utils2.ControllerResourceName, utils2.ControllerServiceAccountName, namespace)
+	rb.Namespace = namespace
+	return rb
 }
 func createControllerRole() *rbacv1.Role {
 	rules := []rbacv1.PolicyRule{

@@ -105,6 +105,7 @@ wait_maroonedpods_crd_installed $MAROONEDPODS_INSTALL_TIMEOUT
 
 _kubectl apply -f "./_out/manifests/release/maroonedpods-cr.yaml"
 wait_maroonedpods_available
+wait_mutating_webhook 180
 
 if [ -f examples/maroonedpods-config.yaml ]; then
   echo "Applying sandbox MaroonedPodsConfig"

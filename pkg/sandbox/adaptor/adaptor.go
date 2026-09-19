@@ -3,6 +3,7 @@ package adaptor
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -153,7 +154,8 @@ func (a *Adaptor) Execute() bool {
 	case Forget:
 		a.queue.Forget(key)
 	case Immediate:
-		a.queue.Add(key)
+		// Do not tight-loop: that starves handleDelete on other pods.
+		a.queue.AddAfter(key, 2*time.Second)
 	}
 	return true
 }
@@ -170,6 +172,7 @@ func (a *Adaptor) execute(key string) (error, enqueueState) {
 	if pod.Spec.RuntimeClassName == nil || *pod.Spec.RuntimeClassName != util.RuntimeClassName {
 		return nil, Forget
 	}
+	klog.Infof("sandbox adaptor reconciling %s (runtimeclass=%s node=%s)", key, util.RuntimeClassName, pod.Spec.NodeName)
 	cfg := sandbox.EffectiveSandbox(a.getConfig())
 
 	if pod.DeletionTimestamp != nil {
@@ -332,7 +335,11 @@ func (a *Adaptor) applyTranslation(vmi *virtv1.VirtualMachineInstance, tr transl
 func (a *Adaptor) annotatePod(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstance) error {
 	want := fmt.Sprintf("%s/%s", vmi.Namespace, vmi.Name)
 	ip := guestIP(vmi)
-	if pod.Annotations != nil && pod.Annotations[util.VMIAnnotation] == want && pod.Annotations[util.GuestIPAnnotation] == ip {
+	cid := ""
+	if vmi.Status.VSOCKCID != nil {
+		cid = strconv.FormatUint(uint64(*vmi.Status.VSOCKCID), 10)
+	}
+	if pod.Annotations != nil && pod.Annotations[util.VMIAnnotation] == want && pod.Annotations[util.GuestIPAnnotation] == ip && pod.Annotations[util.VsockCIDAnnotation] == cid {
 		return nil
 	}
 	copyPod := pod.DeepCopy()
@@ -343,6 +350,9 @@ func (a *Adaptor) annotatePod(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstanc
 	if ip != "" {
 		copyPod.Annotations[util.GuestIPAnnotation] = ip
 	}
+	if cid != "" {
+		copyPod.Annotations[util.VsockCIDAnnotation] = cid
+	}
 	_, err := a.maroonedpodsCli.CoreV1().Pods(copyPod.Namespace).Update(context.Background(), copyPod, metav1.UpdateOptions{})
 	return err
 }
@@ -351,6 +361,17 @@ func (a *Adaptor) handleDelete(pod *corev1.Pod, cfg mpv1.SandboxConfig) (error, 
 	if !hasFinalizer(pod.Finalizers, util.SandboxFinalizer) {
 		return nil, Forget
 	}
+	a.deleteSandboxVMI(pod, cfg)
+	copyPod := pod.DeepCopy()
+	copyPod.Finalizers = stripSandboxFinalizer(copyPod.Finalizers)
+	_, err := a.maroonedpodsCli.CoreV1().Pods(copyPod.Namespace).Update(context.Background(), copyPod, metav1.UpdateOptions{})
+	if err != nil {
+		return err, BackOff
+	}
+	return nil, Forget
+}
+
+func (a *Adaptor) deleteSandboxVMI(pod *corev1.Pod, cfg mpv1.SandboxConfig) {
 	ref := ""
 	if pod.Annotations != nil {
 		ref = pod.Annotations[util.VMIAnnotation]
@@ -358,29 +379,31 @@ func (a *Adaptor) handleDelete(pod *corev1.Pod, cfg mpv1.SandboxConfig) (error, 
 	if ref != "" {
 		ns, name := splitRef(ref)
 		obj, exists, err := a.vmiInformer.GetStore().GetByKey(ns + "/" + name)
-		if err != nil {
-			return err, BackOff
-		}
-		if exists {
+		if err == nil && exists {
 			vmi := obj.(*virtv1.VirtualMachineInstance)
 			if err := a.releaseOrDelete(pod, vmi, cfg); err != nil {
-				return err, BackOff
+				klog.Warningf("delete sandbox VMI %s/%s: %v", ns, name, err)
 			}
+			return
 		}
 	}
-	copyPod := pod.DeepCopy()
-	finalizers := copyPod.Finalizers[:0]
-	for _, f := range copyPod.Finalizers {
+	if pod.UID == "" {
+		return
+	}
+	name := util.UserNamespaceVMIPrefix + string(pod.UID)
+	if err := a.maroonedpodsCli.KubevirtClient().KubevirtV1().VirtualMachineInstances(pod.Namespace).Delete(context.Background(), name, metav1.DeleteOptions{}); err != nil {
+		klog.V(3).Infof("delete implied VMI %s/%s: %v", pod.Namespace, name, err)
+	}
+}
+
+func stripSandboxFinalizer(finalizers []string) []string {
+	out := finalizers[:0]
+	for _, f := range finalizers {
 		if f != util.SandboxFinalizer {
-			finalizers = append(finalizers, f)
+			out = append(out, f)
 		}
 	}
-	copyPod.Finalizers = finalizers
-	_, err := a.maroonedpodsCli.CoreV1().Pods(copyPod.Namespace).Update(context.Background(), copyPod, metav1.UpdateOptions{})
-	if err != nil {
-		return err, BackOff
-	}
-	return nil, Forget
+	return out
 }
 
 func (a *Adaptor) releaseOrDelete(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig) error {

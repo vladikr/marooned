@@ -201,6 +201,20 @@ func TestMutateSandboxPodStripKeepMatrix(t *testing.T) {
 	}
 }
 
+func TestMutateSandboxPodSkipsDeleting(t *testing.T) {
+	now := metav1.Now()
+	pod := sandboxPod(func(p *corev1.Pod) {
+		p.DeletionTimestamp = &now
+		p.Finalizers = nil
+	})
+	if err := MutateSandboxPod(pod); err != nil {
+		t.Fatal(err)
+	}
+	if hasFinalizer(pod.Finalizers, util.SandboxFinalizer) {
+		t.Fatal("must not add sandbox finalizer to a deleting pod")
+	}
+}
+
 func TestMutateSandboxPodIdempotentFinalizer(t *testing.T) {
 	pod := sandboxPod(func(p *corev1.Pod) {
 		p.Finalizers = []string{util.SandboxFinalizer}

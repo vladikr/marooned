@@ -31,11 +31,10 @@ func GetPodInformer(maroonedpodsCli client.MaroonedPodsClient) cache.SharedIndex
 }
 
 func GetSandboxPodsInformer(maroonedpodsCli client.MaroonedPodsClient) cache.SharedIndexInformer {
-	labelSelector, err := labels.Parse("maroonedpods.io/mode=sandbox")
-	if err != nil {
-		panic(err)
-	}
-	listWatcher := NewListWatchFromClient(maroonedpodsCli.CoreV1().RESTClient(), "pods", metav1.NamespaceAll, fields.Everything(), labelSelector)
+	// Watch all pods. The adaptor drops anything without RuntimeClass=marooned.
+	// Do not require maroonedpods.io/mode=sandbox: that label is set by the
+	// mutating webhook, which is empty until the controller is Ready.
+	listWatcher := NewListWatchFromClient(maroonedpodsCli.CoreV1().RESTClient(), "pods", metav1.NamespaceAll, fields.Everything(), labels.Everything())
 	return cache.NewSharedIndexInformer(listWatcher, &v1.Pod{}, 1*time.Hour, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 }
 

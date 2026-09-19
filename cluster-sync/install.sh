@@ -23,3 +23,19 @@ function wait_maroonedpods_crd_installed {
   fi  
 }
 
+function wait_mutating_webhook {
+  timeout=${1:-180}
+  while [ "$timeout" -gt 0 ]; do
+    names="$(_kubectl get mutatingwebhookconfiguration maroonedpods-mutator -o jsonpath='{.webhooks[*].name}' 2>/dev/null || true)"
+    if echo "$names" | grep -q gater; then
+      echo "mutating webhook ready: ${names}"
+      return 0
+    fi
+    sleep 2
+    timeout=$((timeout-2))
+  done
+  echo "ERROR: maroonedpods-mutator has no webhook rules after timeout" >&2
+  _kubectl get mutatingwebhookconfiguration maroonedpods-mutator -o yaml >&2 || true
+  exit 1
+}
+

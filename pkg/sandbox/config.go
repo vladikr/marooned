@@ -29,9 +29,13 @@ func EffectiveSandbox(cfg *mpv1.MaroonedPodsConfig) mpv1.SandboxConfig {
 		AgentListen:         AgentListenVsock,
 		WarmPoolSize:        0,
 		PublishGuestIPOnPod: pointer.Bool(true),
-		// KernelBoot is optional. Empty means boot the rootfs containerDisk
-		// (cirros/fedora demo disks) instead of a separate kernel image.
-		KernelBoot: nil,
+		// alpine+agent rootfs has no bootloader; non-TEE guests need kernelBoot.
+		KernelBoot: &mpv1.SandboxKernelBoot{
+			Image:      util.DefaultSandboxKernelImage,
+			KernelPath: util.DefaultSandboxKernelPath,
+			InitrdPath: util.DefaultSandboxInitrdPath,
+			KernelArgs: util.DefaultSandboxKernelArgs,
+		},
 		Network:    &mpv1.SandboxNetwork{Binding: BindingMasquerade},
 		PoolSizeClasses: []mpv1.SandboxSizeClass{
 			{Name: "s", GuestCPU: "1", GuestMemory: "512Mi"},

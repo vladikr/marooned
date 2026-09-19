@@ -60,3 +60,61 @@ if [ -n "${KUBEVIRT_PROVIDER:-}" ] && [ ! -d "${KUBEVIRTCI_CLUSTER_PATH}/${KUBEV
     fi
     exit 1
 fi
+
+# kubevirtci dnsmasq.sh (set -e) uses iptables-legacy. Rootless podman is
+# privileged in name only: modprobe inside the container returns EPERM, the
+# container exits, and gocli hangs on "waiting for node to come up".
+# Load the table modules on the host first (nf_tables is not enough).
+ensure_host_iptables_modules() {
+    local mods="ip_tables iptable_nat iptable_filter ip6_tables ip6table_nat ip6table_filter xt_conntrack xt_MASQUERADE"
+    local missing="" m
+    for m in $mods; do
+        grep -q "^${m} " /proc/modules || missing="$missing $m"
+    done
+    missing="${missing# }"
+    if [ -z "$missing" ]; then
+        return 0
+    fi
+    echo "kubevirtci dnsmasq needs legacy iptables modules on the host."
+    echo "Rootless podman cannot modprobe them (Operation not permitted)."
+    echo "Missing: $missing"
+    if sudo -n true 2>/dev/null; then
+        # shellcheck disable=SC2086
+        sudo -n modprobe $missing || true
+        missing=""
+        for m in $mods; do
+            grep -q "^${m} " /proc/modules || missing="$missing $m"
+        done
+        missing="${missing# }"
+        if [ -z "$missing" ]; then
+            echo "Loaded host iptables modules."
+            return 0
+        fi
+    fi
+    echo "Load them, then retry cluster-up:" >&2
+    echo "  sudo modprobe $missing" >&2
+    echo "To persist across reboot:" >&2
+    echo "  printf '%s\\n' $mods | sudo tee /etc/modules-load.d/kubevirtci.conf" >&2
+    return 1
+}
+
+# virt-handler only advertises devices.kubevirt.io/vhost-vsock when the
+# VSOCK feature gate is on and /dev/vhost-vsock exists on the node.
+ensure_host_vsock() {
+    if [ -e /dev/vhost-vsock ]; then
+        return 0
+    fi
+    local mods="vsock vhost_vsock"
+    echo "Host /dev/vhost-vsock is missing (needed for nested virtio-vsock)."
+    if sudo -n true 2>/dev/null; then
+        # shellcheck disable=SC2086
+        sudo -n modprobe $mods || true
+        if [ -e /dev/vhost-vsock ]; then
+            echo "Loaded host vhost_vsock."
+            return 0
+        fi
+    fi
+    echo "Load vhost_vsock, then retry:" >&2
+    echo "  sudo modprobe vsock vhost_vsock" >&2
+    return 1
+}

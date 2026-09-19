@@ -2,6 +2,7 @@ FROM golang:1.19-alpine as builder
 
 RUN apk update && apk add make
 
+ARG CACHEBUST=0
 COPY pkg /workdir/app/pkg
 COPY staging /workdir/app/staging
 COPY cmd /workdir/app/cmd
@@ -15,9 +16,11 @@ WORKDIR /workdir/app
 RUN make marooned_shim marooned_oci
 
 FROM alpine:3.18
+RUN apk add --no-cache util-linux
 COPY --from=builder /workdir/app/marooned_shim /app/marooned_shim
 COPY --from=builder /workdir/app/marooned_oci /app/marooned-oci
 COPY cmd/marooned-shim/entrypoint.sh /app/entrypoint.sh
+COPY hack/crio/20-marooned.conf /app/20-marooned.conf
 RUN chmod +x /app/entrypoint.sh /app/marooned-oci
 WORKDIR /app
 ENTRYPOINT ["/app/entrypoint.sh"]

@@ -86,7 +86,9 @@ func Translate(in Input) Result {
 	}
 	vmi.Spec = virtv1.VirtualMachineInstanceSpec{Domain: virtv1.DomainSpec{}}
 	falseVal := false
+	trueVal := true
 	vmi.Spec.Domain.Devices.AutoattachGraphicsDevice = &falseVal
+	vmi.Spec.Domain.Devices.AutoattachVSOCK = &trueVal
 	vmi.Spec.Domain.CPU = &virtv1.CPU{Cores: cpu, Sockets: 1, Threads: 1}
 	guestMem := mem.DeepCopy()
 	vmi.Spec.Domain.Memory = &virtv1.Memory{Guest: &guestMem}
@@ -243,8 +245,10 @@ func guestCompute(pod *corev1.Pod, cfg mpv1.SandboxConfig, tee string) (uint32, 
 	if cores < 1 {
 		cores = 1
 	}
-	if memBytes <= 0 {
-		memBytes = 512 * 1024 * 1024
+	// linux-lts + initramfs unpack OOMs at 64Mi (serial: "deadlocked on memory").
+	const minGuestMemory = 512 * 1024 * 1024
+	if memBytes < minGuestMemory {
+		memBytes = minGuestMemory
 	}
 	if tee == sandbox.TEESNP || tee == sandbox.TEETDX {
 		memBytes += int64(teeMemorySlopMi) * 1024 * 1024
