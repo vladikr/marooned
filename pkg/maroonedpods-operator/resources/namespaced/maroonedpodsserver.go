@@ -21,7 +21,7 @@ func createMaroonedPodsServerResources(args *FactoryArgs) []client.Object {
 		createMaroonedPodsServerRoleBinding(args.Namespace),
 		createMaroonedPodsServerServiceAccount(),
 		createMaroonedPodsServerService(),
-		createMaroonedPodsServerDeployment(args.MaroonedPodsServerImage, args.PullPolicy, args.ImagePullSecrets, args.PriorityClassName, args.Verbosity, args.InfraNodePlacement),
+		createMaroonedPodsServerDeployment(args.MaroonedPodsServerImage, args.VsockfwdImage, args.PullPolicy, args.ImagePullSecrets, args.PriorityClassName, args.Verbosity, args.InfraNodePlacement),
 	}
 }
 
@@ -45,7 +45,7 @@ func createMaroonedPodsServerService() *corev1.Service {
 	return service
 }
 
-func createMaroonedPodsServerDeployment(image, pullPolicy string, imagePullSecrets []corev1.LocalObjectReference, priorityClassName string, verbosity string, infraNodePlacement *sdkapi.NodePlacement) *appsv1.Deployment {
+func createMaroonedPodsServerDeployment(image, vsockfwdImage, pullPolicy string, imagePullSecrets []corev1.LocalObjectReference, priorityClassName string, verbosity string, infraNodePlacement *sdkapi.NodePlacement) *appsv1.Deployment {
 	defaultMode := corev1.ConfigMapVolumeSourceDefaultMode
 	deployment := utils2.CreateDeployment(utils2.MaroonedPodsServerResourceName, utils2.MaroonedPodsLabel, utils2.MaroonedPodsServerResourceName, utils2.MaroonedPodsServerResourceName, imagePullSecrets, 2, infraNodePlacement)
 	if priorityClassName != "" {
@@ -57,6 +57,9 @@ func createMaroonedPodsServerDeployment(image, pullPolicy string, imagePullSecre
 		RollingUpdate: &appsv1.RollingUpdateDeployment{
 			MaxUnavailable: &desiredMaxUnavailable,
 		},
+	}
+	if vsockfwdImage == "" {
+		vsockfwdImage = "quay.io/vladikr/marooned-vsockfwd:latest"
 	}
 	container := utils2.CreateContainer(utils2.MaroonedPodsServerResourceName, image, verbosity, pullPolicy)
 	container.Ports = createMaroonedPodsServerPorts()
@@ -83,6 +86,10 @@ func createMaroonedPodsServerDeployment(image, pullPolicy string, imagePullSecre
 		{
 			Name:  utils2.TlsLabel,
 			Value: "true",
+		},
+		{
+			Name:  "MAROONED_VSOCKFWD_IMAGE",
+			Value: vsockfwdImage,
 		},
 	}
 	container.ReadinessProbe = &corev1.Probe{

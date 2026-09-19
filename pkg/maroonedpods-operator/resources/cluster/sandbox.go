@@ -94,7 +94,8 @@ func createShimClusterRoleBinding() *rbacv1.ClusterRoleBinding {
 }
 
 func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
-	priv := true
+	priv := false
+	allowEsc := false
 	hostPathDir := corev1.HostPathDirectoryOrCreate
 	return &appsv1.DaemonSet{
 		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "DaemonSet"},
@@ -115,17 +116,21 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: utils2.ShimServiceAccountName,
-					// vsock CIDs of KubeVirt guests are in the node's vsock
-					// namespace; a pod netns cannot connect (timeout).
-					HostNetwork: true,
-					HostPID:     true,
+					// Agent traffic is unix:// on this hostPath. The
+					// virt-launcher sidecar dials vsock; the shim must not.
+					HostNetwork: false,
+					HostPID:     false,
 					Containers: []corev1.Container{
 						{
 							Name:            "shim",
 							Image:           image,
 							ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 							Args:            []string{"-socket", "/var/run/marooned/cri.sock", "-agent-timeout", "3m"},
-							SecurityContext: &corev1.SecurityContext{Privileged: &priv},
+							SecurityContext: &corev1.SecurityContext{
+								Privileged:               &priv,
+								AllowPrivilegeEscalation: &allowEsc,
+								Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"SYS_ADMIN", "ALL"}},
+							},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "marooned-run", MountPath: "/var/run/marooned"},
 								{Name: "containerd", MountPath: "/run/containerd"},

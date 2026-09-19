@@ -1,5 +1,8 @@
 #!/bin/sh
 set -e
+# Sidecar uid 107 must mkdir <uid>/ under this hostPath.
+mkdir -p /var/run/marooned 2>/dev/null || true
+chmod 0777 /var/run/marooned 2>/dev/null || true
 if [ -x /app/marooned-oci ]; then
   if [ -d /host-opt ]; then
     cp /app/marooned-oci /host-opt/marooned-oci

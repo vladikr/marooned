@@ -3,6 +3,8 @@ package maroonedpods_operator
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -72,6 +74,9 @@ func newReconciler(mgr manager.Manager) (*ReconcileMaroonedPods, error) {
 	}
 
 	namespacedArgs.Namespace = namespace
+	if namespacedArgs.VsockfwdImage == "" && namespacedArgs.ShimImage != "" {
+		namespacedArgs.VsockfwdImage = strings.Replace(namespacedArgs.ShimImage, "marooned-shim", "marooned-vsockfwd", 1)
+	}
 	clusterArgs.ShimImage = namespacedArgs.ShimImage
 	clusterArgs.PullPolicy = namespacedArgs.PullPolicy
 

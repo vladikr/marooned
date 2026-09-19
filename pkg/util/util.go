@@ -80,6 +80,9 @@ const (
 	RuntimeHandler                 = "marooned"
 	SandboxModeLabel               = "maroonedpods.io/mode"
 	SandboxModeSandbox             = "sandbox"
+	// SandboxVMILabel is copied onto the virt-launcher Pod by KubeVirt so
+	// the mutating webhook can inject marooned-vsockfwd only on sandbox VMs.
+	SandboxVMILabel = "maroonedpods.io/sandbox"
 	SandboxModeNode                = "node"
 	SandboxIDLabel                 = "maroonedpods.io/sandbox-id"
 	SandboxNodeLabel               = "maroonedpods.io/node"

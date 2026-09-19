@@ -101,6 +101,18 @@ func TestTranslateMemoryFloor(t *testing.T) {
 	}
 }
 
+func TestTranslateSandboxLauncherLabel(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	p.UID = "pod-uid-1"
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1", OwnerPod: true})
+	if res.VMI.Labels[util.SandboxVMILabel] != "true" {
+		t.Fatal("sandbox VMI must be labeled so virt-launcher is selectable")
+	}
+	if res.VMI.Labels[util.SandboxIDLabel] != "pod-uid-1" {
+		t.Fatalf("sandbox-id %s", res.VMI.Labels[util.SandboxIDLabel])
+	}
+}
+
 func TestTranslateAutoattachVSOCK(t *testing.T) {
 	p := podWithResources("1", "512Mi")
 	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})

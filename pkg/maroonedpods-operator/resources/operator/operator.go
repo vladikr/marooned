@@ -404,6 +404,7 @@ func createOperatorEnvVar(operatorVersion, deployClusterResources, controllerIma
 	if shimImage == "" {
 		shimImage = "quay.io/vladikr/marooned-shim:latest"
 	}
+	vsockfwdImage := strings.Replace(shimImage, "marooned-shim", "marooned-vsockfwd", 1)
 	return []corev1.EnvVar{
 		{
 			Name:  "DEPLOY_CLUSTER_RESOURCES",
@@ -424,6 +425,10 @@ func createOperatorEnvVar(operatorVersion, deployClusterResources, controllerIma
 		{
 			Name:  "MAROONED_SHIM_IMAGE",
 			Value: shimImage,
+		},
+		{
+			Name:  "MAROONED_VSOCKFWD_IMAGE",
+			Value: vsockfwdImage,
 		},
 		{
 			Name:  "VERBOSITY",

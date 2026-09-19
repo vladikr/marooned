@@ -125,3 +125,63 @@ func TestHandlePlainPodAllowed(t *testing.T) {
 		t.Fatal("plain pod should not be patched")
 	}
 }
+
+func TestHandleVirtLauncherInjectsVsockfwd(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "virt-launcher-marooned-uid-xyz",
+			Labels: map[string]string{
+				"kubevirt.io":            "virt-launcher",
+				util.SandboxVMILabel:     "true",
+				util.SandboxIDLabel:      "pod-uid-1",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "compute"}},
+		},
+	}
+	raw, _ := json.Marshal(pod)
+	h := NewHandler(&admissionv1.AdmissionRequest{
+		UID:       "4",
+		Kind:      metav1.GroupVersionKind{Kind: "Pod"},
+		Operation: admissionv1.Create,
+		Object:    runtime.RawExtension{Raw: raw},
+	}, nil, "maroonedpods")
+	out, err := h.Handle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Response.Allowed {
+		t.Fatal("not allowed")
+	}
+	if out.Response.Patch == nil {
+		t.Fatal("expected vsockfwd patch")
+	}
+	if !strings.Contains(string(out.Response.Patch), "marooned-vsockfwd") {
+		t.Fatalf("patch %s", out.Response.Patch)
+	}
+}
+
+func TestHandlePlainVirtLauncherUntouched(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "virt-launcher-other-xyz",
+			Labels: map[string]string{"kubevirt.io": "virt-launcher", "kubevirt.io/domain": "fedora"},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "compute"}}},
+	}
+	raw, _ := json.Marshal(pod)
+	h := NewHandler(&admissionv1.AdmissionRequest{
+		UID:       "5",
+		Kind:      metav1.GroupVersionKind{Kind: "Pod"},
+		Operation: admissionv1.Create,
+		Object:    runtime.RawExtension{Raw: raw},
+	}, nil, "maroonedpods")
+	out, err := h.Handle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Response.Patch != nil {
+		t.Fatal("non-marooned virt-launcher must not be patched")
+	}
+}

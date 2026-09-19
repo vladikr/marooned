@@ -16,6 +16,7 @@ type FactoryArgs struct {
 	DeployClusterResources  string `required:"true" split_words:"true"`
 	MaroonedPodsServerImage string `required:"true" envconfig:"MAROONEDPODS_SERVER_IMAGE"`
 	ShimImage               string `split_words:"true" envconfig:"MAROONED_SHIM_IMAGE"`
+	VsockfwdImage           string `split_words:"true" envconfig:"MAROONED_VSOCKFWD_IMAGE"`
 	Verbosity               string `required:"true"`
 	PullPolicy              string `required:"true" split_words:"true"`
 	ImagePullSecrets        []corev1.LocalObjectReference

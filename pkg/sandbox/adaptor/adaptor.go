@@ -352,6 +352,8 @@ func (a *Adaptor) annotatePod(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstanc
 	}
 	if cid != "" {
 		copyPod.Annotations[util.VsockCIDAnnotation] = cid
+		// The node-local shim writes /var/run/marooned/<pod-uid>/cid from
+		// this annotation; the adaptor is not on the node.
 	}
 	_, err := a.maroonedpodsCli.CoreV1().Pods(copyPod.Namespace).Update(context.Background(), copyPod, metav1.UpdateOptions{})
 	return err

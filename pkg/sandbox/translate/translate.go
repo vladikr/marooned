@@ -95,6 +95,7 @@ func Translate(in Input) Result {
 
 	vmi.Labels = map[string]string{
 		util.SandboxModeLabel:      util.SandboxModeSandbox,
+		util.SandboxVMILabel:       "true",
 		util.SandboxTEELabel:       res.TEE,
 		util.SandboxSizeClassLabel: res.SizeClass,
 	}

@@ -83,7 +83,11 @@ func waitForVMI(kube *kubernetes.Clientset, timeout time.Duration) func(ctx cont
 				continue
 			}
 			if cid := pod.Annotations[util.VsockCIDAnnotation]; cid != "" {
-				return vmi, fmt.Sprintf("vsock:%s:1024", cid), nil
+				uid := string(pod.UID)
+				if err := vsock.WriteCIDFile(vsock.DefaultHostDir, uid, cid); err != nil {
+					klog.Infof("write cid file for %s: %v", uid, err)
+				}
+				return vmi, vsock.UnixDialAddr(vsock.DefaultHostDir, uid), nil
 			}
 			klog.V(2).Infof("waiting for vsock CID annotation on %s/%s (vmi %s)", ns, name, vmi)
 			time.Sleep(time.Second)
