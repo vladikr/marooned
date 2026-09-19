@@ -29,15 +29,25 @@ func main() {
 
 func run(uid, hostDir string, port uint32) error {
 	dir := vsock.DirFor(hostDir, uid)
-	if err := os.MkdirAll(dir, 0777); err != nil {
-		return err
+	klog.Infof("waiting for sandbox dir %s (uid 107 cannot mkdir on the hostPath)", dir)
+	for {
+		st, err := os.Stat(dir)
+		if err == nil && st.IsDir() {
+			break
+		}
+		time.Sleep(time.Second)
 	}
-	_ = os.Chmod(dir, 0777)
 	sock := vsock.AgentSockPath(hostDir, uid)
-	_ = os.Remove(sock)
-	ln, err := net.Listen("unix", sock)
-	if err != nil {
-		return fmt.Errorf("listen %s: %w", sock, err)
+	var ln net.Listener
+	for {
+		_ = os.Remove(sock)
+		l, err := net.Listen("unix", sock)
+		if err == nil {
+			ln = l
+			break
+		}
+		klog.Infof("listen %s: %v (waiting for dir to be writable)", sock, err)
+		time.Sleep(time.Second)
 	}
 	_ = os.Chmod(sock, 0666)
 	klog.Infof("marooned-vsockfwd listening %s (ns_mode=%q)", sock, vsock.ReadNSMode())

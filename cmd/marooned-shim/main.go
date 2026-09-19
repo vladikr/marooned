@@ -73,6 +73,11 @@ func waitForVMI(kube *kubernetes.Clientset, timeout time.Duration) func(ctx cont
 				time.Sleep(time.Second)
 				continue
 			}
+			if pod.UID != "" {
+				if err := vsock.EnsureSandboxDir(vsock.DefaultHostDir, string(pod.UID)); err != nil {
+					klog.V(2).Infof("ensure sandbox dir %s: %v", pod.UID, err)
+				}
+			}
 			if pod.Annotations == nil {
 				time.Sleep(time.Second)
 				continue

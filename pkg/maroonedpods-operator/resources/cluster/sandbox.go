@@ -129,7 +129,7 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 							SecurityContext: &corev1.SecurityContext{
 								Privileged:               &priv,
 								AllowPrivilegeEscalation: &allowEsc,
-								Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"SYS_ADMIN", "ALL"}},
+								Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"SYS_ADMIN"}},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "marooned-run", MountPath: "/var/run/marooned"},

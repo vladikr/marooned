@@ -15,6 +15,8 @@ const (
 	AgentPort      = 1024
 	// LocalCID is unix.VMADDR_CID_LOCAL; used when vsock ns_mode is "local".
 	LocalCID uint32 = 1
+	// QEMUUser is KubeVirt's compute uid; the vsockfwd sidecar runs as this.
+	QEMUUser = 107
 )
 
 func DirFor(hostDir, uid string) string {
@@ -44,6 +46,18 @@ func mkdirWorld(dir string) error {
 	return os.Chmod(dir, 0777)
 }
 
+// EnsureSandboxDir creates the per-pod directory as root and gives uid 107
+// ownership so the virt-launcher sidecar can bind agent.sock. The sidecar
+// must not mkdir: /var/run/marooned is root 0755.
+func EnsureSandboxDir(hostDir, uid string) error {
+	dir := DirFor(hostDir, uid)
+	if err := mkdirWorld(dir); err != nil {
+		return err
+	}
+	_ = os.Chown(dir, QEMUUser, QEMUUser)
+	return nil
+}
+
 // WriteCIDFile stores the guest CID as plain-text uint32. The node-local
 // shim writes this after the adaptor copies vmi.status.VSOCKCID onto the
 // user Pod; the virt-launcher sidecar cannot see the API and tails the file.
@@ -55,8 +69,7 @@ func WriteCIDFile(hostDir, uid, cid string) error {
 	if _, err := strconv.ParseUint(cid, 10, 32); err != nil {
 		return fmt.Errorf("cid %q: %w", cid, err)
 	}
-	dir := DirFor(hostDir, uid)
-	if err := mkdirWorld(dir); err != nil {
+	if err := EnsureSandboxDir(hostDir, uid); err != nil {
 		return err
 	}
 	path := CIDPath(hostDir, uid)

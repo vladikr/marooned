@@ -14,6 +14,20 @@ func TestUnixDialAddr(t *testing.T) {
 	}
 }
 
+func TestEnsureSandboxDirIs0777(t *testing.T) {
+	root := t.TempDir()
+	if err := EnsureSandboxDir(root, "uid-1"); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(DirFor(root, "uid-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0777 {
+		t.Fatalf("perm %o", st.Mode().Perm())
+	}
+}
+
 func TestWriteReadCIDFile(t *testing.T) {
 	dir := t.TempDir()
 	if err := WriteCIDFile(dir, "uid-1", "517921949"); err != nil {

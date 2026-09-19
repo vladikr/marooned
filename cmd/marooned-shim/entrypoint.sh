@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
-# Sidecar uid 107 must mkdir <uid>/ under this hostPath.
-mkdir -p /var/run/marooned 2>/dev/null || true
-chmod 0777 /var/run/marooned 2>/dev/null || true
+# World-writable so uid 107 can bind sockets once the shim creates <uid>/.
+mkdir -p /var/run/marooned || true
+chmod 1777 /var/run/marooned || echo "marooned-shim: chmod 1777 /var/run/marooned failed"
 if [ -x /app/marooned-oci ]; then
   if [ -d /host-opt ]; then
     cp /app/marooned-oci /host-opt/marooned-oci
