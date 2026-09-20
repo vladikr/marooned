@@ -83,7 +83,7 @@ func TestMutateSandboxPodStripKeepMatrix(t *testing.T) {
 			wantFinalizer: util.SandboxFinalizer,
 		},
 		{
-			name: "strips hugepages from user pod",
+			name: "keeps hugepages on user pod",
 			mutate: func(p *corev1.Pod) {
 				p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("hugepages-2Mi")] = resource.MustParse("64Mi")
 				p.Spec.Containers[0].Resources.Limits = corev1.ResourceList{
@@ -92,17 +92,17 @@ func TestMutateSandboxPodStripKeepMatrix(t *testing.T) {
 			},
 			wantCPU:       "100m",
 			wantMem:       "128Mi",
-			wantHugepages: false,
+			wantHugepages: true,
 			wantFinalizer: util.SandboxFinalizer,
 		},
 		{
-			name: "strips gpu extended resource",
+			name: "keeps gpu extended resource",
 			mutate: func(p *corev1.Pod) {
 				p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("nvidia.com/gpu")] = resource.MustParse("1")
 			},
 			wantCPU:       "100m",
 			wantMem:       "128Mi",
-			wantGPU:       false,
+			wantGPU:       true,
 			wantFinalizer: util.SandboxFinalizer,
 		},
 		{
@@ -127,14 +127,14 @@ func TestMutateSandboxPodStripKeepMatrix(t *testing.T) {
 			wantFinalizer: util.SandboxFinalizer,
 		},
 		{
-			name: "strips resourceClaims",
+			name: "keeps resourceClaims",
 			mutate: func(p *corev1.Pod) {
 				p.Spec.ResourceClaims = []corev1.PodResourceClaim{{Name: "gpu"}}
 				p.Spec.Containers[0].Resources.Claims = []corev1.ResourceClaim{{Name: "gpu"}}
 			},
 			wantCPU:       "100m",
 			wantMem:       "128Mi",
-			wantClaims:    false,
+			wantClaims:    true,
 			wantFinalizer: util.SandboxFinalizer,
 		},
 		{
@@ -233,22 +233,25 @@ func TestMutateSandboxPodIdempotentFinalizer(t *testing.T) {
 	}
 }
 
-func TestKeepCPUMemoryDropsExtended(t *testing.T) {
-	in := corev1.ResourceList{
-		corev1.ResourceCPU:                     resource.MustParse("1"),
-		corev1.ResourceMemory:                  resource.MustParse("1Gi"),
-		corev1.ResourceName("hugepages-2Mi"):   resource.MustParse("64Mi"),
-		corev1.ResourceName("intel.com/sriov"): resource.MustParse("1"),
+func TestMutateKeepsExtendedResourcesAndClaims(t *testing.T) {
+	pod := sandboxPod(func(p *corev1.Pod) {
+		p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("hugepages-2Mi")] = resource.MustParse("64Mi")
+		p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("intel.com/sriov")] = resource.MustParse("1")
+		p.Spec.ResourceClaims = []corev1.PodResourceClaim{{Name: "gpu"}}
+		p.Spec.Containers[0].Resources.Claims = []corev1.ResourceClaim{{Name: "gpu"}}
+	})
+	if err := MutateSandboxPod(pod); err != nil {
+		t.Fatal(err)
 	}
-	out := keepCPUMemory(in)
-	if _, ok := out[corev1.ResourceCPU]; !ok {
-		t.Fatal("cpu dropped")
+	req := pod.Spec.Containers[0].Resources.Requests
+	if _, ok := req[corev1.ResourceName("hugepages-2Mi")]; !ok {
+		t.Fatal("hugepages stripped")
 	}
-	if _, ok := out[corev1.ResourceName("hugepages-2Mi")]; ok {
-		t.Fatal("hugepages kept")
+	if _, ok := req[corev1.ResourceName("intel.com/sriov")]; !ok {
+		t.Fatal("sriov stripped")
 	}
-	if _, ok := out[corev1.ResourceName("intel.com/sriov")]; ok {
-		t.Fatal("sriov kept")
+	if len(pod.Spec.ResourceClaims) != 1 || len(pod.Spec.Containers[0].Resources.Claims) != 1 {
+		t.Fatal("resourceClaims stripped")
 	}
 }
 

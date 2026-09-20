@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"maroonedpods.io/maroonedpods/pkg/sandbox"
 	utils2 "maroonedpods.io/maroonedpods/pkg/util"
 )
 
@@ -56,8 +57,8 @@ func createRuntimeClass() *nodev1.RuntimeClass {
 		Handler: utils2.RuntimeHandler,
 		Overhead: &nodev1.Overhead{
 			PodFixed: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("25m"),
-				corev1.ResourceMemory: resource.MustParse("32Mi"),
+				corev1.ResourceCPU:    resource.MustParse(sandbox.RuntimeClassOverheadCPU),
+				corev1.ResourceMemory: resource.MustParse(sandbox.RuntimeClassOverheadMemory),
 			},
 		},
 	}

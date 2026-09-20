@@ -25,8 +25,9 @@ func IsSandboxPod(pod *corev1.Pod) bool {
 }
 
 // MutateSandboxPod applies the sandbox admission rules in place:
-// persist stripped volume spec, set placement, finalizer, mode label,
-// strip devices/hugepages/PVCs. CPU/memory requests stay.
+// finalizer, mode label, placement, persist volumes that cannot attach
+// twice (PVC/ephemeral/emptyDir). CPU, memory, hugepages, extended
+// devices, and resourceClaims stay so the scheduler/quota/DRA see them.
 func MutateSandboxPod(pod *corev1.Pod) error {
 	// Do not re-add the finalizer on a deleting pod; that traps the object
 	// in Terminating (adaptor strips it, webhook puts it back).
@@ -46,15 +47,14 @@ func MutateSandboxPod(pod *corev1.Pod) error {
 		return err
 	}
 
-	stripPodResourceClaims(pod)
 	keptVolumes, droppedVolumeNames := filterVolumes(pod.Spec.Volumes)
 	pod.Spec.Volumes = keptVolumes
 
 	for i := range pod.Spec.Containers {
-		stripContainer(&pod.Spec.Containers[i], droppedVolumeNames)
+		dropVolumeRefs(&pod.Spec.Containers[i], droppedVolumeNames)
 	}
 	for i := range pod.Spec.InitContainers {
-		stripContainer(&pod.Spec.InitContainers[i], droppedVolumeNames)
+		dropVolumeRefs(&pod.Spec.InitContainers[i], droppedVolumeNames)
 	}
 	return nil
 }
@@ -85,32 +85,9 @@ func hasFinalizer(finalizers []string, name string) bool {
 	return false
 }
 
-func stripPodResourceClaims(pod *corev1.Pod) {
-	pod.Spec.ResourceClaims = nil
-}
-
-func stripContainer(c *corev1.Container, droppedVolumeNames map[string]struct{}) {
-	c.Resources.Requests = keepCPUMemory(c.Resources.Requests)
-	c.Resources.Limits = keepCPUMemory(c.Resources.Limits)
-	c.Resources.Claims = nil
+func dropVolumeRefs(c *corev1.Container, droppedVolumeNames map[string]struct{}) {
 	c.VolumeMounts = filterVolumeMounts(c.VolumeMounts, droppedVolumeNames)
 	c.VolumeDevices = filterVolumeDevices(c.VolumeDevices, droppedVolumeNames)
-}
-
-func keepCPUMemory(list corev1.ResourceList) corev1.ResourceList {
-	if list == nil {
-		return nil
-	}
-	out := corev1.ResourceList{}
-	for name, qty := range list {
-		if name == resourceCPU || name == resourceMemory || name == resourceEphemeralStorage {
-			out[name] = qty
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 func isWorkloadVolume(vol corev1.Volume) bool {
