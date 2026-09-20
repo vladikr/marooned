@@ -203,6 +203,8 @@ func doStart(root string, args []string) int {
 		if _, err := shimJSON("POST", "/v1/StartContainer", map[string]string{"id": criID}); err != nil {
 			fatal("StartContainer: %v", err)
 		}
+		ns, pname, _ := strings.Cut(pod, "/")
+		appendK8sLog(currentPodLog(ns, pname, podUID, ctrName), "marooned: guest container started")
 		startLogPump(root, id)
 	}
 	return 0

@@ -24,6 +24,7 @@ func loadExec(args []string) (id string, proc ociProcess) {
 	needVal := map[string]bool{
 		"--cwd": true, "--user": true, "--process": true, "--pid-file": true,
 		"--apparmor": true, "--cgroup": true, "--preserve-fds": true,
+		"-e": true, "--env": true,
 	}
 	var rest []string
 	for i := 0; i < len(args); i++ {
@@ -57,12 +58,21 @@ func loadExec(args []string) (id string, proc ociProcess) {
 	}
 	if processFile != "" {
 		if p, err := readOCIProcess(processFile); err == nil {
-			proc = p
+			if len(p.Args) > 0 {
+				proc.Args = p.Args
+			}
+			proc.Terminal = proc.Terminal || p.Terminal
+			if p.Cwd != "" {
+				proc.Cwd = p.Cwd
+			}
 		}
 	}
 	if tty {
 		proc.Terminal = true
 	}
+	_ = os.MkdirAll("/run/marooned-oci", 0755)
+	dbg, _ := json.Marshal(map[string]interface{}{"id": id, "processFile": processFile, "tty": proc.Terminal, "args": proc.Args})
+	_ = os.WriteFile("/run/marooned-oci/last-exec.json", dbg, 0644)
 	return id, proc
 }
 

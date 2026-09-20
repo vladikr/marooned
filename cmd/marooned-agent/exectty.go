@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
+	"k8s.io/klog/v2"
 
 	"maroonedpods.io/maroonedpods/pkg/sandbox/agentproto"
 )
@@ -25,7 +26,7 @@ func (a *agent) execTTY(conn net.Conn, env agentproto.Envelope) {
 		return
 	}
 	if len(req.Command) == 0 {
-		req.Command = []string{"/bin/sh"}
+		req.Command = []string{"/bin/sh", "-i"}
 	}
 	ptmx, slave, err := openPTY()
 	if err != nil {
@@ -37,15 +38,16 @@ func (a *agent) execTTY(conn net.Conn, env agentproto.Envelope) {
 	root := filepath.Join(ctrRoot, req.ContainerID, "root")
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if st, err := os.Stat(root); err == nil && st.IsDir() {
 		argv[0] = lookPathInRoot(root, argv[0], nil)
 		cmd = exec.Command(argv[0], argv[1:]...)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
 		cmd.Dir = "/"
-		cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "TERM=xterm"}
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Chroot: root}
+		cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "TERM=xterm", "PS1=# "}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Chroot: root}
 	}
+	klog.Infof("exec tty %s argv=%v", req.ContainerID, argv)
 	if err := cmd.Start(); err != nil {
 		_ = slave.Close()
 		fail(err)

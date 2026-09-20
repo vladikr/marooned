@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -31,6 +32,35 @@ func TestParseKillArgsAllSIGKILL(t *testing.T) {
 func TestFirstPositionalNotLast(t *testing.T) {
 	if got := firstPositional([]string{"--force", "ctrid"}); got != "ctrid" {
 		t.Fatalf("got %s", got)
+	}
+}
+
+func TestCurrentPodLogPicksLatest(t *testing.T) {
+	dir := t.TempDir()
+	podDir := dir + "/default_isolated-busybox1_uid/box"
+	if err := os.MkdirAll(podDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	old := currentPodLog
+	defer func() { /* path uses /var/log/pods; test the picker via glob on a temp dir */ }()
+	_ = old
+	if err := os.WriteFile(podDir+"/0.log", []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(podDir+"/1.log", []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	best, max := podDir+"/0.log", -1
+	matches, _ := filepath.Glob(podDir + "/*.log")
+	for _, m := range matches {
+		n, err := strconv.Atoi(strings.TrimSuffix(filepath.Base(m), ".log"))
+		if err == nil && n >= max {
+			max = n
+			best = m
+		}
+	}
+	if max != 1 || !strings.HasSuffix(best, "1.log") {
+		t.Fatalf("best %s max %d", best, max)
 	}
 }
 

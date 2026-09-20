@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -39,13 +40,12 @@ func doLogPump(root string, args []string) int {
 		ctr = "box"
 	}
 	ns, name, _ := strings.Cut(pod, "/")
-	logPath := filepath.Join("/var/log/pods", ns+"_"+name+"_"+uid, ctr, "0.log")
-	_ = os.MkdirAll(filepath.Dir(logPath), 0755)
 	seen := 0
 	for {
 		if !pidAlive(readStatePID(root, id)) {
 			return 0
 		}
+		logPath := currentPodLog(ns, name, uid, ctr)
 		body, err := shimJSON("POST", "/v1/Logs", map[string]string{"id": criID})
 		if err == nil {
 			var out struct {
@@ -60,6 +60,24 @@ func doLogPump(root string, args []string) int {
 		}
 		time.Sleep(400 * time.Millisecond)
 	}
+}
+
+// currentPodLog is the file conmon/kubelet read. After a start retry this is
+// 1.log (or N.log), not 0.log.
+func currentPodLog(ns, name, uid, ctr string) string {
+	dir := filepath.Join("/var/log/pods", ns+"_"+name+"_"+uid, ctr)
+	_ = os.MkdirAll(dir, 0755)
+	best := filepath.Join(dir, "0.log")
+	max := -1
+	matches, _ := filepath.Glob(filepath.Join(dir, "*.log"))
+	for _, m := range matches {
+		n, err := strconv.Atoi(strings.TrimSuffix(filepath.Base(m), ".log"))
+		if err == nil && n >= max {
+			max = n
+			best = m
+		}
+	}
+	return best
 }
 
 func readStatePID(root, id string) int {

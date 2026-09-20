@@ -12,11 +12,4 @@ spec:
   - name: box
     image: docker.io/library/busybox:latest
     imagePullPolicy: Always
-    command:
-      - /bin/sh
-      - -c
-      - |
-        echo marooned-guest-ok > /tmp/index.html
-        echo marooned-guest-ok > /tmp/marooned-ok
-        echo marooned-guest-ok
-        exec httpd -f -p 8080 -h /tmp
+    command: ["/bin/sh", "-c", "echo marooned-guest-ok; echo marooned-guest-ok > /tmp/marooned-ok; echo marooned-guest-ok > /tmp/index.html; exec httpd -f -p 8080 -h /tmp"]
