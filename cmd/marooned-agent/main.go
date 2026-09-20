@@ -161,6 +161,7 @@ func (a *agent) start(payload json.RawMessage) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	klog.Infof("started %s chroot=%s argv=%v pid=%d", req.ContainerID, root, cmd.Args, cmd.Process.Pid)
 	a.mu.Lock()
 	a.ctrs[req.ContainerID] = ctr
 	a.mu.Unlock()
@@ -230,7 +231,16 @@ func (a *agent) exec(payload json.RawMessage) (agentproto.ExecResponse, error) {
 	if len(req.Command) == 0 {
 		return agentproto.ExecResponse{ExitCode: 1, Stderr: "empty command"}, nil
 	}
-	cmd := exec.Command(req.Command[0], req.Command[1:]...)
+	argv := append([]string{}, req.Command...)
+	root := filepath.Join(ctrRoot, req.ContainerID, "root")
+	cmd := exec.Command(argv[0], argv[1:]...)
+	if st, err := os.Stat(root); err == nil && st.IsDir() {
+		argv[0] = lookPathInRoot(root, argv[0], nil)
+		cmd = exec.Command(argv[0], argv[1:]...)
+		cmd.Dir = "/"
+		cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: root}
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

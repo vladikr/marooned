@@ -259,13 +259,12 @@ func doDelete(root string, args []string) int {
 }
 
 func doExec(root string, args []string) int {
-	id := lastID(args)
-	var cmd []string
-	for i, a := range args {
-		if a == "--" && i+1 < len(args) {
-			cmd = args[i+1:]
-			break
-		}
+	id, cmd := parseExecArgs(args)
+	if id == "" {
+		fatal("exec: missing id")
+	}
+	if mapped := strings.TrimSpace(string(mustRead(filepath.Join(root, id, "criid")))); mapped != "" {
+		id = mapped
 	}
 	if len(cmd) == 0 {
 		cmd = []string{"true"}
@@ -294,6 +293,37 @@ func lastID(args []string) string {
 		fatal("missing id")
 	}
 	return id
+}
+
+// parseExecArgs is runc-style: exec [opts] <id> <command> [args]
+func parseExecArgs(args []string) (id string, cmd []string) {
+	needVal := map[string]bool{
+		"--cwd": true, "--user": true, "--process": true, "--pid-file": true,
+		"--apparmor": true, "--cgroup": true, "--preserve-fds": true,
+	}
+	var pos []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			pos = append(pos, args[i+1:]...)
+			break
+		}
+		if strings.HasPrefix(a, "-") {
+			name := a
+			if j := strings.IndexByte(a, '='); j >= 0 {
+				name = a[:j]
+			} else if needVal[a] && i+1 < len(args) {
+				i++
+			}
+			_ = name
+			continue
+		}
+		pos = append(pos, a)
+	}
+	if len(pos) == 0 {
+		return "", nil
+	}
+	return pos[0], pos[1:]
 }
 
 // parseKillArgs implements runc's kill CLI: kill [-a] <id> [<signal>]

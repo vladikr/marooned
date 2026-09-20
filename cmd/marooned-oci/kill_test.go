@@ -33,6 +33,23 @@ func TestFirstPositionalNotLast(t *testing.T) {
 	}
 }
 
+func TestParseExecArgsCRIO(t *testing.T) {
+	id, cmd := parseExecArgs([]string{"--tty", "62e35ec016f018713016c16c292c296f98cbbff696c2dc8cec2920d9719cf9d7", "/bin/sh"})
+	if id != "62e35ec016f018713016c16c292c296f98cbbff696c2dc8cec2920d9719cf9d7" {
+		t.Fatalf("id %s", id)
+	}
+	if len(cmd) != 1 || cmd[0] != "/bin/sh" {
+		t.Fatalf("cmd %v", cmd)
+	}
+}
+
+func TestParseExecArgsDashDash(t *testing.T) {
+	id, cmd := parseExecArgs([]string{"abc123", "--", "cat", "/etc/os-release"})
+	if id != "abc123" || len(cmd) != 2 || cmd[0] != "cat" {
+		t.Fatalf("id=%s cmd=%v", id, cmd)
+	}
+}
+
 func TestParsePauseDaemonPID(t *testing.T) {
 	pid, err := strconv.Atoi(strings.TrimSpace("12345\n"))
 	if err != nil || pid != 12345 {
