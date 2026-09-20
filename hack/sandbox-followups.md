@@ -24,6 +24,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - Shim /v1/ContainerStats and /v1/PodSandboxStats
 - marooned-oci events --stats (runc-shaped JSON)
 - kubectl top / HPA still follow the pause cgroup until CRI-O is taught to call runtime events
+- Query guest stats from the shim pod (hostPath /run/marooned-oci), not virt-handler
 
 ### Group C — status (Kata 4)
 - podIP = guest/l2bridge IP
