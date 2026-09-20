@@ -173,7 +173,7 @@ func TestTranslateDefaultAgentDisk(t *testing.T) {
 
 func TestTranslateHugepages(t *testing.T) {
 	p := podWithResources("1", "1Gi")
-	p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("hugepages-2Mi")] = resource.MustParse("64Mi")
+	p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("hugepages-2Mi")] = resource.MustParse("2Gi")
 	res := Translate(Input{Pod: p, Config: testConfig()})
 	if len(res.Errors) != 0 {
 		t.Fatalf("errors: %v", res.Errors)
@@ -184,12 +184,35 @@ func TestTranslateHugepages(t *testing.T) {
 	if res.VMI.Spec.Domain.Memory.Hugepages == nil || res.VMI.Spec.Domain.Memory.Hugepages.PageSize != "2Mi" {
 		t.Fatalf("vmi hugepages not set")
 	}
+	got := res.VMI.Spec.Domain.Resources.Requests[corev1.ResourceName("hugepages-2Mi")]
+	guest := *res.VMI.Spec.Domain.Memory.Guest
+	if got.Cmp(guest) != 0 {
+		t.Fatalf("vmi hugepages request %s want guest %s", got.String(), guest.String())
+	}
+}
+
+func TestTranslateHugepagesLessThanGuestSkipped(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("hugepages-2Mi")] = resource.MustParse("64Mi")
+	res := Translate(Input{Pod: p, Config: testConfig()})
+	if len(res.Errors) != 0 {
+		t.Fatalf("errors: %v", res.Errors)
+	}
+	if res.Hugepage != "" {
+		t.Fatalf("hugepage %s, want skipped", res.Hugepage)
+	}
+	if res.VMI.Spec.Domain.Memory != nil && res.VMI.Spec.Domain.Memory.Hugepages != nil {
+		t.Fatal("VMI must not hugepage-back when request < guest RAM")
+	}
+	if len(res.Warnings) == 0 {
+		t.Fatal("expected warning")
+	}
 }
 
 func TestTranslateHugepagesAndTEEAllowed(t *testing.T) {
 	p := podWithResources("1", "1Gi")
 	p.Annotations = map[string]string{util.TEEAnnotation: sandbox.TEESNP}
-	p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("hugepages-2Mi")] = resource.MustParse("64Mi")
+	p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("hugepages-2Mi")] = resource.MustParse("2Gi")
 	res := Translate(Input{Pod: p, Config: testConfig()})
 	if len(res.Errors) != 0 {
 		t.Fatalf("hugepages + TEE should be allowed: %v", res.Errors)

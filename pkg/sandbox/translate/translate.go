@@ -142,6 +142,11 @@ func Translate(in Input) Result {
 		res.Errors = append(res.Errors, hugepageErr)
 	}
 	res.Hugepage = hugepage
+	if hugepage == "" && hugepageErr == nil {
+		if _, q := podHugepageRequest(in.Pod); q.CmpInt64(0) > 0 {
+			res.Warnings = append(res.Warnings, "hugepages request is smaller than guest memory; VMI is not hugepage-backed")
+		}
+	}
 
 	if err := applySRIOV(vmi, in.Pod, in.Config, res.TEE); err != nil {
 		res.Errors = append(res.Errors, err)
@@ -383,23 +388,43 @@ func applyUserRootfs(vmi *virtv1.VirtualMachineInstance, imageBytes int64) {
 	})
 }
 
-func applyHugepages(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod) (string, error) {
-	var page string
-	var qty resource.Quantity
+func podHugepageRequest(pod *corev1.Pod) (page string, qty resource.Quantity) {
 	for _, c := range pod.Spec.Containers {
 		for name, q := range c.Resources.Requests {
 			if !strings.HasPrefix(string(name), "hugepages-") {
 				continue
 			}
 			ps := strings.TrimPrefix(string(name), "hugepages-")
-			if page != "" && page != ps {
-				return "", fmt.Errorf("multiple hugepage sizes requested: %s and %s", page, ps)
-			}
 			page = ps
-			qty = q
+			qty.Add(q)
 		}
 	}
+	return page, qty
+}
+
+func applyHugepages(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod) (string, error) {
+	page, qty := podHugepageRequest(pod)
 	if page == "" {
+		return "", nil
+	}
+	sizes := map[string]struct{}{}
+	for _, c := range pod.Spec.Containers {
+		for name := range c.Resources.Requests {
+			if strings.HasPrefix(string(name), "hugepages-") {
+				sizes[strings.TrimPrefix(string(name), "hugepages-")] = struct{}{}
+			}
+		}
+	}
+	if len(sizes) > 1 {
+		return "", fmt.Errorf("multiple hugepage sizes requested")
+	}
+	// KubeVirt hugepage-backs all guest RAM; request must equal Memory.Guest
+	// or virt-launcher is invalid (64Mi request vs 512Mi guest).
+	guest := resource.MustParse("0")
+	if vmi.Spec.Domain.Memory != nil && vmi.Spec.Domain.Memory.Guest != nil {
+		guest = vmi.Spec.Domain.Memory.Guest.DeepCopy()
+	}
+	if qty.Cmp(guest) < 0 {
 		return "", nil
 	}
 	if vmi.Spec.Domain.Memory == nil {
@@ -409,7 +434,12 @@ func applyHugepages(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod) (string
 	if vmi.Spec.Domain.Resources.Requests == nil {
 		vmi.Spec.Domain.Resources.Requests = corev1.ResourceList{}
 	}
-	vmi.Spec.Domain.Resources.Requests[corev1.ResourceName("hugepages-"+page)] = qty
+	if vmi.Spec.Domain.Resources.Limits == nil {
+		vmi.Spec.Domain.Resources.Limits = corev1.ResourceList{}
+	}
+	name := corev1.ResourceName("hugepages-" + page)
+	vmi.Spec.Domain.Resources.Requests[name] = guest
+	vmi.Spec.Domain.Resources.Limits[name] = guest
 	return page, nil
 }
 
