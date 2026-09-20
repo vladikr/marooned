@@ -18,4 +18,5 @@ spec:
       - |
         echo marooned-guest-ok > /tmp/index.html
         echo marooned-guest-ok > /tmp/marooned-ok
+        echo marooned-guest-ok
         exec httpd -f -p 8080 -h /tmp

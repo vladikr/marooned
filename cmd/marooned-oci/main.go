@@ -84,6 +84,8 @@ func main() {
 		os.Exit(doDelete(root, rest))
 	case "exec":
 		os.Exit(doExec(root, rest))
+	case "log-pump":
+		os.Exit(doLogPump(root, rest))
 	default:
 		fatal("unknown command %s", cmd)
 	}
@@ -201,6 +203,7 @@ func doStart(root string, args []string) int {
 		if _, err := shimJSON("POST", "/v1/StartContainer", map[string]string{"id": criID}); err != nil {
 			fatal("StartContainer: %v", err)
 		}
+		startLogPump(root, id)
 	}
 	return 0
 }
@@ -259,15 +262,19 @@ func doDelete(root string, args []string) int {
 }
 
 func doExec(root string, args []string) int {
-	id, cmd := parseExecArgs(args)
+	id, proc := loadExec(args)
 	if id == "" {
 		fatal("exec: missing id")
 	}
 	if mapped := strings.TrimSpace(string(mustRead(filepath.Join(root, id, "criid")))); mapped != "" {
 		id = mapped
 	}
+	cmd := proc.Args
 	if len(cmd) == 0 {
 		cmd = []string{"true"}
+	}
+	if proc.Terminal {
+		return doExecTTY(id, cmd)
 	}
 	body, err := shimJSON("POST", "/v1/ExecSync", map[string]interface{}{
 		"id": id, "command": cmd, "timeout": 30,

@@ -78,6 +78,10 @@ func (a *agent) serve(conn net.Conn) {
 			}
 			return
 		}
+		if env.Method == agentproto.MethodExecTTY {
+			a.execTTY(conn, env)
+			return
+		}
 		resp := a.handle(env)
 		if err := agentproto.WriteEnvelope(conn, resp); err != nil {
 			return

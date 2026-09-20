@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"sync"
 	"time"
@@ -29,6 +31,8 @@ type RuntimeService interface {
 	RemoveContainer(ctx context.Context, id string) error
 	ContainerStatus(ctx context.Context, id string) (*Container, error)
 	ExecSync(ctx context.Context, id string, cmd []string, timeout time.Duration) (stdout, stderr []byte, exitCode int32, err error)
+	Logs(ctx context.Context, id string) (string, error)
+	ExecTTY(ctx context.Context, id string, cmd []string, conn net.Conn) error
 	ListPodSandbox(ctx context.Context) ([]*PodSandbox, error)
 	ListContainers(ctx context.Context) ([]*Container, error)
 }
@@ -99,6 +103,10 @@ func (UnimplementedRuntime) ContainerStatus(context.Context, string) (*Container
 }
 func (UnimplementedRuntime) ExecSync(context.Context, string, []string, time.Duration) ([]byte, []byte, int32, error) {
 	return nil, nil, 0, ErrUnimplemented
+}
+func (UnimplementedRuntime) Logs(context.Context, string) (string, error) { return "", ErrUnimplemented }
+func (UnimplementedRuntime) ExecTTY(context.Context, string, []string, net.Conn) error {
+	return ErrUnimplemented
 }
 func (UnimplementedRuntime) ListPodSandbox(context.Context) ([]*PodSandbox, error) {
 	return nil, ErrUnimplemented
@@ -420,6 +428,71 @@ func (r *Runtime) ExecSync(_ context.Context, id string, cmd []string, timeout t
 		}
 	}
 	return []byte(out.Stdout), []byte(out.Stderr), out.ExitCode, nil
+}
+
+func (r *Runtime) Logs(_ context.Context, id string) (string, error) {
+	c := r.store.GetContainer(id)
+	if c == nil {
+		return "", fmt.Errorf("container %s not found", id)
+	}
+	if r.dial == nil {
+		return "", ErrUnimplemented
+	}
+	cli, err := r.dial(c.SandboxID)
+	if err != nil {
+		return "", err
+	}
+	defer cli.Close()
+	resp, err := cli.Call(agentproto.MethodLogs, agentproto.LogsRequest{ContainerID: id}, 10*time.Second)
+	if err != nil {
+		return "", err
+	}
+	var out agentproto.LogsResponse
+	if len(resp.Payload) > 0 {
+		_ = json.Unmarshal(resp.Payload, &out)
+	}
+	return out.Data, nil
+}
+
+func (r *Runtime) ExecTTY(_ context.Context, id string, cmd []string, conn net.Conn) error {
+	c := r.store.GetContainer(id)
+	if c == nil {
+		return fmt.Errorf("container %s not found", id)
+	}
+	if r.dial == nil {
+		return ErrUnimplemented
+	}
+	cli, err := r.dial(c.SandboxID)
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+	if err := agentproto.WriteEnvelope(cli.Conn(), agentproto.Envelope{ID: "1", Method: agentproto.MethodExecTTY, Payload: mustJSON(agentproto.ExecRequest{ContainerID: id, Command: cmd})}); err != nil {
+		return err
+	}
+	ack, err := agentproto.ReadEnvelope(cli.Conn())
+	if err != nil {
+		return err
+	}
+	if !ack.OK {
+		return fmt.Errorf("ExecTTY: %s", ack.Error)
+	}
+	errc := make(chan error, 2)
+	go func() {
+		_, e := io.Copy(cli.Conn(), conn)
+		errc <- e
+	}()
+	go func() {
+		_, e := io.Copy(conn, cli.Conn())
+		errc <- e
+	}()
+	<-errc
+	return nil
+}
+
+func mustJSON(v interface{}) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
 }
 
 func (r *Runtime) ListPodSandbox(context.Context) ([]*PodSandbox, error) {

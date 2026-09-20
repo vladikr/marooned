@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strconv"
 	"strings"
 	"syscall"
@@ -30,6 +31,21 @@ func TestParseKillArgsAllSIGKILL(t *testing.T) {
 func TestFirstPositionalNotLast(t *testing.T) {
 	if got := firstPositional([]string{"--force", "ctrid"}); got != "ctrid" {
 		t.Fatalf("got %s", got)
+	}
+}
+
+func TestLoadExecProcessJSON(t *testing.T) {
+	dir := t.TempDir()
+	p := dir + "/process.json"
+	if err := os.WriteFile(p, []byte(`{"terminal":false,"args":["cat","/tmp/marooned-ok"]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	id, proc := loadExec([]string{"--process", p, "62e35ec016f018713016c16c292c296f98cbbff696c2dc8cec2920d9719cf9d7"})
+	if id != "62e35ec016f018713016c16c292c296f98cbbff696c2dc8cec2920d9719cf9d7" {
+		t.Fatalf("id %s", id)
+	}
+	if len(proc.Args) != 2 || proc.Args[0] != "cat" {
+		t.Fatalf("args %v", proc.Args)
 	}
 }
 

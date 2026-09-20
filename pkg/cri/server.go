@@ -44,6 +44,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/RemoveContainer", s.wrap(s.removeContainer))
 	mux.HandleFunc("/v1/ContainerStatus", s.wrap(s.containerStatus))
 	mux.HandleFunc("/v1/ExecSync", s.wrap(s.execSync))
+	mux.HandleFunc("/v1/Logs", s.wrap(s.logs))
+	mux.HandleFunc("/v1/ExecTTY", s.execTTY)
 	mux.HandleFunc("/v1/ListPodSandbox", s.wrap(s.listPodSandbox))
 	mux.HandleFunc("/v1/ListContainers", s.wrap(s.listContainers))
 	s.httpSrv = &http.Server{Handler: mux}
@@ -240,6 +242,41 @@ func (s *Server) execSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"stdout": string(stdout), "stderr": string(stderr), "exitCode": code})
+}
+
+func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
+	var req idReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	data, err := s.Runtime.Logs(r.Context(), req.ID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]string{"data": data})
+}
+
+func (s *Server) execTTY(w http.ResponseWriter, r *http.Request) {
+	var req execReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		writeErr(w, fmt.Errorf("no hijack"))
+		return
+	}
+	conn, bufrw, err := hj.Hijack()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	_, _ = bufrw.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n")
+	_ = bufrw.Flush()
+	_ = s.Runtime.ExecTTY(r.Context(), req.ID, req.Command, conn)
 }
 
 func (s *Server) listPodSandbox(w http.ResponseWriter, r *http.Request) {

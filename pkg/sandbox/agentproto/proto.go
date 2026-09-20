@@ -18,6 +18,7 @@ const (
 	MethodStop       = "Stop"
 	MethodWait       = "Wait"
 	MethodExec       = "Exec"
+	MethodExecTTY    = "ExecTTY"
 	MethodLogs       = "Logs"
 	MethodMountTable = "MountTable"
 	MethodAttest     = "Attest"
@@ -144,6 +145,8 @@ func NewClient(conn net.Conn) *Client {
 func (c *Client) Close() error {
 	return c.conn.Close()
 }
+
+func (c *Client) Conn() net.Conn { return c.conn }
 
 func (c *Client) Call(method string, payload interface{}, timeout time.Duration) (Envelope, error) {
 	c.mu.Lock()
