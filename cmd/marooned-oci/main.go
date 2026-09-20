@@ -214,16 +214,39 @@ func doStart(root string, args []string) int {
 
 func doState(root string, args []string) int {
 	id := lastID(args)
-	st, err := readState(filepath.Join(root, id))
+	dir := filepath.Join(root, id)
+	st, err := readState(dir)
 	if err != nil {
 		fatal("state: %v", err)
 	}
 	if st.PID > 1 && !pidAlive(st.PID) {
 		st.Status = "stopped"
 	}
+	if st.Status == "running" && !guestRunning(dir) {
+		st.Status = "stopped"
+	}
 	enc := json.NewEncoder(os.Stdout)
 	_ = enc.Encode(st)
 	return 0
+}
+
+func guestRunning(dir string) bool {
+	criID := strings.TrimSpace(string(mustRead(filepath.Join(dir, "criid"))))
+	if criID == "" {
+		return false
+	}
+	body, err := shimJSON("POST", "/v1/ContainerStatus", map[string]string{"id": criID})
+	if err != nil {
+		return false
+	}
+	var st struct {
+		State string `json:"State"`
+		Ready bool   `json:"Ready"`
+	}
+	if err := json.Unmarshal(body, &st); err != nil {
+		return false
+	}
+	return st.Ready || st.State == "CONTAINER_RUNNING"
 }
 
 func doKill(root string, args []string) int {

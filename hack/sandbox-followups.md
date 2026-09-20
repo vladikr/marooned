@@ -19,7 +19,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - Persist stripped volumes in annotation; translate a copy onto the VMI
 - RuntimeClass podFixed = 100m + 256Mi (virt-launcher tax + guest kernel/agent)
 
-### Group B — CRI stats (Kata 3)  ← code landed, needs cluster verify
+### Group B — CRI stats (Kata 3)  ← verified (events --stats rss=430080 pids=1)
 - Agent MethodStats from guest /proc (workload PID tree RSS + CPU ticks)
 - Shim /v1/ContainerStats and /v1/PodSandboxStats
 - marooned-oci events --stats (runc-shaped JSON)
@@ -27,11 +27,11 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - Query guest stats from the shim pod (hostPath /run/marooned-oci), not virt-handler
 - Agent is guest PID 1: recover panics so stats cannot panic the VM
 
-### Group C — status (Kata 4)
-- podIP = guest/l2bridge IP
-- containerStatuses.ready = agent says process is up
-- restartCount from the agent
-- QoS from the unstripped spec
+### Group C — status (Kata 4)  ← code landed, needs cluster verify
+- oci `state` is stopped if the guest process is dead (kernel panic no longer looks Running)
+- ContainerStatus Ready/Pid/RestartCount/ExitCode from the agent
+- podIP is still the CRI-O pause CNI address (kubelet owns it); workload IP remains maroonedpods.io/guest-ip
+- QoS follows the unstripped user spec (Group A)
 
 ### Group D — later
 - exec -it (code landed, needs cluster verify)

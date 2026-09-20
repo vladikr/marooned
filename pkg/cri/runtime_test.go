@@ -19,6 +19,21 @@ func TestUnimplemented(t *testing.T) {
 	}
 }
 
+func TestContainerStatusMarksExitedWhenAgentGone(t *testing.T) {
+	store := NewStore()
+	store.PutContainer(&Container{ID: "c1", SandboxID: "sb", State: "CONTAINER_RUNNING", Ready: true})
+	r := NewRuntime(store, nil, func(string) (*agentproto.Client, error) {
+		return nil, fmt.Errorf("vsock dead")
+	})
+	c, err := r.ContainerStatus(context.Background(), "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.State != "CONTAINER_EXITED" || c.Ready {
+		t.Fatalf("state %s ready %v", c.State, c.Ready)
+	}
+}
+
 func TestContainerStatsMissing(t *testing.T) {
 	r := NewRuntime(NewStore(), nil, nil)
 	_, err := r.ContainerStats(context.Background(), "nope")

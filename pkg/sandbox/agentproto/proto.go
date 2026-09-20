@@ -17,6 +17,7 @@ const (
 	MethodStart         = "Start"
 	MethodStop          = "Stop"
 	MethodWait          = "Wait"
+	MethodStatus        = "Status"
 	MethodExec          = "Exec"
 	MethodExecTTY       = "ExecTTY"
 	MethodLogs          = "Logs"
@@ -94,6 +95,19 @@ type LogsRequest struct {
 type LogsResponse struct {
 	Stream string `json:"stream"` // stdout|stderr
 	Data   string `json:"data"`
+}
+
+// StatusRequest is a non-blocking guest process liveness check.
+type StatusRequest struct {
+	ContainerID string `json:"containerID"`
+}
+
+// StatusResponse is whether the guest workload is still running.
+type StatusResponse struct {
+	Running  bool   `json:"running"`
+	Pid      int    `json:"pid"`
+	ExitCode int32  `json:"exitCode"`
+	Restarts uint32 `json:"restarts"`
 }
 
 // StatsRequest asks for guest process cgroup-ish usage.

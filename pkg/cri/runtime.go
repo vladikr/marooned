@@ -68,17 +68,21 @@ type PodSandbox struct {
 }
 
 type Container struct {
-	ID          string
-	SandboxID   string
-	Name        string
-	Image       string
-	Command     []string
-	Args        []string
-	Env         []string
-	WorkDir     string
-	RootfsPath  string
-	RootfsBytes int64
-	State       string
+	ID           string
+	SandboxID    string
+	Name         string
+	Image        string
+	Command      []string
+	Args         []string
+	Env          []string
+	WorkDir      string
+	RootfsPath   string
+	RootfsBytes  int64
+	State        string
+	Ready        bool
+	RestartCount uint32
+	Pid          int
+	ExitCode     int32
 }
 
 // ContainerStats is guest workload usage, not the host pause cgroup.
@@ -427,6 +431,42 @@ func (r *Runtime) ContainerStatus(_ context.Context, id string) (*Container, err
 	if c == nil {
 		return nil, fmt.Errorf("container %s not found", id)
 	}
+	if r.dial == nil {
+		return c, nil
+	}
+	cli, err := r.dial(c.SandboxID)
+	if err != nil {
+		c.Ready = false
+		if c.State == "CONTAINER_RUNNING" {
+			c.State = "CONTAINER_EXITED"
+		}
+		r.store.PutContainer(c)
+		return c, nil
+	}
+	defer cli.Close()
+	resp, err := cli.Call(agentproto.MethodStatus, agentproto.StatusRequest{ContainerID: id}, 5*time.Second)
+	if err != nil {
+		c.Ready = false
+		if c.State == "CONTAINER_RUNNING" {
+			c.State = "CONTAINER_EXITED"
+		}
+		r.store.PutContainer(c)
+		return c, nil
+	}
+	var st agentproto.StatusResponse
+	if len(resp.Payload) > 0 {
+		_ = json.Unmarshal(resp.Payload, &st)
+	}
+	c.Pid = st.Pid
+	c.ExitCode = st.ExitCode
+	c.RestartCount = st.Restarts
+	c.Ready = st.Running
+	if st.Running {
+		c.State = "CONTAINER_RUNNING"
+	} else if c.State == "CONTAINER_RUNNING" {
+		c.State = "CONTAINER_EXITED"
+	}
+	r.store.PutContainer(c)
 	return c, nil
 }
 

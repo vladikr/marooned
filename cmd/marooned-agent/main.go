@@ -21,13 +21,14 @@ import (
 )
 
 type container struct {
-	id     string
-	cmd    *exec.Cmd
-	stdout bytes.Buffer
-	stderr bytes.Buffer
-	mu     sync.Mutex
-	exited bool
-	code   int32
+	id       string
+	cmd      *exec.Cmd
+	stdout   bytes.Buffer
+	stderr   bytes.Buffer
+	mu       sync.Mutex
+	exited   bool
+	code     int32
+	restarts uint32
 }
 
 type agent struct {
@@ -109,6 +110,12 @@ func (a *agent) handle(env agentproto.Envelope) agentproto.Envelope {
 		err = a.stop(env.Payload)
 	case agentproto.MethodWait:
 		err = a.wait(env.Payload)
+	case agentproto.MethodStatus:
+		var resp agentproto.StatusResponse
+		resp, err = a.status(env.Payload)
+		if err == nil {
+			out.Payload, _ = json.Marshal(resp)
+		}
 	case agentproto.MethodExec:
 		var resp agentproto.ExecResponse
 		resp, err = a.exec(env.Payload)
@@ -178,6 +185,14 @@ func (a *agent) start(payload json.RawMessage) error {
 	}
 	klog.Infof("started %s chroot=%s argv=%v pid=%d", req.ContainerID, root, cmd.Args, cmd.Process.Pid)
 	a.mu.Lock()
+	if prev := a.ctrs[req.ContainerID]; prev != nil {
+		prev.mu.Lock()
+		ctr.restarts = prev.restarts
+		if prev.cmd != nil {
+			ctr.restarts++
+		}
+		prev.mu.Unlock()
+	}
 	a.ctrs[req.ContainerID] = ctr
 	a.mu.Unlock()
 	go func() {
@@ -194,6 +209,36 @@ func (a *agent) start(payload json.RawMessage) error {
 		ctr.mu.Unlock()
 	}()
 	return nil
+}
+
+func (a *agent) status(payload json.RawMessage) (agentproto.StatusResponse, error) {
+	var req agentproto.StatusRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return agentproto.StatusResponse{}, err
+	}
+	a.mu.Lock()
+	ctr := a.ctrs[req.ContainerID]
+	a.mu.Unlock()
+	if ctr == nil {
+		return agentproto.StatusResponse{}, fmt.Errorf("not found")
+	}
+	ctr.mu.Lock()
+	defer ctr.mu.Unlock()
+	out := agentproto.StatusResponse{ExitCode: ctr.code, Restarts: ctr.restarts}
+	if ctr.cmd != nil && ctr.cmd.Process != nil {
+		out.Pid = ctr.cmd.Process.Pid
+	}
+	if ctr.exited {
+		return out, nil
+	}
+	if out.Pid > 0 {
+		if err := syscall.Kill(out.Pid, 0); err != nil {
+			out.ExitCode = 255
+			return out, nil
+		}
+	}
+	out.Running = true
+	return out, nil
 }
 
 func (a *agent) stop(payload json.RawMessage) error {
