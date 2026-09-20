@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -34,22 +33,16 @@ func (a *agent) stats(payload json.RawMessage) (agentproto.StatsResponse, error)
 }
 
 func sampleProcessTree(rootPID int) (agentproto.StatsResponse, error) {
-	out := agentproto.StatsResponse{}
-	pids, err := pidsInTree(rootPID)
-	if err != nil || len(pids) == 0 {
-		pids = []int{rootPID}
+	st, err := readProcStat(rootPID)
+	if err != nil {
+		return agentproto.StatsResponse{}, err
 	}
-	out.Pids = uint64(len(pids))
-	for _, pid := range pids {
-		st, err := readProcStat(pid)
-		if err != nil {
-			continue
-		}
-		out.CPUNano += st.cpuNano
-		out.RSSBytes += st.rss
-	}
-	out.WorkingSetBytes = out.RSSBytes
-	return out, nil
+	return agentproto.StatsResponse{
+		CPUNano:         st.cpuNano,
+		RSSBytes:        st.rss,
+		WorkingSetBytes: st.rss,
+		Pids:            1,
+	}, nil
 }
 
 type procSample struct {
@@ -117,54 +110,4 @@ func rssFromStatus(pid int) (uint64, error) {
 func ticksToNano(ticks uint64) uint64 {
 	hz := uint64(100)
 	return ticks * (uint64(time.Second) / hz)
-}
-
-func pidsInTree(rootPID int) ([]int, error) {
-	ents, err := os.ReadDir("/proc")
-	if err != nil {
-		return []int{rootPID}, err
-	}
-	want := map[int]struct{}{rootPID: {}}
-	changed := true
-	for changed {
-		changed = false
-		for _, e := range ents {
-			pid, err := strconv.Atoi(e.Name())
-			if err != nil {
-				continue
-			}
-			if _, ok := want[pid]; ok {
-				continue
-			}
-			ppid, err := procPPID(pid)
-			if err != nil {
-				continue
-			}
-			if _, ok := want[ppid]; ok {
-				want[pid] = struct{}{}
-				changed = true
-			}
-		}
-	}
-	out := make([]int, 0, len(want))
-	for pid := range want {
-		out = append(out, pid)
-	}
-	return out, nil
-}
-
-func procPPID(pid int) (int, error) {
-	b, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
-	if err != nil {
-		return 0, err
-	}
-	i := strings.LastIndex(string(b), ")")
-	if i < 0 {
-		return 0, fmt.Errorf("bad stat")
-	}
-	fields := strings.Fields(string(b)[i+1:])
-	if len(fields) < 2 {
-		return 0, fmt.Errorf("short stat")
-	}
-	return strconv.Atoi(fields[1])
 }

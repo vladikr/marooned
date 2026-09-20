@@ -77,7 +77,7 @@ func handle(unixConn net.Conn, hostDir, uid string, port uint32) {
 
 func dialGuest(hostDir, uid string, port uint32) (net.Conn, error) {
 	var last error
-	deadline := time.Now().Add(2 * time.Minute)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		cid, err := vsock.ResolveGuestCID(hostDir, uid)
 		if err != nil {
@@ -85,12 +85,12 @@ func dialGuest(hostDir, uid string, port uint32) (net.Conn, error) {
 			time.Sleep(time.Second)
 			continue
 		}
-		conn, err := vsock.Dial(fmt.Sprintf("vsock:%d:%d", cid, port), 5*time.Second)
+		conn, err := vsock.Dial(fmt.Sprintf("vsock:%d:%d", cid, port), 2*time.Second)
 		if err == nil {
 			return conn, nil
 		}
 		last = err
-		time.Sleep(time.Second)
+		time.Sleep(400 * time.Millisecond)
 	}
 	if last == nil {
 		last = fmt.Errorf("timeout")

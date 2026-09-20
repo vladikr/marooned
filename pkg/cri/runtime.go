@@ -539,7 +539,7 @@ func (r *Runtime) ContainerStats(_ context.Context, id string) (*ContainerStats,
 		return nil, err
 	}
 	defer cli.Close()
-	resp, err := cli.Call(agentproto.MethodStats, agentproto.StatsRequest{ContainerID: id}, 5*time.Second)
+	resp, err := cli.Call(agentproto.MethodStats, agentproto.StatsRequest{ContainerID: id}, 8*time.Second)
 	if err != nil {
 		return nil, err
 	}

@@ -70,6 +70,11 @@ func main() {
 
 func (a *agent) serve(conn net.Conn) {
 	defer conn.Close()
+	defer func() {
+		if rec := recover(); rec != nil {
+			klog.Errorf("agent serve panic (pid 1 must not exit): %v", rec)
+		}
+	}()
 	for {
 		env, err := agentproto.ReadEnvelope(conn)
 		if err != nil {
