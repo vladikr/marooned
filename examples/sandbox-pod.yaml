@@ -1,3 +1,7 @@
+# User workload in the guest (not alpine sleep). After Running:
+#   IP=$(./cluster-up/kubectl.sh get pod isolated-busybox1 -o jsonpath='{.metadata.annotations.maroonedpods\.io/guest-ip}')
+#   ./cluster-up/kubectl.sh run --rm -n default verify-marooned --image=busybox:1.36 --restart=Never -- wget -qO- http://$IP:8080/
+# Expect: marooned-guest-ok
 apiVersion: v1
 kind: Pod
 metadata:
@@ -8,4 +12,10 @@ spec:
   - name: box
     image: docker.io/library/busybox:latest
     imagePullPolicy: Always
-    command: ["sleep", "3600"]
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo marooned-guest-ok > /tmp/index.html
+        echo marooned-guest-ok > /tmp/marooned-ok
+        exec httpd -f -p 8080 -h /tmp
