@@ -11,17 +11,18 @@ import (
 )
 
 const (
-	MethodPing       = "Ping"
+	MethodPing          = "Ping"
 	MethodRootfs        = "Rootfs"
 	MethodPrepareRootfs = "PrepareRootfs"
 	MethodStart         = "Start"
-	MethodStop       = "Stop"
-	MethodWait       = "Wait"
-	MethodExec       = "Exec"
-	MethodExecTTY    = "ExecTTY"
-	MethodLogs       = "Logs"
-	MethodMountTable = "MountTable"
-	MethodAttest     = "Attest"
+	MethodStop          = "Stop"
+	MethodWait          = "Wait"
+	MethodExec          = "Exec"
+	MethodExecTTY       = "ExecTTY"
+	MethodLogs          = "Logs"
+	MethodStats         = "Stats"
+	MethodMountTable    = "MountTable"
+	MethodAttest        = "Attest"
 )
 
 // Envelope is a length-prefixed JSON request or response.
@@ -93,6 +94,20 @@ type LogsRequest struct {
 type LogsResponse struct {
 	Stream string `json:"stream"` // stdout|stderr
 	Data   string `json:"data"`
+}
+
+// StatsRequest asks for guest process cgroup-ish usage.
+type StatsRequest struct {
+	ContainerID string `json:"containerID"`
+}
+
+// StatsResponse is CPU/memory of the guest workload (not the pause container).
+type StatsResponse struct {
+	CPUNano           uint64 `json:"cpuNano"`
+	RSSBytes          uint64 `json:"rssBytes"`
+	WorkingSetBytes   uint64 `json:"workingSetBytes"`
+	Pids              uint64 `json:"pids"`
+	TimestampUnixNano int64  `json:"timestampUnixNano"`
 }
 
 // WriteEnvelope writes a 4-byte big-endian length then JSON.

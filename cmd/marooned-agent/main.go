@@ -116,6 +116,12 @@ func (a *agent) handle(env agentproto.Envelope) agentproto.Envelope {
 		if err == nil {
 			out.Payload, _ = json.Marshal(resp)
 		}
+	case agentproto.MethodStats:
+		var resp agentproto.StatsResponse
+		resp, err = a.stats(env.Payload)
+		if err == nil {
+			out.Payload, _ = json.Marshal(resp)
+		}
 	case agentproto.MethodMountTable:
 		err = a.mounts(env.Payload)
 	case agentproto.MethodAttest:

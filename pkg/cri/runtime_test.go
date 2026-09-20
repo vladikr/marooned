@@ -19,6 +19,14 @@ func TestUnimplemented(t *testing.T) {
 	}
 }
 
+func TestContainerStatsMissing(t *testing.T) {
+	r := NewRuntime(NewStore(), nil, nil)
+	_, err := r.ContainerStats(context.Background(), "nope")
+	if err == nil {
+		t.Fatal("expected missing container")
+	}
+}
+
 func TestStore(t *testing.T) {
 	s := NewStore()
 	s.PutSandbox(&PodSandbox{ID: "a", Name: "n"})

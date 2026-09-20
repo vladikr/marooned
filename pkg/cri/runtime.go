@@ -35,6 +35,8 @@ type RuntimeService interface {
 	ExecTTY(ctx context.Context, id string, cmd []string, conn net.Conn) error
 	ListPodSandbox(ctx context.Context) ([]*PodSandbox, error)
 	ListContainers(ctx context.Context) ([]*Container, error)
+	ContainerStats(ctx context.Context, id string) (*ContainerStats, error)
+	PodSandboxStats(ctx context.Context, id string) (*PodSandboxStats, error)
 }
 
 type RunPodSandboxRequest struct {
@@ -79,6 +81,25 @@ type Container struct {
 	State       string
 }
 
+// ContainerStats is guest workload usage, not the host pause cgroup.
+type ContainerStats struct {
+	ID                string
+	CPUNano           uint64
+	RSSBytes          uint64
+	WorkingSetBytes   uint64
+	Pids              uint64
+	TimestampUnixNano int64
+}
+
+// PodSandboxStats is the sandbox aggregate (one container today).
+type PodSandboxStats struct {
+	ID                string
+	CPUNano           uint64
+	RSSBytes          uint64
+	Pids              uint64
+	TimestampUnixNano int64
+}
+
 // UnimplementedRuntime is the Phase 0 shim.
 type UnimplementedRuntime struct{}
 
@@ -114,6 +135,12 @@ func (UnimplementedRuntime) ListPodSandbox(context.Context) ([]*PodSandbox, erro
 	return nil, ErrUnimplemented
 }
 func (UnimplementedRuntime) ListContainers(context.Context) ([]*Container, error) {
+	return nil, ErrUnimplemented
+}
+func (UnimplementedRuntime) ContainerStats(context.Context, string) (*ContainerStats, error) {
+	return nil, ErrUnimplemented
+}
+func (UnimplementedRuntime) PodSandboxStats(context.Context, string) (*PodSandboxStats, error) {
 	return nil, ErrUnimplemented
 }
 
@@ -497,4 +524,61 @@ func (r *Runtime) ListPodSandbox(context.Context) ([]*PodSandbox, error) {
 
 func (r *Runtime) ListContainers(context.Context) ([]*Container, error) {
 	return r.store.ListContainers(), nil
+}
+
+func (r *Runtime) ContainerStats(_ context.Context, id string) (*ContainerStats, error) {
+	c := r.store.GetContainer(id)
+	if c == nil {
+		return nil, fmt.Errorf("container %s not found", id)
+	}
+	if r.dial == nil {
+		return nil, ErrUnimplemented
+	}
+	cli, err := r.dial(c.SandboxID)
+	if err != nil {
+		return nil, err
+	}
+	defer cli.Close()
+	resp, err := cli.Call(agentproto.MethodStats, agentproto.StatsRequest{ContainerID: id}, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	var out agentproto.StatsResponse
+	if len(resp.Payload) > 0 {
+		if err := json.Unmarshal(resp.Payload, &out); err != nil {
+			return nil, err
+		}
+	}
+	return &ContainerStats{
+		ID:                id,
+		CPUNano:           out.CPUNano,
+		RSSBytes:          out.RSSBytes,
+		WorkingSetBytes:   out.WorkingSetBytes,
+		Pids:              out.Pids,
+		TimestampUnixNano: out.TimestampUnixNano,
+	}, nil
+}
+
+func (r *Runtime) PodSandboxStats(ctx context.Context, id string) (*PodSandboxStats, error) {
+	if r.store.GetSandbox(id) == nil {
+		return nil, fmt.Errorf("sandbox %s not found", id)
+	}
+	var cpu, rss, pids uint64
+	var ts int64
+	for _, c := range r.store.ListContainers() {
+		if c.SandboxID != id {
+			continue
+		}
+		st, err := r.ContainerStats(ctx, c.ID)
+		if err != nil {
+			continue
+		}
+		cpu += st.CPUNano
+		rss += st.RSSBytes
+		pids += st.Pids
+		if st.TimestampUnixNano > ts {
+			ts = st.TimestampUnixNano
+		}
+	}
+	return &PodSandboxStats{ID: id, CPUNano: cpu, RSSBytes: rss, Pids: pids, TimestampUnixNano: ts}, nil
 }

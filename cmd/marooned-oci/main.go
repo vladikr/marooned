@@ -86,6 +86,8 @@ func main() {
 		os.Exit(doExec(root, rest))
 	case "log-pump":
 		os.Exit(doLogPump(root, rest))
+	case "events":
+		os.Exit(doEvents(root, rest))
 	default:
 		fatal("unknown command %s", cmd)
 	}

@@ -13,15 +13,17 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 
 ## In progress (this file)
 
-### Group A — scheduling (Kata 1+2)  ← code landed, needs cluster verify
+### Group A — scheduling (Kata 1+2)  ← verified on kubevirtci
 - Stop stripping hugepages / extended devices / resourceClaims from the user Pod
 - Still strip PVC/ephemeral/emptyDir (cannot attach to user Pod and virt-launcher)
 - Persist stripped volumes in annotation; translate a copy onto the VMI
 - RuntimeClass podFixed = 100m + 256Mi (virt-launcher tax + guest kernel/agent)
 
-### Group B — CRI stats (Kata 3)
-- Shim ContainerStats / PodSandboxStats from guest cgroup (+ optional launcher RSS)
-- Until then kubectl top / HPA follow the pause container
+### Group B — CRI stats (Kata 3)  ← code landed, needs cluster verify
+- Agent MethodStats from guest /proc (workload PID tree RSS + CPU ticks)
+- Shim /v1/ContainerStats and /v1/PodSandboxStats
+- marooned-oci events --stats (runc-shaped JSON)
+- kubectl top / HPA still follow the pause cgroup until CRI-O is taught to call runtime events
 
 ### Group C — status (Kata 4)
 - podIP = guest/l2bridge IP

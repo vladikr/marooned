@@ -48,6 +48,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/ExecTTY", s.execTTY)
 	mux.HandleFunc("/v1/ListPodSandbox", s.wrap(s.listPodSandbox))
 	mux.HandleFunc("/v1/ListContainers", s.wrap(s.listContainers))
+	mux.HandleFunc("/v1/ContainerStats", s.wrap(s.containerStats))
+	mux.HandleFunc("/v1/PodSandboxStats", s.wrap(s.podSandboxStats))
 	s.httpSrv = &http.Server{Handler: mux}
 	klog.Infof("marooned CRI shim listening on %s", s.Socket)
 	return s.httpSrv.Serve(ln)
@@ -295,4 +297,32 @@ func (s *Server) listContainers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, list)
+}
+
+func (s *Server) containerStats(w http.ResponseWriter, r *http.Request) {
+	var req idReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	st, err := s.Runtime.ContainerStats(r.Context(), req.ID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, st)
+}
+
+func (s *Server) podSandboxStats(w http.ResponseWriter, r *http.Request) {
+	var req idReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	st, err := s.Runtime.PodSandboxStats(r.Context(), req.ID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, st)
 }
