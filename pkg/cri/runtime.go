@@ -46,12 +46,12 @@ type RunPodSandboxRequest struct {
 }
 
 type CreateContainerRequest struct {
-	Name       string
-	Image      string
-	Command    []string
-	Args       []string
-	Env        []string
-	WorkDir    string
+	Name        string
+	Image       string
+	Command     []string
+	Args        []string
+	Env         []string
+	WorkDir     string
 	RootfsPath  string
 	RootfsBytes int64
 }
@@ -66,14 +66,14 @@ type PodSandbox struct {
 }
 
 type Container struct {
-	ID        string
-	SandboxID string
-	Name      string
-	Image     string
-	Command   []string
-	Args      []string
-	Env       []string
-	WorkDir    string
+	ID          string
+	SandboxID   string
+	Name        string
+	Image       string
+	Command     []string
+	Args        []string
+	Env         []string
+	WorkDir     string
 	RootfsPath  string
 	RootfsBytes int64
 	State       string
@@ -104,7 +104,9 @@ func (UnimplementedRuntime) ContainerStatus(context.Context, string) (*Container
 func (UnimplementedRuntime) ExecSync(context.Context, string, []string, time.Duration) ([]byte, []byte, int32, error) {
 	return nil, nil, 0, ErrUnimplemented
 }
-func (UnimplementedRuntime) Logs(context.Context, string) (string, error) { return "", ErrUnimplemented }
+func (UnimplementedRuntime) Logs(context.Context, string) (string, error) {
+	return "", ErrUnimplemented
+}
 func (UnimplementedRuntime) ExecTTY(context.Context, string, []string, net.Conn) error {
 	return ErrUnimplemented
 }
@@ -477,16 +479,10 @@ func (r *Runtime) ExecTTY(_ context.Context, id string, cmd []string, conn net.C
 	if !ack.OK {
 		return fmt.Errorf("ExecTTY: %s", ack.Error)
 	}
-	errc := make(chan error, 2)
 	go func() {
-		_, e := io.Copy(cli.Conn(), conn)
-		errc <- e
+		_, _ = io.Copy(cli.Conn(), conn)
 	}()
-	go func() {
-		_, e := io.Copy(conn, cli.Conn())
-		errc <- e
-	}()
-	<-errc
+	_, _ = io.Copy(conn, cli.Conn())
 	return nil
 }
 

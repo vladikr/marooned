@@ -125,15 +125,12 @@ func doExecTTY(id string, cmd []string) int {
 		fmt.Fprintln(os.Stderr, strings.TrimSpace(string(body)))
 		return 1
 	}
-	errc := make(chan struct{}, 2)
+	// CRI-O's ttyCmd already put a host PTY on our stdio. Copy user→guest in
+	// the background; wait for guest→user so a closed stdin does not kill the
+	// shell (that was "exec -it does nothing").
 	go func() {
 		_, _ = io.Copy(conn, os.Stdin)
-		errc <- struct{}{}
 	}()
-	go func() {
-		_, _ = io.Copy(os.Stdout, br)
-		errc <- struct{}{}
-	}()
-	<-errc
+	_, _ = io.Copy(os.Stdout, br)
 	return 0
 }
