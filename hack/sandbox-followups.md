@@ -39,7 +39,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - kubelet may show "272y ago" on the Always restart timestamp (cosmetic)
 
 ### Group D — later
-- exec -it (code landed, needs cluster verify)
+- exec -it: close parent stdout pipe after Start or kubectl hangs after the command prints (needs cluster verify)
 - First-start: virt-launcher 3/3 in ~3s (IfNotPresent disks); guest exec works immediately. Warm pool still later if we need pre-booted VMs.
 - Guest network vs Pod IP (Services/probes)
 - Volumes into the guest (snapshot exists; agent mount table)

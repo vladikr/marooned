@@ -32,8 +32,18 @@ func (a *agent) execTTY(conn net.Conn, env agentproto.Envelope) {
 	if len(argv) == 1 && (argv[0] == "/bin/sh" || argv[0] == "sh" || argv[0] == "/bin/ash" || argv[0] == "ash") {
 		argv = []string{argv[0], "-i"}
 	}
-	stdinR, stdinW := io.Pipe()
-	stdoutR, stdoutW := io.Pipe()
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		fail(err)
+		return
+	}
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		_ = stdinR.Close()
+		_ = stdinW.Close()
+		fail(err)
+		return
+	}
 	root := filepath.Join(ctrRoot, req.ContainerID, "root")
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdinR, stdoutW, stdoutW
@@ -58,8 +68,13 @@ func (a *agent) execTTY(conn net.Conn, env agentproto.Envelope) {
 		fail(err)
 		return
 	}
+	// Child holds the pipe fds. If the parent keeps stdoutW open,
+	// stdoutR never EOFs after the process exits and kubectl exec -it hangs.
+	_ = stdinR.Close()
+	_ = stdoutW.Close()
 	if err := agentproto.WriteEnvelope(conn, agentproto.Envelope{ID: env.ID, Method: env.Method, OK: true}); err != nil {
 		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
 		return
 	}
 	go func() {
@@ -69,5 +84,4 @@ func (a *agent) execTTY(conn net.Conn, env agentproto.Envelope) {
 	_, _ = io.Copy(conn, stdoutR)
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait()
-	_ = stdoutW.Close()
 }
