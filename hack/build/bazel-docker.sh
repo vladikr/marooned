@@ -82,7 +82,11 @@ printf "\n"
 rsynch_fail_count=0
 
 _rsync() {
-    rsync -al "$@"
+    # -a includes -og (owner/group). Rootless podman maps container
+    # root to a high host uid (e.g. 590824). rsync then asks the
+    # builder to chown that uid, which is not in the user namespace
+    # (EINVAL 22, rsync code 23). Keep archive mode minus ownership.
+    rsync -al --no-owner --no-group "$@"
 }
 
 echo "Rsyncing ${MAROONEDPODS_DIR} to container"
