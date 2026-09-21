@@ -56,13 +56,18 @@ func main() {
 		imageBytes: map[string]int64{},
 		diskBytes:  map[string]int64{},
 	}
-	ln, err := vsock.Listen(*listen)
-	if err != nil {
-		klog.Warningf("listen %s: %v; falling back to tcp://0.0.0.0:1024", *listen, err)
-		ln, err = vsock.Listen("tcp://0.0.0.0:1024")
+	var ln net.Listener
+	var err error
+	for i := 0; i < 50; i++ {
+		ln, err = vsock.Listen(*listen)
+		if err == nil {
+			break
+		}
+		klog.Warningf("listen %s: %v (retry)", *listen, err)
+		time.Sleep(100 * time.Millisecond)
 	}
 	if err != nil {
-		klog.Fatalf("listen: %v", err)
+		klog.Fatalf("listen %s: %v (not falling back to TCP; vsockfwd cannot use it)", *listen, err)
 	}
 	klog.Infof("marooned-agent listening on %s (%T)", ln.Addr().String(), ln)
 	for {

@@ -106,6 +106,7 @@ func listenVsock(port uint32) (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("vsock socket: %w", err)
 	}
+	_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)
 	sa := &unix.SockaddrVM{CID: unix.VMADDR_CID_ANY, Port: port}
 	if err := unix.Bind(fd, sa); err != nil {
 		_ = unix.Close(fd)
