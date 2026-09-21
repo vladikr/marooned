@@ -48,6 +48,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/ExecTTY", s.execTTY)
 	mux.HandleFunc("/v1/ListPodSandbox", s.wrap(s.listPodSandbox))
 	mux.HandleFunc("/v1/ListContainers", s.wrap(s.listContainers))
+	mux.HandleFunc("/v1/WaitContainer", s.wrap(s.waitContainer))
 	mux.HandleFunc("/v1/ContainerStats", s.wrap(s.containerStats))
 	mux.HandleFunc("/v1/PodSandboxStats", s.wrap(s.podSandboxStats))
 	s.httpSrv = &http.Server{Handler: mux}
@@ -297,6 +298,19 @@ func (s *Server) listContainers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, list)
+}
+
+func (s *Server) waitContainer(w http.ResponseWriter, r *http.Request) {
+	var req idReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := s.Runtime.WaitContainer(r.Context(), req.ID); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "exited"})
 }
 
 func (s *Server) containerStats(w http.ResponseWriter, r *http.Request) {

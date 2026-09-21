@@ -208,6 +208,7 @@ func doStart(root string, args []string) int {
 		ns, pname, _ := strings.Cut(pod, "/")
 		appendK8sLog(currentPodLog(ns, pname, podUID, ctrName), "marooned: guest container started")
 		startLogPump(root, id)
+		startGuestWait(root, id)
 	}
 	return 0
 }

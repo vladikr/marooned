@@ -30,6 +30,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 
 ### Group C — status (Kata 4)  ← code landed, needs cluster verify
 - Workload runs in a guest PID namespace. Container PID 1 is a sh that forwards SIGTERM (kernel ignores SIGTERM to unhandled PID 1).
+- When the guest process exits, marooned-oci waits and SIGTERM the host pause so kubelet stops showing Running
 - oci `state` is stopped if the guest process is dead (kernel panic no longer looks Running)
 - ContainerStatus Ready/Pid/RestartCount/ExitCode from the agent
 - podIP is still the CRI-O pause CNI address (kubelet owns it); workload IP remains maroonedpods.io/guest-ip

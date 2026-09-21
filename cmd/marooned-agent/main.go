@@ -29,6 +29,7 @@ type container struct {
 	exited   bool
 	code     int32
 	restarts uint32
+	done     chan struct{}
 }
 
 type agent struct {
@@ -188,7 +189,7 @@ func (a *agent) start(payload json.RawMessage) error {
 		cmd.Env = append(os.Environ(), req.Env...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
-	ctr := &container{id: req.ContainerID, cmd: cmd}
+	ctr := &container{id: req.ContainerID, cmd: cmd, done: make(chan struct{})}
 	cmd.Stdout = &ctr.stdout
 	cmd.Stderr = &ctr.stderr
 	if err := cmd.Start(); err != nil {
@@ -218,6 +219,7 @@ func (a *agent) start(payload json.RawMessage) error {
 			}
 		}
 		ctr.mu.Unlock()
+		close(ctr.done)
 	}()
 	return nil
 }
@@ -229,7 +231,11 @@ func (a *agent) ctrHostPid(id string) int {
 	if ctr == nil || ctr.cmd == nil || ctr.cmd.Process == nil {
 		return 0
 	}
-	return ctr.cmd.Process.Pid
+	pid := ctr.cmd.Process.Pid
+	if err := syscall.Kill(pid, 0); err != nil {
+		return 0
+	}
+	return pid
 }
 
 func (a *agent) status(payload json.RawMessage) (agentproto.StatusResponse, error) {
@@ -285,23 +291,14 @@ func (a *agent) wait(payload json.RawMessage) error {
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return err
 	}
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		a.mu.Lock()
-		ctr := a.ctrs[req.ContainerID]
-		a.mu.Unlock()
-		if ctr == nil {
-			return fmt.Errorf("not found")
-		}
-		ctr.mu.Lock()
-		done := ctr.exited
-		ctr.mu.Unlock()
-		if done {
-			return nil
-		}
-		time.Sleep(200 * time.Millisecond)
+	a.mu.Lock()
+	ctr := a.ctrs[req.ContainerID]
+	a.mu.Unlock()
+	if ctr == nil || ctr.done == nil {
+		return fmt.Errorf("not found")
 	}
-	return fmt.Errorf("timeout")
+	<-ctr.done
+	return nil
 }
 
 func (a *agent) exec(payload json.RawMessage) (agentproto.ExecResponse, error) {
@@ -311,6 +308,17 @@ func (a *agent) exec(payload json.RawMessage) (agentproto.ExecResponse, error) {
 	}
 	if len(req.Command) == 0 {
 		return agentproto.ExecResponse{ExitCode: 1, Stderr: "empty command"}, nil
+	}
+	a.mu.Lock()
+	ctr := a.ctrs[req.ContainerID]
+	a.mu.Unlock()
+	if ctr != nil {
+		ctr.mu.Lock()
+		dead := ctr.exited
+		ctr.mu.Unlock()
+		if dead || a.ctrHostPid(req.ContainerID) == 0 {
+			return agentproto.ExecResponse{ExitCode: 1, Stderr: "container process has exited"}, nil
+		}
 	}
 	argv := append([]string{}, req.Command...)
 	root := filepath.Join(ctrRoot, req.ContainerID, "root")

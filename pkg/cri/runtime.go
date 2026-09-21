@@ -37,6 +37,7 @@ type RuntimeService interface {
 	ListContainers(ctx context.Context) ([]*Container, error)
 	ContainerStats(ctx context.Context, id string) (*ContainerStats, error)
 	PodSandboxStats(ctx context.Context, id string) (*PodSandboxStats, error)
+	WaitContainer(ctx context.Context, id string) error
 }
 
 type RunPodSandboxRequest struct {
@@ -147,6 +148,7 @@ func (UnimplementedRuntime) ContainerStats(context.Context, string) (*ContainerS
 func (UnimplementedRuntime) PodSandboxStats(context.Context, string) (*PodSandboxStats, error) {
 	return nil, ErrUnimplemented
 }
+func (UnimplementedRuntime) WaitContainer(context.Context, string) error { return ErrUnimplemented }
 
 // Store holds in-memory sandbox and container records.
 type Store struct {
@@ -621,4 +623,21 @@ func (r *Runtime) PodSandboxStats(ctx context.Context, id string) (*PodSandboxSt
 		}
 	}
 	return &PodSandboxStats{ID: id, CPUNano: cpu, RSSBytes: rss, Pids: pids, TimestampUnixNano: ts}, nil
+}
+
+func (r *Runtime) WaitContainer(_ context.Context, id string) error {
+	c := r.store.GetContainer(id)
+	if c == nil {
+		return fmt.Errorf("container %s not found", id)
+	}
+	if r.dial == nil {
+		return ErrUnimplemented
+	}
+	cli, err := r.dial(c.SandboxID)
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+	_, err = cli.Call(agentproto.MethodWait, map[string]string{"containerID": id}, 0)
+	return err
 }
