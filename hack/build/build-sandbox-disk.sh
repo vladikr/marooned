@@ -10,6 +10,24 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd -P)"
 out="${root}/_out/sandbox-disk"
 mkdir -p "${out}/rootfs" "${out}/kernel"
+
+# Rootless podman leaves _out owned by the overflow uid; host curl then
+# dies with "client returned ERROR on write" (exit 23).
+reclaim_out() {
+  if [ -w "${out}" ]; then
+    return 0
+  fi
+  echo "reclaiming ${out} (not writable by $(id -u))"
+  if command -v podman >/dev/null 2>&1; then
+    podman unshare chown -R 0:0 "${out}" || true
+  fi
+  if [ ! -w "${out}" ]; then
+    echo "${out} is not writable. Run: podman unshare chown -R 0:0 ${out}" >&2
+    exit 1
+  fi
+}
+reclaim_out
+
 export GO111MODULE="${GO111MODULE:-on}"
 export GOFLAGS="${GOFLAGS:--mod=vendor}"
 
@@ -41,6 +59,7 @@ build_agent() {
   exit 1
 }
 build_agent
+reclaim_out
 
 echo "fetching alpine minirootfs and linux-lts"
 curl -fsSL -o "${out}/minirootfs.tgz" \
