@@ -169,6 +169,14 @@ func TestTranslateDefaultAgentDisk(t *testing.T) {
 	if fw.KernelBoot.Container.Image != util.DefaultSandboxKernelImage {
 		t.Fatalf("kernel image %s", fw.KernelBoot.Container.Image)
 	}
+	if fw.KernelBoot.Container.ImagePullPolicy != corev1.PullIfNotPresent {
+		t.Fatalf("kernel pull %s", fw.KernelBoot.Container.ImagePullPolicy)
+	}
+	for _, vol := range res.VMI.Spec.Volumes {
+		if vol.ContainerDisk != nil && vol.ContainerDisk.ImagePullPolicy != corev1.PullIfNotPresent {
+			t.Fatalf("rootfs pull %s", vol.ContainerDisk.ImagePullPolicy)
+		}
+	}
 }
 
 func TestTranslateHugepages(t *testing.T) {

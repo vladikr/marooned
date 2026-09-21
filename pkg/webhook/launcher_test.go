@@ -71,7 +71,7 @@ func TestMutateVirtLauncherInjectsSidecar(t *testing.T) {
 	if side.Name != vsockfwdContainerName {
 		t.Fatalf("sidecar %s", side.Name)
 	}
-	if side.ImagePullPolicy != corev1.PullAlways {
+	if side.ImagePullPolicy != corev1.PullIfNotPresent {
 		t.Fatalf("pull policy %s", side.ImagePullPolicy)
 	}
 	if side.SecurityContext == nil || side.SecurityContext.RunAsUser == nil || *side.SecurityContext.RunAsUser != 107 {

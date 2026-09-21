@@ -40,7 +40,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 
 ### Group D — later
 - exec -it (code landed, needs cluster verify)
-- First-start: create/start return on pause; guest-start waits for VMI in the background (needs cluster verify)
+- First-start: create/start return on pause; guest-start waits in the background. VMI containerDisks/vsockfwd are IfNotPresent (Always on :latest was ~12s per pull). Needs cluster verify. Warm pool still later for second-scale start.
 - Guest network vs Pod IP (Services/probes)
 - Volumes into the guest (snapshot exists; agent mount table)
 - Multi-container / init containers

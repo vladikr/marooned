@@ -122,7 +122,7 @@ func vsockfwdContainer(pod *corev1.Pod, image, uid string) corev1.Container {
 	return corev1.Container{
 		Name:            vsockfwdContainerName,
 		Image:           image,
-		ImagePullPolicy: corev1.PullAlways,
+		ImagePullPolicy: corev1.PullIfNotPresent,
 		Args:            []string{"-uid", uid, "-host-dir", "/var/run/marooned"},
 		SecurityContext: vsockfwdSecurityContext(pod),
 		Resources: corev1.ResourceRequirements{

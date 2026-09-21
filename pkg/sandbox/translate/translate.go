@@ -45,8 +45,8 @@ type Mount struct {
 
 // Input is the pod plus resolved sandbox config and bound node.
 type Input struct {
-	Pod       *corev1.Pod
-	Config    mpv1.SandboxConfig
+	Pod         *corev1.Pod
+	Config      mpv1.SandboxConfig
 	Node        string
 	TEE         string
 	Namespace   string
@@ -324,9 +324,10 @@ func applyBoot(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig, tee s
 		KernelBoot: &virtv1.KernelBoot{
 			KernelArgs: kb.KernelArgs,
 			Container: &virtv1.KernelBootContainer{
-				Image:      kb.Image,
-				KernelPath: kb.KernelPath,
-				InitrdPath: kb.InitrdPath,
+				Image:           kb.Image,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				KernelPath:      kb.KernelPath,
+				InitrdPath:      kb.InitrdPath,
 			},
 		},
 	}
@@ -365,7 +366,10 @@ func applyRootfs(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig, tee
 	vmi.Spec.Volumes = append(vmi.Spec.Volumes, virtv1.Volume{
 		Name: rootDiskName,
 		VolumeSource: virtv1.VolumeSource{
-			ContainerDisk: &virtv1.ContainerDiskSource{Image: image},
+			ContainerDisk: &virtv1.ContainerDiskSource{
+				Image:           image,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+			},
 		},
 	})
 	_ = tee
