@@ -88,6 +88,8 @@ func main() {
 		os.Exit(doLogPump(root, rest))
 	case "events":
 		os.Exit(doEvents(root, rest))
+	case "guest-wait":
+		os.Exit(doGuestWait(root, rest))
 	default:
 		fatal("unknown command %s", cmd)
 	}
