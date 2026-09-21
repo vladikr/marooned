@@ -4,6 +4,7 @@
 # -f exits EEXIST) or chmod on the hostPath is denied.
 mkdir -p /var/run/marooned || true
 chmod 1777 /var/run/marooned 2>/dev/null || echo "marooned-shim: chmod 1777 /var/run/marooned failed"
+rm -f /var/run/marooned/cri.sock 2>/dev/null || true
 
 install_oci() {
   dest="$1"

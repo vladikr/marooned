@@ -95,8 +95,12 @@ func createShimClusterRoleBinding() *rbacv1.ClusterRoleBinding {
 }
 
 func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
-	priv := false
-	allowEsc := false
+	// Node CRI helper: bind host unix socket, install marooned-oci,
+	// chmod hostPath. Unprivileged container_t cannot bind cri.sock on
+	// container_var_run_t (SELinux EACCES) or overwrite /opt/marooned
+	// (usr_t). Sidecar stays unprivileged; no hostNetwork/hostPID.
+	priv := true
+	allowEsc := true
 	hostPathDir := corev1.HostPathDirectoryOrCreate
 	return &appsv1.DaemonSet{
 		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "DaemonSet"},
@@ -130,7 +134,6 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 							SecurityContext: &corev1.SecurityContext{
 								Privileged:               &priv,
 								AllowPrivilegeEscalation: &allowEsc,
-								Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"SYS_ADMIN"}},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "marooned-run", MountPath: "/var/run/marooned"},

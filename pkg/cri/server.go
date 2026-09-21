@@ -21,14 +21,22 @@ type Server struct {
 }
 
 func (s *Server) Start() error {
-	if err := os.MkdirAll(filepath.Dir(s.Socket), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.Socket), 0777); err != nil {
 		return err
 	}
-	_ = os.Remove(s.Socket)
+	if err := os.Remove(s.Socket); err != nil && !os.IsNotExist(err) {
+		klog.Warningf("remove stale %s: %v", s.Socket, err)
+	}
 	ln, err := net.Listen("unix", s.Socket)
 	if err != nil {
-		return err
+		_ = os.Chmod(s.Socket, 0777)
+		_ = os.Remove(s.Socket)
+		ln, err = net.Listen("unix", s.Socket)
+		if err != nil {
+			return fmt.Errorf("listen %s: %w", s.Socket, err)
+		}
 	}
+	_ = os.Chmod(s.Socket, 0777)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
