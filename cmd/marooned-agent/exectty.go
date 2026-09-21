@@ -37,7 +37,13 @@ func (a *agent) execTTY(conn net.Conn, env agentproto.Envelope) {
 	root := filepath.Join(ctrRoot, req.ContainerID, "root")
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdinR, stdoutW, stdoutW
-	if st, err := os.Stat(root); err == nil && st.IsDir() {
+	if st, err := os.Stat(root); err == nil && st.IsDir() && a.ctrHostPid(req.ContainerID) > 0 {
+		argv[0] = lookPathInRoot(root, argv[0], nil)
+		cmd = nsenterExecCmd(a.ctrHostPid(req.ContainerID), root, argv)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = stdinR, stdoutW, stdoutW
+		cmd.Dir = "/"
+		cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "TERM=xterm", "PS1=# ", "MAROONED_SKIP_PROC=1"}
+	} else if st, err := os.Stat(root); err == nil && st.IsDir() {
 		argv[0] = lookPathInRoot(root, argv[0], nil)
 		cmd = exec.Command(argv[0], argv[1:]...)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = stdinR, stdoutW, stdoutW

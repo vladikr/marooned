@@ -78,6 +78,7 @@ extract_apk() {
 extract_apk e2fsprogs
 extract_apk e2fsprogs-libs
 extract_apk util-linux-libs || extract_apk libblkid || true
+extract_apk util-linux-misc || extract_apk util-linux || true
 extract_apk libcom_err || true
 extract_apk libuuid || true
 # musl loads from /lib; alpine apks often put .so files in /usr/lib

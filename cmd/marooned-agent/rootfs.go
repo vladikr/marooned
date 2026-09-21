@@ -177,6 +177,9 @@ func startInRoot(root string, req agentproto.StartRequest) (*exec.Cmd, error) {
 	if err := prepareChroot(root); err != nil {
 		return nil, err
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Chroot: root}
-	return cmd, nil
+	env := cmd.Env
+	if cwd != "" && cwd != "/" {
+		env = append(append([]string{}, env...), "MAROONED_WORKDIR="+cwd)
+	}
+	return containerInitCmd(root, argv, env)
 }

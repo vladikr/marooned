@@ -28,6 +28,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - Agent is guest PID 1: recover panics so stats cannot panic the VM
 
 ### Group C — status (Kata 4)  ← code landed, needs cluster verify
+- Workload runs in a guest PID namespace so `kubectl exec -- kill 1` kills httpd, not the agent (VM PID 1)
 - oci `state` is stopped if the guest process is dead (kernel panic no longer looks Running)
 - ContainerStatus Ready/Pid/RestartCount/ExitCode from the agent
 - podIP is still the CRI-O pause CNI address (kubelet owns it); workload IP remains maroonedpods.io/guest-ip

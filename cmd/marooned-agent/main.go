@@ -40,6 +40,9 @@ type agent struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "container-init" {
+		os.Exit(runContainerInit())
+	}
 	klog.InitFlags(nil)
 	listen := flag.String("listen", "vsock://:1024", "listen address: vsock://:port, tcp://host:port, or unix:///path")
 	flag.Parse()
@@ -211,6 +214,16 @@ func (a *agent) start(payload json.RawMessage) error {
 	return nil
 }
 
+func (a *agent) ctrHostPid(id string) int {
+	a.mu.Lock()
+	ctr := a.ctrs[id]
+	a.mu.Unlock()
+	if ctr == nil || ctr.cmd == nil || ctr.cmd.Process == nil {
+		return 0
+	}
+	return ctr.cmd.Process.Pid
+}
+
 func (a *agent) status(payload json.RawMessage) (agentproto.StatusResponse, error) {
 	var req agentproto.StatusRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
@@ -294,7 +307,12 @@ func (a *agent) exec(payload json.RawMessage) (agentproto.ExecResponse, error) {
 	argv := append([]string{}, req.Command...)
 	root := filepath.Join(ctrRoot, req.ContainerID, "root")
 	cmd := exec.Command(argv[0], argv[1:]...)
-	if st, err := os.Stat(root); err == nil && st.IsDir() {
+	if st, err := os.Stat(root); err == nil && st.IsDir() && a.ctrHostPid(req.ContainerID) > 0 {
+		argv[0] = lookPathInRoot(root, argv[0], nil)
+		cmd = nsenterExecCmd(a.ctrHostPid(req.ContainerID), root, argv)
+		cmd.Dir = "/"
+		cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "MAROONED_SKIP_PROC=1"}
+	} else if st, err := os.Stat(root); err == nil && st.IsDir() {
 		argv[0] = lookPathInRoot(root, argv[0], nil)
 		cmd = exec.Command(argv[0], argv[1:]...)
 		cmd.Dir = "/"
