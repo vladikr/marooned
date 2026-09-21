@@ -6,6 +6,16 @@ import (
 	"testing"
 )
 
+func TestIsMountPointTempDir(t *testing.T) {
+	dir := t.TempDir()
+	if isMountPoint(dir) {
+		t.Fatalf("%s should not be a mount point", dir)
+	}
+	if isMountPoint(filepath.Join(dir, "missing")) {
+		t.Fatal("missing path")
+	}
+}
+
 func TestHasExtSuperblock(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "dev")
 	buf := make([]byte, 1100)

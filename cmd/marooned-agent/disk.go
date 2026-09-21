@@ -30,6 +30,13 @@ func (a *agent) prepareRootfs(payload []byte) error {
 	if err := os.MkdirAll(dest, 0755); err != nil {
 		return err
 	}
+	if isMountPoint(dest) {
+		a.mu.Lock()
+		a.imageBytes[req.ContainerID] = req.ImageBytes
+		a.diskBytes[req.ContainerID] = req.DiskBytes
+		a.mu.Unlock()
+		return nil
+	}
 	var dev string
 	var last error
 	deadline := time.Now().Add(60 * time.Second)
@@ -50,7 +57,11 @@ func (a *agent) prepareRootfs(payload []byte) error {
 	}
 	if err := syscall.Mount(dev, dest, "ext4", 0, ""); err != nil {
 		if err2 := syscall.Mount(dev, dest, "ext2", 0, ""); err2 != nil {
-			return fmt.Errorf("mount %s on %s: %v; %v", dev, dest, err, err2)
+			if isMountPoint(dest) {
+				// kubelet restart: disk still mounted from the previous start
+			} else {
+				return fmt.Errorf("mount %s on %s: %v; %v", dev, dest, err, err2)
+			}
 		}
 	}
 	a.mu.Lock()
@@ -87,6 +98,17 @@ func findDiskBySerial(want string) (string, error) {
 		return "/dev/vdb", nil
 	}
 	return "", fmt.Errorf("not found")
+}
+
+func isMountPoint(path string) bool {
+	var st, pst syscall.Stat_t
+	if err := syscall.Stat(path, &st); err != nil {
+		return false
+	}
+	if err := syscall.Stat(filepath.Dir(path), &pst); err != nil {
+		return false
+	}
+	return st.Dev != pst.Dev
 }
 
 func hasExtSuperblock(dev string) bool {

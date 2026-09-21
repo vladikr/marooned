@@ -306,10 +306,12 @@ func (s *Server) waitContainer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	klog.Infof("WaitContainer %s", req.ID)
 	if err := s.Runtime.WaitContainer(r.Context(), req.ID); err != nil {
 		writeErr(w, err)
 		return
 	}
+	klog.Infof("WaitContainer %s exited", req.ID)
 	writeJSON(w, map[string]string{"status": "exited"})
 }
 
