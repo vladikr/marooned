@@ -1,28 +1,33 @@
 #!/bin/sh
-set -e
-# World-writable so uid 107 can bind sockets once the shim creates <uid>/.
+# Host copies are best-effort. Never fail before exec: CRI-O needs cri.sock
+# even when /opt/marooned/marooned-oci already exists (busybox cp without
+# -f exits EEXIST) or chmod on the hostPath is denied.
 mkdir -p /var/run/marooned || true
-chmod 1777 /var/run/marooned || echo "marooned-shim: chmod 1777 /var/run/marooned failed"
-if [ -x /app/marooned-oci ]; then
-  if [ -d /host-opt ]; then
-    cp /app/marooned-oci /host-opt/marooned-oci
-    chmod 0755 /host-opt/marooned-oci
-  fi
-  if [ -d /host-usr-local-bin ]; then
-    cp /app/marooned-oci /host-usr-local-bin/marooned-oci
-    chmod 0755 /host-usr-local-bin/marooned-oci
-  fi
-fi
+chmod 1777 /var/run/marooned 2>/dev/null || echo "marooned-shim: chmod 1777 /var/run/marooned failed"
+
+install_oci() {
+  dest="$1"
+  dir=$(dirname "$dest")
+  [ -d "$dir" ] || return 0
+  [ -x /app/marooned-oci ] || return 0
+  rm -f "$dest" 2>/dev/null || true
+  cp -f /app/marooned-oci "$dest" 2>/dev/null || echo "marooned-shim: could not install $dest"
+  chmod 0755 "$dest" 2>/dev/null || true
+}
+
+install_oci /host-opt/marooned-oci
+install_oci /host-usr-local-bin/marooned-oci
+
 if [ -d /host-crio-dropin ] && [ -f /app/20-marooned.conf ]; then
-  # CRI-O parses every file in conf.d as TOML. Stamp lives under /opt/marooned.
   rm -f /host-crio-dropin/.marooned-stamp
   mkdir -p /host-opt
   stamp_new="$(md5sum /app/marooned-oci /app/20-marooned.conf 2>/dev/null | md5sum | awk '{print $1}')"
   stamp_file="/host-opt/.crio-stamp"
   stamp_old="$(cat "$stamp_file" 2>/dev/null || true)"
-  cp /app/20-marooned.conf /host-crio-dropin/20-marooned.conf
+  cp -f /app/20-marooned.conf /host-crio-dropin/20-marooned.conf 2>/dev/null || \
+    echo "marooned-shim: could not write CRI-O drop-in"
   if [ "$stamp_new" != "$stamp_old" ]; then
-    echo "$stamp_new" >"$stamp_file"
+    echo "$stamp_new" >"$stamp_file" 2>/dev/null || true
     if [ -x /usr/bin/nsenter ]; then
       nsenter -t 1 -m -u -i -n -p -- systemctl restart crio 2>/dev/null || \
         echo "marooned-shim: wrote CRI-O drop-in; restart crio on the host if handler is missing"
