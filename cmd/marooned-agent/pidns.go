@@ -78,7 +78,7 @@ func containerInitCmd(root string, argv, env []string) (*exec.Cmd, error) {
 }
 
 func nsenterExecCmd(hostPid int, root string, argv []string) *exec.Cmd {
-	tail := append([]string{"-t", strconv.Itoa(hostPid), "-p", "--", "/usr/local/bin/marooned-agent", "container-init", root, "--"}, argv...)
+	tail := append([]string{"-t", strconv.Itoa(hostPid), "-p", "--", "chroot", root}, argv...)
 	if _, err := os.Stat("/usr/bin/nsenter"); err == nil {
 		return exec.Command("/usr/bin/nsenter", tail...)
 	}

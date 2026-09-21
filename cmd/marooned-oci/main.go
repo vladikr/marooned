@@ -631,6 +631,7 @@ func shimJSON(method, path string, payload interface{}) ([]byte, error) {
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{
 		Transport: &http.Transport{
+			DisableKeepAlives: true,
 			Dial: func(network, addr string) (net.Conn, error) {
 				return net.Dial("unix", shimSock)
 			},

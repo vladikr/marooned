@@ -25,7 +25,8 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - marooned-oci events --stats (runc-shaped JSON)
 - kubectl top / HPA still follow the pause cgroup until CRI-O is taught to call runtime events
 - Query guest stats from the shim pod (hostPath /run/marooned-oci), not virt-handler
-- Agent is guest PID 1: recover panics so stats cannot panic the VM
+- Guest PID 1 is busybox sh (restarts agent). Go agent must not be init (exit 2 → kernel panic).
+- log-pump HTTP client DisableKeepAlives so vsock sessions do not leak
 
 ### Group C — status (Kata 4)  ← code landed, needs cluster verify
 - Workload runs in a guest PID namespace so `kubectl exec -- kill 1` kills httpd, not the agent (VM PID 1)

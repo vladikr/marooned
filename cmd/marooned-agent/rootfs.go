@@ -181,5 +181,14 @@ func startInRoot(root string, req agentproto.StartRequest) (*exec.Cmd, error) {
 	if cwd != "" && cwd != "/" {
 		env = append(append([]string{}, env...), "MAROONED_WORKDIR="+cwd)
 	}
-	return containerInitCmd(root, argv, env)
+	// PID 1 in the container ns must be busybox, not the Go agent.
+	script := "test -n \"$MAROONED_WORKDIR\" && cd \"$MAROONED_WORKDIR\"; mount -t proc proc /proc 2>/dev/null; exec \"$@\""
+	cmd = exec.Command("/bin/sh", append([]string{"-c", script, "--"}, argv...)...)
+	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWPID,
+		Chroot:     root,
+		Setpgid:    true,
+	}
+	return cmd, nil
 }

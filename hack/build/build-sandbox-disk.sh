@@ -103,7 +103,14 @@ modprobe vmw_vsock_virtio_transport 2>/dev/null || true
 ip link set lo up 2>/dev/null || true
 ip link set eth0 up 2>/dev/null || true
 udhcpc -i eth0 -n -q -t 8 2>/dev/null || true
-exec /usr/local/bin/marooned-agent -listen vsock://:1024
+# Agent must not be PID 1: a Go process that exits (panic, deadlock
+# abort) is exit_group(2) and the kernel panics. busybox sh reaps and
+# restarts the agent.
+while true; do
+  /usr/local/bin/marooned-agent -listen vsock://:1024
+  echo "marooned-agent exited $?; restarting"
+  sleep 1
+done
 INIT
 chmod +x "${out}/rootfs/sbin/init"
 
