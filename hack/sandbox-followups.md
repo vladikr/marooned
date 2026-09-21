@@ -41,7 +41,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 ### Group D — later
 - exec -it: verified (os.Pipe + close parent ends; kubectl returns after the command)
 - First-start: virt-launcher 3/3 in ~3s (IfNotPresent disks); guest exec works immediately. Warm pool still later if we need pre-booted VMs.
-- Guest network vs Pod IP (Services/probes)
+- Guest network: masquerade forwards containerPorts; EndpointSlice uses virt-launcher IP + those ports; HTTP/TCP probes rewrite to exec wget 127.0.0.1 (needs cluster verify). status.podIP is still the pause.
 - Volumes into the guest (snapshot exists; agent mount table)
 - Multi-container / init containers
 - Large-image unpack (full tar over vsock)

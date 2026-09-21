@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -339,7 +340,7 @@ func (a *Adaptor) applyTranslation(vmi *virtv1.VirtualMachineInstance, tr transl
 
 func (a *Adaptor) annotatePod(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstance) error {
 	want := fmt.Sprintf("%s/%s", vmi.Namespace, vmi.Name)
-	ip := guestIP(vmi)
+	ip := a.serviceBackendIP(vmi)
 	cid := ""
 	if vmi.Status.VSOCKCID != nil {
 		cid = strconv.FormatUint(uint64(*vmi.Status.VSOCKCID), 10)
@@ -443,7 +444,7 @@ func (a *Adaptor) reconcilePool() {
 }
 
 func (a *Adaptor) publishEndpointSlice(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstance) error {
-	ip := guestIP(vmi)
+	ip := a.serviceBackendIP(vmi)
 	if ip == "" {
 		return nil
 	}
@@ -464,6 +465,7 @@ func (a *Adaptor) publishEndpointSlice(pod *corev1.Pod, vmi *virtv1.VirtualMachi
 			Conditions: discoveryv1.EndpointConditions{Ready: &ready},
 			NodeName:   &pod.Spec.NodeName,
 		}},
+		Ports: endpointPorts(pod),
 	}
 	_, err := a.maroonedpodsCli.DiscoveryV1().EndpointSlices(pod.Namespace).Create(context.Background(), slice, metav1.CreateOptions{})
 	if k8serrors.IsAlreadyExists(err) {
@@ -472,6 +474,7 @@ func (a *Adaptor) publishEndpointSlice(pod *corev1.Pod, vmi *virtv1.VirtualMachi
 			return getErr
 		}
 		cur.Endpoints = slice.Endpoints
+		cur.Ports = slice.Ports
 		_, err = a.maroonedpodsCli.DiscoveryV1().EndpointSlices(pod.Namespace).Update(context.Background(), cur, metav1.UpdateOptions{})
 	}
 	return err
@@ -492,6 +495,53 @@ func guestIP(vmi *virtv1.VirtualMachineInstance) string {
 		}
 	}
 	return ""
+}
+
+// serviceBackendIP is reachable from other pods. Masquerade guests are
+// 10.0.2.2; use the virt-launcher pod IP so kube-proxy can DNAT.
+func (a *Adaptor) serviceBackendIP(vmi *virtv1.VirtualMachineInstance) string {
+	if ip := guestIP(vmi); ip != "" && !strings.HasPrefix(ip, "10.0.2.") {
+		return ip
+	}
+	if ip := a.virtLauncherPodIP(vmi); ip != "" {
+		return ip
+	}
+	return guestIP(vmi)
+}
+
+func (a *Adaptor) virtLauncherPodIP(vmi *virtv1.VirtualMachineInstance) string {
+	if vmi.UID == "" {
+		return ""
+	}
+	list, err := a.maroonedpodsCli.CoreV1().Pods(vmi.Namespace).List(context.Background(), metav1.ListOptions{
+		LabelSelector: virtv1.CreatedByLabel + "=" + string(vmi.UID),
+	})
+	if err != nil {
+		return ""
+	}
+	for i := range list.Items {
+		if ip := list.Items[i].Status.PodIP; ip != "" {
+			return ip
+		}
+	}
+	return ""
+}
+
+func endpointPorts(pod *corev1.Pod) []discoveryv1.EndpointPort {
+	var out []discoveryv1.EndpointPort
+	for _, p := range sandbox.WorkloadPorts(pod) {
+		if p.Port == int32(sandbox.DefaultAgentPort) {
+			continue
+		}
+		port := p.Port
+		name := p.Name
+		proto := corev1.Protocol(p.Protocol)
+		if proto == "" {
+			proto = corev1.ProtocolTCP
+		}
+		out = append(out, discoveryv1.EndpointPort{Name: &name, Port: &port, Protocol: &proto})
+	}
+	return out
 }
 
 func splitRef(ref string) (string, string) {

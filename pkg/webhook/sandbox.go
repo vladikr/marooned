@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -52,11 +53,64 @@ func MutateSandboxPod(pod *corev1.Pod) error {
 
 	for i := range pod.Spec.Containers {
 		dropVolumeRefs(&pod.Spec.Containers[i], droppedVolumeNames)
+		rewriteProbesToExec(&pod.Spec.Containers[i])
 	}
 	for i := range pod.Spec.InitContainers {
 		dropVolumeRefs(&pod.Spec.InitContainers[i], droppedVolumeNames)
 	}
 	return nil
+}
+
+// HTTP/TCP probes hit status.podIP (the CRI-O pause). Rewrite them to
+// exec wget against 127.0.0.1 so kubelet uses CRI exec in the guest.
+func rewriteProbesToExec(c *corev1.Container) {
+	rewriteProbeToExec(c.LivenessProbe)
+	rewriteProbeToExec(c.ReadinessProbe)
+	rewriteProbeToExec(c.StartupProbe)
+}
+
+func rewriteProbeToExec(p *corev1.Probe) {
+	if p == nil {
+		return
+	}
+	url := probeURL(p)
+	if url == "" {
+		return
+	}
+	p.Exec = &corev1.ExecAction{Command: []string{"wget", "-qO-", url}}
+	p.HTTPGet = nil
+	p.TCPSocket = nil
+	p.GRPC = nil
+}
+
+func probeURL(p *corev1.Probe) string {
+	if p.HTTPGet != nil {
+		port := p.HTTPGet.Port.IntValue()
+		if port <= 0 {
+			return ""
+		}
+		path := p.HTTPGet.Path
+		if path == "" {
+			path = "/"
+		}
+		host := p.HTTPGet.Host
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		scheme := strings.ToLower(string(p.HTTPGet.Scheme))
+		if scheme == "" {
+			scheme = "http"
+		}
+		return scheme + "://" + host + ":" + strconv.Itoa(port) + path
+	}
+	if p.TCPSocket != nil {
+		port := p.TCPSocket.Port.IntValue()
+		if port <= 0 {
+			return ""
+		}
+		return "http://127.0.0.1:" + strconv.Itoa(port) + "/"
+	}
+	return ""
 }
 
 func persistVolumeSnapshot(pod *corev1.Pod) error {

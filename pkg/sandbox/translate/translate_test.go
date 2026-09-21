@@ -402,8 +402,21 @@ func TestTranslateNetworkMasqueradeDefault(t *testing.T) {
 	if iface.Masquerade == nil {
 		t.Fatalf("expected masquerade default, got %+v", iface)
 	}
-	if len(iface.Ports) != 1 || iface.Ports[0].Port != 1024 {
+	if len(iface.Ports) < 1 || iface.Ports[0].Port != 1024 {
 		t.Fatalf("masquerade must expose agent port 1024, got %+v", iface.Ports)
+	}
+}
+
+func TestTranslateMasqueradeExposesContainerPorts(t *testing.T) {
+	p := podWithResources("1", "1Gi")
+	p.Spec.Containers[0].Ports = []corev1.ContainerPort{{Name: "http", ContainerPort: 8080, Protocol: corev1.ProtocolTCP}}
+	res := Translate(Input{Pod: p, Config: testConfig()})
+	iface := res.VMI.Spec.Domain.Devices.Interfaces[0]
+	if len(iface.Ports) != 2 {
+		t.Fatalf("ports %+v", iface.Ports)
+	}
+	if iface.Ports[1].Port != 8080 || iface.Ports[1].Name != "http" {
+		t.Fatalf("workload port %+v", iface.Ports[1])
 	}
 	if res.VMI.Spec.Networks[0].Pod == nil {
 		t.Fatal("network source must be pod: {}")

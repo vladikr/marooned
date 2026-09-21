@@ -8,6 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/pointer"
 
 	"maroonedpods.io/maroonedpods/pkg/sandbox"
@@ -198,6 +199,29 @@ func TestMutateSandboxPodStripKeepMatrix(t *testing.T) {
 				t.Errorf("node-mode toleration present=%v want %v", hasNodeModeToleration(pod), tc.wantToleration)
 			}
 		})
+	}
+}
+
+func TestMutateRewritesHTTPProbeToExec(t *testing.T) {
+	pod := sandboxPod(func(p *corev1.Pod) {
+		p.Spec.Containers[0].ReadinessProbe = &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{Path: "/", Port: intstr.FromInt(8080)},
+			},
+		}
+	})
+	if err := MutateSandboxPod(pod); err != nil {
+		t.Fatal(err)
+	}
+	pr := pod.Spec.Containers[0].ReadinessProbe
+	if pr.HTTPGet != nil {
+		t.Fatal("HTTPGet must be rewritten to exec")
+	}
+	if pr.Exec == nil || len(pr.Exec.Command) != 3 || pr.Exec.Command[0] != "wget" {
+		t.Fatalf("exec %+v", pr.Exec)
+	}
+	if pr.Exec.Command[2] != "http://127.0.0.1:8080/" {
+		t.Fatalf("url %s", pr.Exec.Command[2])
 	}
 }
 

@@ -134,7 +134,7 @@ func Translate(in Input) Result {
 	}
 
 	applyBoot(vmi, in.Config, res.TEE)
-	applyNetwork(vmi, in.Config)
+	applyNetwork(vmi, in.Config, in.Pod)
 	applyRootfs(vmi, in.Config, res.TEE)
 	applyUserRootfs(vmi, in.RootfsBytes)
 	hugepage, hugepageErr := applyHugepages(vmi, in.Pod)
@@ -333,7 +333,7 @@ func applyBoot(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig, tee s
 	}
 }
 
-func applyNetwork(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig) {
+func applyNetwork(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig, pod *corev1.Pod) {
 	iface := virtv1.Interface{Name: defaultNetName}
 	binding := sandbox.BindingL2Bridge
 	if cfg.Network != nil && cfg.Network.Binding != "" {
@@ -341,7 +341,7 @@ func applyNetwork(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig) {
 	}
 	if binding == sandbox.BindingMasquerade {
 		iface.InterfaceBindingMethod = virtv1.InterfaceBindingMethod{Masquerade: &virtv1.InterfaceMasquerade{}}
-		iface.Ports = []virtv1.Port{{Name: "agent", Port: int32(sandbox.DefaultAgentPort), Protocol: "TCP"}}
+		iface.Ports = sandbox.WorkloadPorts(pod)
 	} else {
 		iface.Binding = &virtv1.PluginBinding{Name: binding}
 	}
