@@ -28,7 +28,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - Guest PID 1 is busybox sh (restarts agent). Go agent must not be init (exit 2 → kernel panic).
 - log-pump HTTP client DisableKeepAlives so vsock sessions do not leak
 
-### Group C — status (Kata 4)  ← code landed, needs cluster verify
+### Group C — status (Kata 4)  ← verified (killall httpd → Error then Always restart)
 - Workload runs in a guest PID namespace. Container PID 1 is a sh that forwards SIGTERM (kernel ignores SIGTERM to unhandled PID 1).
 - When the guest process exits, marooned-oci waits, SIGTERM the host pause, and writes `/var/run/crio/exits/<id>` (conmon is not the pause parent, so waitpid never fires)
 - PrepareRootfs is a no-op if the user-rootfs disk is already mounted (Always restart after killall)
@@ -36,6 +36,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - ContainerStatus Ready/Pid/RestartCount/ExitCode from the agent
 - podIP is still the CRI-O pause CNI address (kubelet owns it); workload IP remains maroonedpods.io/guest-ip
 - QoS follows the unstripped user spec (Group A)
+- kubelet may show "272y ago" on the Always restart timestamp (cosmetic)
 
 ### Group D — later
 - exec -it (code landed, needs cluster verify)
