@@ -40,7 +40,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 
 ### Group D — later
 - exec -it (code landed, needs cluster verify)
-- First-start ~2min (VMI Scheduling + kubelet CRI timeout)
+- First-start: create/start return on pause; guest-start waits for VMI in the background (needs cluster verify)
 - Guest network vs Pod IP (Services/probes)
 - Volumes into the guest (snapshot exists; agent mount table)
 - Multi-container / init containers

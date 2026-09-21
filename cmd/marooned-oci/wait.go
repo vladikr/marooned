@@ -48,6 +48,7 @@ func doGuestWait(root string, args []string) int {
 	_ = shimJSONWait("/v1/WaitContainer", map[string]string{"id": criID})
 	code := guestExitCode(criID)
 	gwlog(dir, fmt.Sprintf("guest exited code=%d", code))
+	_ = os.WriteFile(filepath.Join(dir, "guest-exited"), []byte("1"), 0644)
 	stopHostPause(dir, id)
 	writeCrioExit(id, code)
 	if st, err := readState(dir); err == nil {

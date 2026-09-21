@@ -90,6 +90,8 @@ func main() {
 		os.Exit(doEvents(root, rest))
 	case "guest-wait":
 		os.Exit(doGuestWait(root, rest))
+	case "guest-start":
+		os.Exit(doGuestStart(root, rest))
 	default:
 		fatal("unknown command %s", cmd)
 	}
@@ -135,20 +137,9 @@ func doCreate(root string, args []string) int {
 	if meta.Sandbox {
 		_ = os.WriteFile(filepath.Join(dir, "sandbox"), []byte("1"), 0644)
 	}
-	// CRI-O often has drop_infra_ctr: there is no pause sandbox, only the
-	// user container. Always register the sandbox before start.
-	if meta.Namespace != "" && meta.UID != "" {
-		spec := readProcessSpec(bundle)
-		hint := map[string]interface{}{
-			"podName": meta.Name, "podNamespace": meta.Namespace, "podUID": meta.UID,
-		}
-		if spec.Root != "" {
-			hint["rootfsBytes"] = dirSize(spec.Root)
-		}
-		if _, err := shimJSON("POST", "/v1/RunPodSandbox", hint); err != nil {
-			fatal("RunPodSandbox: %v", err)
-		}
-	}
+	// Do not wait for the VMI/agent here. kubelet runtimeRequestTimeout
+	// is 2m; virt-launcher init is longer. guest-start waits in the
+	// background after start returns.
 	return 0
 }
 
@@ -170,48 +161,7 @@ func doStart(root string, args []string) int {
 	if strings.TrimSpace(string(mustRead(filepath.Join(dir, "sandbox")))) == "1" {
 		return 0
 	}
-	bundle := strings.TrimSpace(string(mustRead(filepath.Join(dir, "bundle"))))
-	spec := readProcessSpec(bundle)
-	podUID := strings.TrimSpace(string(mustRead(filepath.Join(dir, "poduid"))))
-	ctrName := strings.TrimSpace(string(mustRead(filepath.Join(dir, "ctrname"))))
-	if ctrName == "" {
-		ctrName = "box"
-	}
-	if len(spec.Args) > 0 && podUID != "" {
-		pod := strings.TrimSpace(string(mustRead(filepath.Join(dir, "pod"))))
-		ns, name, _ := strings.Cut(pod, "/")
-		if ns != "" && name != "" {
-			if _, err := shimJSON("POST", "/v1/RunPodSandbox", map[string]string{
-				"podName": name, "podNamespace": ns, "podUID": podUID,
-			}); err != nil {
-				fatal("RunPodSandbox: %v", err)
-			}
-		}
-		criID := podUID + "-" + ctrName
-		_ = os.WriteFile(filepath.Join(dir, "criid"), []byte(criID), 0644)
-		ctr := map[string]interface{}{"name": ctrName, "command": spec.Args, "env": spec.Env, "workDir": spec.Cwd}
-		if spec.Root != "" {
-			ctr["rootfsBytes"] = dirSize(spec.Root)
-			tarPath := filepath.Join("/var/run/marooned", podUID, "rootfs-"+ctrName+".tar")
-			if err := tarDirectory(spec.Root, tarPath); err != nil {
-				fatal("tar rootfs: %v", err)
-			}
-			ctr["rootfsPath"] = tarPath
-		}
-		if _, err := shimJSON("POST", "/v1/CreateContainer", map[string]interface{}{
-			"sandboxID": podUID,
-			"container": ctr,
-		}); err != nil {
-			fatal("CreateContainer: %v", err)
-		}
-		if _, err := shimJSON("POST", "/v1/StartContainer", map[string]string{"id": criID}); err != nil {
-			fatal("StartContainer: %v", err)
-		}
-		ns, pname, _ := strings.Cut(pod, "/")
-		appendK8sLog(currentPodLog(ns, pname, podUID, ctrName), "marooned: guest container started")
-		startLogPump(root, id)
-		startGuestWait(root, id)
-	}
+	startGuestStart(root, id)
 	return 0
 }
 
@@ -225,12 +175,22 @@ func doState(root string, args []string) int {
 	if st.PID > 1 && !pidAlive(st.PID) {
 		st.Status = "stopped"
 	}
-	if st.Status == "running" && !guestRunning(dir) {
+	if st.Status == "running" && guestHasExited(dir) {
 		st.Status = "stopped"
 	}
 	enc := json.NewEncoder(os.Stdout)
 	_ = enc.Encode(st)
 	return 0
+}
+
+func guestHasExited(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "guest-exited")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(dir, "guest-started")); err != nil {
+		return false
+	}
+	return !guestRunning(dir)
 }
 
 func guestRunning(dir string) bool {

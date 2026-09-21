@@ -185,10 +185,8 @@ func (a *Adaptor) execute(key string) (error, enqueueState) {
 	}
 
 	rootfsBytes := rootfsBytesFromPod(pod)
-	if rootfsBytes == 0 && time.Since(pod.CreationTimestamp.Time) < 20*time.Second {
-		klog.V(3).Infof("sandbox pod %s waiting for rootfs size hint", key)
-		return nil, Immediate
-	}
+	// Do not delay VMI create for the CRI size hint. virt-launcher init
+	// is the long pole; default emptyDisk (256Mi) is enough to start.
 
 	vmi, err := a.ensureVMI(pod, cfg, rootfsBytes)
 	if err != nil {
