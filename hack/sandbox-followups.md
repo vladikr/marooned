@@ -29,7 +29,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - log-pump HTTP client DisableKeepAlives so vsock sessions do not leak
 
 ### Group C — status (Kata 4)  ← code landed, needs cluster verify
-- Workload runs in a guest PID namespace so `kubectl exec -- kill 1` kills httpd, not the agent (VM PID 1)
+- Workload runs in a guest PID namespace. Container PID 1 is a sh that forwards SIGTERM (kernel ignores SIGTERM to unhandled PID 1).
 - oci `state` is stopped if the guest process is dead (kernel panic no longer looks Running)
 - ContainerStatus Ready/Pid/RestartCount/ExitCode from the agent
 - podIP is still the CRI-O pause CNI address (kubelet owns it); workload IP remains maroonedpods.io/guest-ip

@@ -181,8 +181,10 @@ func startInRoot(root string, req agentproto.StartRequest) (*exec.Cmd, error) {
 	if cwd != "" && cwd != "/" {
 		env = append(append([]string{}, env...), "MAROONED_WORKDIR="+cwd)
 	}
-	// PID 1 in the container ns must be busybox, not the Go agent.
-	script := "test -n \"$MAROONED_WORKDIR\" && cd \"$MAROONED_WORKDIR\"; mount -t proc proc /proc 2>/dev/null; exec \"$@\""
+	// PID 1 ignores SIGTERM unless it has a handler (httpd has none, so
+	// kill 1 / killall httpd did nothing). Keep sh as PID 1, run the
+	// workload as a child, and forward TERM.
+	script := "test -n \"$MAROONED_WORKDIR\" && cd \"$MAROONED_WORKDIR\"; mount -t proc proc /proc 2>/dev/null; \"$@\" & child=$!; trap 'kill -TERM $child 2>/dev/null' TERM INT; wait $child; exit $?"
 	cmd = exec.Command("/bin/sh", append([]string{"-c", script, "--"}, argv...)...)
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{
