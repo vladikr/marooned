@@ -10,6 +10,6 @@ spec:
   runtimeClassName: marooned
   containers:
   - name: box
-    image: docker.io/library/busybox:latest
-    imagePullPolicy: Always
+    image: docker.io/library/busybox:1.36
+    imagePullPolicy: IfNotPresent
     command: ["/bin/sh", "-c", "echo marooned-guest-ok; echo marooned-guest-ok > /tmp/marooned-ok; echo marooned-guest-ok > /tmp/index.html; exec httpd -f -p 8080 -h /tmp"]

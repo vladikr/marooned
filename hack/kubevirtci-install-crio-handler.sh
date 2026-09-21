@@ -18,7 +18,6 @@ for i in $(seq 1 "$nodes"); do
   node=$(printf 'node%02d' "$i")
   echo "installing marooned CRI-O handler on $node"
   "$ssh" "$node" "sudo mkdir -p /usr/local/bin /run/marooned-oci /var/run/marooned /etc/crio/crio.conf.d /opt/marooned; \
-    sudo rm -f /var/run/marooned/cri.sock; \
     sudo chmod 1777 /var/run/marooned /run/marooned-oci /opt/marooned; \
     sudo chcon -Rt container_file_t /var/run/marooned /run/marooned-oci /opt/marooned 2>/dev/null || true; \
     if [ -x /opt/marooned/marooned-oci ]; then \
