@@ -43,6 +43,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "container-init" {
 		os.Exit(runContainerInit())
 	}
+	if len(os.Args) > 1 && os.Args[1] == "pidns-exec" {
+		os.Exit(runPidnsExec())
+	}
 	klog.InitFlags(nil)
 	listen := flag.String("listen", "vsock://:1024", "listen address: vsock://:port, tcp://host:port, or unix:///path")
 	flag.Parse()
