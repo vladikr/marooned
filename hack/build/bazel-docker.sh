@@ -101,6 +101,8 @@ _rsync \
     --exclude 'cluster-up/cluster/**/.kubectl' \
     --exclude 'cluster-up/cluster/**/.oc' \
     --exclude 'cluster-up/cluster/**/.kubeconfig' \
+    --exclude "_out" \
+    --exclude "bin" \
     --exclude ".vagrant" \
     ${MAROONEDPODS_DIR}/ \
     "rsync://root@127.0.0.1:${RSYNCD_PORT}/build"
