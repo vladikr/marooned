@@ -32,8 +32,8 @@ for i in $(seq 1 "$nodes"); do
   conf_b64=$(base64 -w0 "$conf")
   "$ssh" "$node" "echo ${conf_b64} | base64 -d | sudo tee /etc/crio/crio.conf.d/20-marooned.conf >/dev/null; sudo rm -f /etc/crio/crio.conf.d/.marooned-stamp"
   "$ssh" "$node" "sudo systemctl restart crio && sleep 2 && sudo systemctl is-active crio"
-  # :latest defaults to Always; pre-pull so the example Pod does not hit docker.io
-  "$ssh" "$node" "sudo crictl pull docker.io/library/busybox:latest >/dev/null || true"
+  # Example pod uses this image with imagePullPolicy Never (docker.io rate-limits).
+  "$ssh" "$node" "sudo crictl pull quay.io/prometheus/busybox:latest >/dev/null || true"
 done
 echo "done. RuntimeClass handler 'marooned' should resolve on the nodes."
 echo "Then: kubectl apply -f examples/sandbox-pod.yaml"
