@@ -89,6 +89,16 @@ _rsync() {
     rsync -al --no-owner --no-group "$@"
 }
 
+# Files written by rootless podman show up as the overflow uid on the
+# host. Outbound rsync runs as the user and cannot mkstemp there.
+reclaim_host_tree() {
+    local dir="$1"
+    [ -d "$dir" ] || return 0
+    if command -v podman >/dev/null 2>&1; then
+        podman unshare chown -R 0:0 "$dir" || true
+    fi
+}
+
 echo "Rsyncing ${MAROONEDPODS_DIR} to container"
 # Copy MAROONEDPODS into the persistent docker volume
 _rsync \
@@ -135,6 +145,8 @@ echo "Starting bazel server"
 # Run the command
 test -t 1 && USE_TTY="-it"
 ${MAROONEDPODS_CRI} exec ${USE_TTY} ${BAZEL_BUILDER_SERVER} /entrypoint-bazel.sh "$@"
+
+reclaim_host_tree "${MAROONEDPODS_DIR}"
 
 # Copy the whole maroonedpods data out to get generated sources and formatting changes
 _rsync \
