@@ -48,7 +48,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - e2e: guest exec (httpd, /tmp/index.html, /scratch/ok) + logs, not only Running (busybox has no os-release)
 - One cgroup: document guest+virt-launcher limits; do not join qemu to user pod cgroup yet
 - Python: examples/sandbox-python.yaml (needs cluster verify)
-- Kata-shaped nginx: examples/sandbox-nginx.yaml (stock nginx:alpine, port 80; needs cluster verify)
+- Kata-shaped nginx: mkdir /run + strip [::] listen; agent tmpfs /run; ipv6.ko in initrd (needs cluster verify)
 - Node-mode (not in this repo)
 
 ## Build/test contract

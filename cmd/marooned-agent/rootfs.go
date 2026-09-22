@@ -154,6 +154,8 @@ func prepareChroot(root string) error {
 	_ = syscall.Mount("sysfs", filepath.Join(root, "sys"), "sysfs", 0, "")
 	_ = syscall.Mount("/dev", filepath.Join(root, "dev"), "", syscall.MS_BIND, "")
 	_ = syscall.Mount("tmpfs", filepath.Join(root, "tmp"), "tmpfs", 0, "")
+	_ = os.MkdirAll(filepath.Join(root, "run"), 0755)
+	_ = syscall.Mount("tmpfs", filepath.Join(root, "run"), "tmpfs", 0, "")
 	return nil
 }
 
