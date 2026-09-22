@@ -81,6 +81,14 @@ func rewriteProbeToExec(p *corev1.Probe) {
 	p.HTTPGet = nil
 	p.TCPSocket = nil
 	p.GRPC = nil
+	// CRI exec over vsock is slower than a local HTTP GET. The default
+	// timeoutSeconds=1 surfaces as "exit code -1" / unknown readiness.
+	if p.TimeoutSeconds <= 1 {
+		p.TimeoutSeconds = 10
+	}
+	if p.InitialDelaySeconds < 5 {
+		p.InitialDelaySeconds = 5
+	}
 }
 
 func probeURL(p *corev1.Probe) string {

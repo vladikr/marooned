@@ -119,9 +119,25 @@ mkdir -p /dev/pts /run /tmp
 modprobe vsock 2>/dev/null || true
 modprobe virtio_vsock 2>/dev/null || true
 modprobe vmw_vsock_virtio_transport 2>/dev/null || true
+modprobe virtio_net 2>/dev/null || true
 ip link set lo up 2>/dev/null || true
-ip link set eth0 up 2>/dev/null || true
-udhcpc -i eth0 -n -q -t 8 2>/dev/null || true
+dev=""
+i=0
+while [ "$i" -lt 10 ]; do
+  for n in eth0 ens1 ens2 enp1s0; do
+    if ip link show "$n" >/dev/null 2>&1; then
+      dev=$n
+      break
+    fi
+  done
+  [ -n "$dev" ] && break
+  i=$((i+1))
+  sleep 1
+done
+if [ -n "$dev" ]; then
+  ip link set "$dev" up 2>/dev/null || true
+  udhcpc -i "$dev" -n -q -t 8 2>/dev/null || true
+fi
 # Agent must not be PID 1: a Go process that exits (panic, deadlock
 # abort) is exit_group(2) and the kernel panics. busybox sh reaps and
 # restarts the agent.
@@ -154,7 +170,7 @@ copy_mod() {
   [ -n "$f" ] || return 0
   gzip -dc "$f" > "$ird/lib/modules/${n}.ko"
 }
-for m in virtio virtio_ring virtio_pci virtio_pci_legacy_dev virtio_pci_modern_dev virtio_blk \
+for m in virtio virtio_ring virtio_pci virtio_pci_legacy_dev virtio_pci_modern_dev virtio_blk virtio_net \
          crc16 libcrc32c crc32c_generic crc32c-intel mbcache jbd2 ext4 \
          vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
   copy_mod "$m"
@@ -170,7 +186,7 @@ $BB mount -t proc proc /proc
 $BB mount -t sysfs sys /sys
 $BB mount -t devtmpfs dev /dev || $BB mount -t tmpfs tmpfs /dev
 mkdir -p /newroot
-for m in virtio virtio_ring virtio_pci_legacy_dev virtio_pci_modern_dev virtio_pci virtio_blk \
+for m in virtio virtio_ring virtio_pci_legacy_dev virtio_pci_modern_dev virtio_pci virtio_blk virtio_net \
          crc16 libcrc32c crc32c_generic crc32c-intel mbcache jbd2 ext4 \
          vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
   [ -f /lib/modules/${m}.ko ] && $BB insmod /lib/modules/${m}.ko && echo "insmod $m"

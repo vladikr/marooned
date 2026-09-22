@@ -223,6 +223,9 @@ func TestMutateRewritesHTTPProbeToExec(t *testing.T) {
 	if pr.Exec.Command[2] != "http://127.0.0.1:8080/" {
 		t.Fatalf("url %s", pr.Exec.Command[2])
 	}
+	if pr.TimeoutSeconds != 10 {
+		t.Fatalf("timeout %d", pr.TimeoutSeconds)
+	}
 }
 
 func TestMutateSandboxPodSkipsDeleting(t *testing.T) {
