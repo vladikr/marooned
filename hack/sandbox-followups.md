@@ -41,7 +41,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 ### Group D — later
 - exec -it: verified (os.Pipe + close parent ends; kubectl returns after the command)
 - First-start: virt-launcher 3/3 in ~3s (IfNotPresent disks); guest exec works immediately. Warm pool still later if we need pre-booted VMs.
-- Guest network: 10.0.2.2 + Service wget verified. Exec probes need oci --pid-file (CRI-O wait, else Ready 0/1 exit -1). status.podIP is still the pause.
+- Guest network: verified (10.0.2.2, Service wget, Ready 1/1 via exec probe pid-file). status.podIP is still the pause.
 - Volumes into the guest (snapshot exists; agent mount table)
 - Multi-container / init containers
 - Large-image unpack (full tar over vsock)
