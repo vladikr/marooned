@@ -52,9 +52,26 @@ echo "  guest-ip = $($K get pod isolated-busybox1 -o jsonpath='{.metadata.annota
 $K get svc isolated-busybox1
 $K run --rm -i --image=quay.io/prometheus/busybox:latest --restart=Never --image-pull-policy=Never demo-wget -- wget -qO- http://isolated-busybox1:8080/ || true
 
-say "6. Killing the guest process is a real container exit"
+say "6. Killing the guest process is a real container exit (watch for Error / RESTARTS)"
+echo "kubectl get pods --watch"
+watch_pid=""
+$K get pods --watch &
+watch_pid=$!
+trap 'kill "$watch_pid" 2>/dev/null || true' EXIT
 $K exec isolated-busybox1 -- killall httpd || true
-sleep 4
+# Always restart can be a brief Error then Running again; wait for a restart bump.
+for _ in $(seq 1 20); do
+  rs="$($K get pod isolated-busybox1 -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || echo 0)"
+  phase="$($K get pod isolated-busybox1 -o jsonpath='{.status.containerStatuses[0].state}' 2>/dev/null || true)"
+  if [ "${rs:-0}" != "0" ] || echo "$phase" | grep -q terminated; then
+    sleep 3
+    break
+  fi
+  sleep 2
+done
+kill "$watch_pid" 2>/dev/null || true
+wait "$watch_pid" 2>/dev/null || true
+trap - EXIT
 $K get pod isolated-busybox1
 
 say "7. kubectl delete the Pod — VMI and virt-launcher go with it"
