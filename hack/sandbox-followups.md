@@ -45,7 +45,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - Volumes: emptyDir → guest tmpfs verified (`cat /scratch/ok` → vol-ok). PVC virtio-blk still attach-only.
 - Multi-container / init containers
 - Large-image unpack (full tar over vsock)
-- e2e asserts logs/exec/os-release, not only Running
+- e2e: guest exec (httpd, /tmp/index.html, /scratch/ok) + logs, not only Running (busybox has no os-release)
 - One cgroup: document guest+virt-launcher limits; do not join qemu to user pod cgroup yet
 - Python: examples/sandbox-python.yaml (needs cluster verify)
 - Kata-shaped nginx: examples/sandbox-nginx.yaml (stock nginx:alpine, port 80; needs cluster verify)

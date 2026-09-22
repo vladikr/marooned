@@ -92,12 +92,30 @@ func (b *PodBuilder) Build() *v1.Pod {
 	return b.pod
 }
 
-// NewSandboxPod creates a RuntimeClass=marooned pod.
+// WithEmptyDir mounts an emptyDir on the last container.
+func (b *PodBuilder) WithEmptyDir(name, mountPath string) *PodBuilder {
+	if len(b.pod.Spec.Containers) == 0 {
+		return b
+	}
+	i := len(b.pod.Spec.Containers) - 1
+	b.pod.Spec.Volumes = append(b.pod.Spec.Volumes, v1.Volume{
+		Name:         name,
+		VolumeSource: v1.VolumeSource{EmptyDir: &v1.EmptyDirVolumeSource{}},
+	})
+	b.pod.Spec.Containers[i].VolumeMounts = append(b.pod.Spec.Containers[i].VolumeMounts, v1.VolumeMount{
+		Name:      name,
+		MountPath: mountPath,
+	})
+	return b
+}
+
+// NewSandboxPod creates a RuntimeClass=marooned pod (quay busybox; docker.io rate-limits).
 func NewSandboxPod(name, namespace string) *v1.Pod {
 	return NewPod(name, namespace).
 		WithRuntimeClass(util.RuntimeClassName).
-		WithContainer("box", "busybox").
-		WithCommand("/bin/sh", "-c", "echo marooned-guest-ok > /tmp/index.html; exec httpd -f -p 8080 -h /tmp").
+		WithContainer("box", "quay.io/prometheus/busybox:latest").
+		WithEmptyDir("scratch", "/scratch").
+		WithCommand("/bin/sh", "-c", "echo marooned-guest-ok > /tmp/index.html; echo vol-ok > /scratch/ok; exec httpd -f -p 8080 -h /tmp").
 		WithRestartPolicy(v1.RestartPolicyAlways).
 		Build()
 }

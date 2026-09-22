@@ -1,8 +1,11 @@
 package framework
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
@@ -79,10 +82,10 @@ func (f *Framework) CreateNamespace(name string) (*v1.Namespace, error) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 			Labels: map[string]string{
-				"test":                                 "maroonedpods-e2e",
-				"pod-security.kubernetes.io/enforce":   "privileged",
-				"pod-security.kubernetes.io/audit":     "privileged",
-				"pod-security.kubernetes.io/warn":      "privileged",
+				"test":                               "maroonedpods-e2e",
+				"pod-security.kubernetes.io/enforce": "privileged",
+				"pod-security.kubernetes.io/audit":   "privileged",
+				"pod-security.kubernetes.io/warn":    "privileged",
 			},
 		},
 	}
@@ -189,6 +192,35 @@ func (f *Framework) WaitForNodeReady(name string, timeout time.Duration) error {
 		time.Sleep(2 * time.Second)
 	}
 	return fmt.Errorf("timeout waiting for node %s to be ready", name)
+}
+
+// Exec runs kubectl exec in the test namespace (guest workload, not the pause).
+func (f *Framework) Exec(podName string, command ...string) (string, error) {
+	kubectl := "kubectl"
+	if flags.KubectlPath != nil && *flags.KubectlPath != "" {
+		kubectl = *flags.KubectlPath
+	}
+	args := []string{"exec", "-n", f.NamespaceName, podName, "--"}
+	args = append(args, command...)
+	cmd := exec.Command(kubectl, args...)
+	if flags.KubeConfig != nil && *flags.KubeConfig != "" {
+		cmd.Env = append(os.Environ(), "KUBECONFIG="+*flags.KubeConfig)
+	}
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err := cmd.Run()
+	return out.String(), err
+}
+
+// PodLogs returns current container logs.
+func (f *Framework) PodLogs(podName, container string) (string, error) {
+	opts := &v1.PodLogOptions{Container: container}
+	b, err := f.K8sClient.CoreV1().Pods(f.NamespaceName).GetLogs(podName, opts).DoRaw(context.Background())
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // WaitForPodDeleted waits for a pod to be deleted
