@@ -53,3 +53,30 @@ func TestGuestMountsLiveEmptyDir(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+func TestDiskSerial(t *testing.T) {
+	if DiskSerial("data") != "vdata" {
+		t.Fatalf("%q", DiskSerial("data"))
+	}
+	if DiskSerial("data_vol") != "vdatavol" {
+		t.Fatalf("%q", DiskSerial("data_vol"))
+	}
+}
+
+func TestGuestMountsPVCSerial(t *testing.T) {
+	pod := &corev1.Pod{Spec: corev1.PodSpec{
+		Volumes: []corev1.Volume{{
+			Name: "data",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "mypvc"},
+			},
+		}},
+		Containers: []corev1.Container{{
+			VolumeMounts: []corev1.VolumeMount{{Name: "data", MountPath: "/data"}},
+		}},
+	}}
+	got := GuestMounts(pod)
+	if len(got) != 1 || got[0].Kind != "virtio-blk" || got[0].Serial != "vdata" {
+		t.Fatalf("%+v", got)
+	}
+}

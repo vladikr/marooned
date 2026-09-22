@@ -168,6 +168,7 @@ func guestMounts(kube *kubernetes.Clientset) func(ns, name string) []agentproto.
 				VolumeName: m.VolumeName,
 				GuestPath:  m.GuestPath,
 				Kind:       m.Kind,
+				Serial:     m.Serial,
 				ReadOnly:   m.ReadOnly,
 			})
 		}

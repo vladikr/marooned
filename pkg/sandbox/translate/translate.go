@@ -516,7 +516,8 @@ func applyVolumes(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod, tee strin
 			}
 			diskName := "vol-" + vol.Name
 			vmi.Spec.Domain.Devices.Disks = append(vmi.Spec.Domain.Devices.Disks, virtv1.Disk{
-				Name: diskName,
+				Name:   diskName,
+				Serial: sandbox.DiskSerial(vol.Name),
 				DiskDevice: virtv1.DiskDevice{
 					Disk: &virtv1.DiskTarget{Bus: virtv1.DiskBusVirtio},
 				},

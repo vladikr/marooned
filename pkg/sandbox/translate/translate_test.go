@@ -325,6 +325,9 @@ func TestTranslatePVCAsVirtioBlk(t *testing.T) {
 			if d.Disk == nil || d.Disk.Bus != virtv1.DiskBusVirtio {
 				t.Fatalf("expected virtio bus, got %+v", d.Disk)
 			}
+			if d.Serial != sandbox.DiskSerial("data") {
+				t.Fatalf("serial %q", d.Serial)
+			}
 		}
 	}
 	if len(res.MountTable) != 1 || res.MountTable[0].Kind != "virtio-blk" || res.MountTable[0].GuestPath != "/data" {

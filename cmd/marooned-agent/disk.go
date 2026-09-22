@@ -94,8 +94,11 @@ func findDiskBySerial(want string) (string, error) {
 			}
 		}
 	}
-	if _, err := os.Stat("/dev/vdb"); err == nil {
-		return "/dev/vdb", nil
+	// user-rootfs emptyDisk is vdb when serial is missing (old guests).
+	if want == "userrootfs" {
+		if _, err := os.Stat("/dev/vdb"); err == nil {
+			return "/dev/vdb", nil
+		}
 	}
 	return "", fmt.Errorf("not found")
 }

@@ -17,6 +17,7 @@ import (
 
 	"k8s.io/klog/v2"
 
+	"maroonedpods.io/maroonedpods/pkg/sandbox"
 	"maroonedpods.io/maroonedpods/pkg/sandbox/agentproto"
 	"maroonedpods.io/maroonedpods/pkg/sandbox/vsock"
 )
@@ -402,7 +403,46 @@ func ensureMountIn(base, containerID string, m agentproto.Mount) error {
 			return nil
 		}
 		return err
+	case "virtio-blk":
+		return mountVirtioBlk(target, m)
 	default:
 		return nil
 	}
+}
+
+func mountVirtioBlk(target string, m agentproto.Mount) error {
+	serial := m.Serial
+	if serial == "" {
+		serial = sandbox.DiskSerial(m.VolumeName)
+	}
+	var dev string
+	var last error
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		dev, last = findDiskBySerial(serial)
+		if last == nil {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if dev == "" {
+		return fmt.Errorf("virtio-blk serial %q: %v", serial, last)
+	}
+	if !hasExtSuperblock(dev) {
+		if err := mkfs(dev); err != nil {
+			return fmt.Errorf("mkfs %s: %w", dev, err)
+		}
+	}
+	flags := uintptr(0)
+	if m.ReadOnly {
+		flags = syscall.MS_RDONLY
+	}
+	err := syscall.Mount(dev, target, "ext4", flags, "")
+	if err != nil {
+		err = syscall.Mount(dev, target, "ext2", flags, "")
+	}
+	if err == syscall.EBUSY {
+		return nil
+	}
+	return err
 }

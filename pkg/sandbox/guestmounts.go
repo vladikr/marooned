@@ -9,7 +9,24 @@ type GuestMount struct {
 	VolumeName string `json:"volumeName"`
 	GuestPath  string `json:"guestPath"`
 	Kind       string `json:"kind"` // tmpfs, virtio-blk, files
+	Serial     string `json:"serial,omitempty"`
 	ReadOnly   bool   `json:"readOnly"`
+}
+
+// DiskSerial is the virtio serial (max 20 alphanum) for a named volume.
+func DiskSerial(volumeName string) string {
+	b := make([]byte, 0, 20)
+	b = append(b, 'v')
+	for i := 0; i < len(volumeName) && len(b) < 20; i++ {
+		c := volumeName[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			b = append(b, c)
+		}
+	}
+	if len(b) == 1 {
+		return "vdisk"
+	}
+	return string(b)
 }
 
 // GuestMounts returns mounts for stripped emptyDir (guest tmpfs) and PVC
@@ -40,12 +57,16 @@ func GuestMounts(pod *corev1.Pod) []GuestMount {
 			default:
 				continue
 			}
-			out = append(out, GuestMount{
+			gm := GuestMount{
 				VolumeName: vol.Name,
 				GuestPath:  m.MountPath,
 				Kind:       kind,
 				ReadOnly:   m.ReadOnly || (vol.PersistentVolumeClaim != nil && vol.PersistentVolumeClaim.ReadOnly),
-			})
+			}
+			if kind == "virtio-blk" {
+				gm.Serial = DiskSerial(vol.Name)
+			}
+			out = append(out, gm)
 		}
 	}
 	return out

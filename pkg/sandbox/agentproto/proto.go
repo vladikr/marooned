@@ -68,6 +68,7 @@ type Mount struct {
 	VolumeName string `json:"volumeName"`
 	GuestPath  string `json:"guestPath"`
 	Kind       string `json:"kind"`
+	Serial     string `json:"serial,omitempty"`
 	ReadOnly   bool   `json:"readOnly"`
 }
 
