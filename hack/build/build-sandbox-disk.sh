@@ -170,7 +170,8 @@ copy_mod() {
   [ -n "$f" ] || return 0
   gzip -dc "$f" > "$ird/lib/modules/${n}.ko"
 }
-for m in virtio virtio_ring virtio_pci virtio_pci_legacy_dev virtio_pci_modern_dev virtio_blk virtio_net \
+for m in virtio virtio_ring virtio_pci virtio_pci_legacy_dev virtio_pci_modern_dev virtio_blk \
+         failover net_failover virtio_net \
          crc16 libcrc32c crc32c_generic crc32c-intel mbcache jbd2 ext4 \
          vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
   copy_mod "$m"
@@ -186,7 +187,8 @@ $BB mount -t proc proc /proc
 $BB mount -t sysfs sys /sys
 $BB mount -t devtmpfs dev /dev || $BB mount -t tmpfs tmpfs /dev
 mkdir -p /newroot
-for m in virtio virtio_ring virtio_pci_legacy_dev virtio_pci_modern_dev virtio_pci virtio_blk virtio_net \
+for m in virtio virtio_ring virtio_pci_legacy_dev virtio_pci_modern_dev virtio_pci virtio_blk \
+         failover net_failover virtio_net \
          crc16 libcrc32c crc32c_generic crc32c-intel mbcache jbd2 ext4 \
          vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
   [ -f /lib/modules/${m}.ko ] && $BB insmod /lib/modules/${m}.ko && echo "insmod $m"

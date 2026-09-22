@@ -41,7 +41,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 ### Group D — later
 - exec -it: verified (os.Pipe + close parent ends; kubectl returns after the command)
 - First-start: virt-launcher 3/3 in ~3s (IfNotPresent disks); guest exec works immediately. Warm pool still later if we need pre-booted VMs.
-- Guest network: load virtio_net in initrd (no eth0 → No route to host); probe timeout 10s (1s was CRI exit -1). Masquerade ports + EndpointSlice + exec probes. status.podIP is still the pause.
+- Guest network: virtio_net needs failover+net_failover in the initrd (insmod failed Unknown symbol). Probe timeout 10s. Masquerade ports + EndpointSlice. status.podIP is still the pause.
 - Volumes into the guest (snapshot exists; agent mount table)
 - Multi-container / init containers
 - Large-image unpack (full tar over vsock)
