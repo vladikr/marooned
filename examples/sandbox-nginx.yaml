@@ -1,0 +1,39 @@
+# Same shape as Kata/Confidential Containers demos: RuntimeClass + stock nginx.
+# Kata:  runtimeClassName: kata            image: nginx
+# Here:  runtimeClassName: marooned        image: nginx:alpine (ECR mirror)
+#
+#   ./cluster-up/ssh.sh node01 "sudo crictl pull public.ecr.aws/docker/library/nginx:alpine"
+#   $K apply -f examples/sandbox-nginx.yaml
+#   $K exec isolated-nginx -- cat /etc/os-release | head -3
+#   $K exec isolated-nginx -- ps
+#   IP=$($K get pod isolated-nginx -o jsonpath='{.metadata.annotations.maroonedpods\.io/guest-ip}')
+#   $K run --rm -i --image=quay.io/prometheus/busybox:latest --restart=Never verify-nginx -- wget -qO- http://$IP:80/ | head
+apiVersion: v1
+kind: Pod
+metadata:
+  name: isolated-nginx
+spec:
+  runtimeClassName: marooned
+  containers:
+  - name: nginx
+    image: public.ecr.aws/docker/library/nginx:alpine
+    imagePullPolicy: IfNotPresent
+    ports:
+    - name: http
+      containerPort: 80
+    readinessProbe:
+      httpGet:
+        path: /
+        port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: isolated-nginx
+spec:
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80

@@ -47,7 +47,8 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - Large-image unpack (full tar over vsock)
 - e2e asserts logs/exec/os-release, not only Running
 - One cgroup: document guest+virt-launcher limits; do not join qemu to user pod cgroup yet
-- Python: examples/sandbox-python.yaml (3.12-alpine http.server); needs cluster verify after image pull
+- Python: examples/sandbox-python.yaml (needs cluster verify)
+- Kata-shaped nginx: examples/sandbox-nginx.yaml (stock nginx:alpine, port 80; needs cluster verify)
 - Node-mode (not in this repo)
 
 ## Build/test contract

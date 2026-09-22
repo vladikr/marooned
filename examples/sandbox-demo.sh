@@ -38,6 +38,10 @@ $K exec isolated-busybox1 -- killall httpd || true
 sleep 3
 $K get pod isolated-busybox1
 
+say "7. Optional Kata-shaped workload (stock nginx, only runtimeClassName differs)"
+echo "  $K apply -f examples/sandbox-nginx.yaml"
+echo "  # then wget http://isolated-nginx:80/  (welcome to nginx)"
+
 say "done. Components: RuntimeClass marooned → CRI-O marooned-oci → marooned-shim"
 echo "  → adaptor VMI marooned-<pod-uid> → virt-launcher + vsockfwd → guest marooned-agent"
 echo "  → user rootfs on emptyDisk, vsock CRI, masquerade 10.0.2.2"

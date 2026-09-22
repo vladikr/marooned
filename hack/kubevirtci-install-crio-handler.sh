@@ -35,6 +35,7 @@ for i in $(seq 1 "$nodes"); do
   # Example pod uses this image with imagePullPolicy Never (docker.io rate-limits).
   "$ssh" "$node" "sudo crictl pull quay.io/prometheus/busybox:latest >/dev/null || true"
   "$ssh" "$node" "sudo crictl pull public.ecr.aws/docker/library/python:3.12-alpine >/dev/null || true"
+  "$ssh" "$node" "sudo crictl pull public.ecr.aws/docker/library/nginx:alpine >/dev/null || true"
   # VMI containerDisks are IfNotPresent; refresh :latest after cluster-push.
   "$ssh" "$node" "sudo crictl pull registry:5000/marooned-sandbox:latest >/dev/null || true"
   "$ssh" "$node" "sudo crictl pull registry:5000/marooned-kernel:latest >/dev/null || true"
