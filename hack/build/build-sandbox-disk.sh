@@ -136,7 +136,11 @@ while [ "$i" -lt 10 ]; do
 done
 if [ -n "$dev" ]; then
   ip link set "$dev" up 2>/dev/null || true
-  udhcpc -i "$dev" -n -q -t 8 2>/dev/null || true
+  # udhcpc needs AF_PACKET (af_packet.ko). Masquerade guests are 10.0.2.2.
+  if ! udhcpc -i "$dev" -n -q -t 8; then
+    ip addr add 10.0.2.2/24 dev "$dev" 2>/dev/null || true
+    ip route add default via 10.0.2.1 2>/dev/null || true
+  fi
 fi
 # Agent must not be PID 1: a Go process that exits (panic, deadlock
 # abort) is exit_group(2) and the kernel panics. busybox sh reaps and
@@ -171,7 +175,7 @@ copy_mod() {
   gzip -dc "$f" > "$ird/lib/modules/${n}.ko"
 }
 for m in virtio virtio_ring virtio_pci virtio_pci_legacy_dev virtio_pci_modern_dev virtio_blk \
-         failover net_failover virtio_net \
+         failover net_failover virtio_net af_packet \
          crc16 libcrc32c crc32c_generic crc32c-intel mbcache jbd2 ext4 \
          vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
   copy_mod "$m"
@@ -188,7 +192,7 @@ $BB mount -t sysfs sys /sys
 $BB mount -t devtmpfs dev /dev || $BB mount -t tmpfs tmpfs /dev
 mkdir -p /newroot
 for m in virtio virtio_ring virtio_pci_legacy_dev virtio_pci_modern_dev virtio_pci virtio_blk \
-         failover net_failover virtio_net \
+         failover net_failover virtio_net af_packet \
          crc16 libcrc32c crc32c_generic crc32c-intel mbcache jbd2 ext4 \
          vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
   [ -f /lib/modules/${m}.ko ] && $BB insmod /lib/modules/${m}.ko && echo "insmod $m"
