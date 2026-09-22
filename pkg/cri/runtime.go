@@ -385,7 +385,27 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 	}, 90*time.Second); err != nil {
 		return fmt.Errorf("prepare user-rootfs (image %d bytes, disk %d bytes): %w", imageBytes, disk, err)
 	}
-	if c.RootfsPath != "" {
+	pulled := false
+	if c.Image != "" {
+		klog.Infof("guest-pull %s", c.Image)
+		_, err = cli.Call(agentproto.MethodPullImage, map[string]string{
+			"containerID": id,
+			"image":       c.Image,
+		}, 3*time.Minute)
+		if err == nil {
+			pulled = true
+			klog.Infof("guest-pull %s ok", c.Image)
+		} else {
+			klog.Infof("guest-pull %s failed, will try host tar: %v", c.Image, err)
+		}
+	}
+	if !pulled {
+		if c.RootfsPath == "" {
+			if c.Image == "" {
+				return fmt.Errorf("no image ref and no host rootfs tar")
+			}
+			return fmt.Errorf("guest-pull %s: %w", c.Image, err)
+		}
 		f, err := os.Open(c.RootfsPath)
 		if err != nil {
 			return fmt.Errorf("rootfs %s: %w", c.RootfsPath, err)

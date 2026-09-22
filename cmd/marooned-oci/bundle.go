@@ -11,10 +11,11 @@ import (
 )
 
 type processSpec struct {
-	Args []string
-	Env  []string
-	Cwd  string
-	Root string
+	Args  []string
+	Env   []string
+	Cwd   string
+	Root  string
+	Image string
 }
 
 func readProcessSpec(bundle string) processSpec {
@@ -31,6 +32,7 @@ func readProcessSpec(bundle string) processSpec {
 			Env  []string `json:"env"`
 			Cwd  string   `json:"cwd"`
 		} `json:"process"`
+		Annotations map[string]string `json:"annotations"`
 	}
 	_ = json.Unmarshal(b, &cfg)
 	root := cfg.Root.Path
@@ -40,7 +42,11 @@ func readProcessSpec(bundle string) processSpec {
 	if !filepath.IsAbs(root) {
 		root = filepath.Join(bundle, root)
 	}
-	return processSpec{Args: cfg.Process.Args, Env: cfg.Process.Env, Cwd: cfg.Process.Cwd, Root: root}
+	img := cfg.Annotations["io.kubernetes.cri-o.ImageName"]
+	if img == "" {
+		img = cfg.Annotations["io.kubernetes.cri-o.Image"]
+	}
+	return processSpec{Args: cfg.Process.Args, Env: cfg.Process.Env, Cwd: cfg.Process.Cwd, Root: root, Image: img}
 }
 
 func skipRootfsPath(rel string) bool {

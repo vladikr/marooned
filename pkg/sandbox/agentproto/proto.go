@@ -14,6 +14,7 @@ const (
 	MethodPing          = "Ping"
 	MethodRootfs        = "Rootfs"
 	MethodPrepareRootfs = "PrepareRootfs"
+	MethodPullImage     = "PullImage"
 	MethodStart         = "Start"
 	MethodStop          = "Stop"
 	MethodWait          = "Wait"

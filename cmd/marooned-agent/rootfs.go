@@ -89,6 +89,14 @@ func unpackTar(r io.Reader, dest string) error {
 		if !strings.HasPrefix(filepath.Clean(target)+string(os.PathSeparator), dest+string(os.PathSeparator)) && filepath.Clean(target) != dest {
 			return fmt.Errorf("tar path escapes root: %s", hdr.Name)
 		}
+		base := filepath.Base(hdr.Name)
+		if base == ".wh..wh..opq" {
+			continue
+		}
+		if strings.HasPrefix(base, ".wh.") {
+			_ = os.RemoveAll(filepath.Join(filepath.Dir(target), strings.TrimPrefix(base, ".wh.")))
+			continue
+		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0755); err != nil {

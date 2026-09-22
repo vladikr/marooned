@@ -42,7 +42,8 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - exec -it: verified (os.Pipe + close parent ends; kubectl returns after the command)
 - First-start: virt-launcher 3/3 in ~3s (IfNotPresent disks); guest exec works immediately. Warm pool still later if we need pre-booted VMs.
 - Guest network: verified (10.0.2.2, Service wget, Ready 1/1 via exec probe pid-file). status.podIP is still the pause.
-- Volumes: emptyDir tmpfs verified; filesystem PVC virtio-blk mounted (`cat /data/ok` → pvc-ok). Block volumeDevices still bind-device. Image still host tar→emptyDisk (ImageVolume / guest-pull next).
+- Volumes: emptyDir tmpfs + filesystem PVC verified. Block volumeDevices still bind-device.
+- Image: guest-pull first (KV 1.9 has no ImageVolume); host tar fallback. Needs cluster verify.
 - Multi-container / init containers
 - Large-image unpack (full tar over vsock)
 - e2e: guest exec (httpd, /tmp/index.html, /scratch/ok) + logs, not only Running (busybox has no os-release)

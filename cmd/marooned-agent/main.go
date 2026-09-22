@@ -116,6 +116,8 @@ func (a *agent) handle(env agentproto.Envelope) agentproto.Envelope {
 	case agentproto.MethodPing:
 	case agentproto.MethodPrepareRootfs:
 		err = a.prepareRootfs(env.Payload)
+	case agentproto.MethodPullImage:
+		err = a.pull(env.Payload)
 	case agentproto.MethodRootfs:
 		err = a.rootfs(env.Payload)
 	case agentproto.MethodStart:
@@ -160,6 +162,22 @@ func (a *agent) handle(env agentproto.Envelope) agentproto.Envelope {
 		out.Error = err.Error()
 	}
 	return out
+}
+
+func (a *agent) pull(payload json.RawMessage) error {
+	var req struct {
+		ContainerID string `json:"containerID"`
+		Image       string `json:"image"`
+	}
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return err
+	}
+	if req.ContainerID == "" || req.Image == "" {
+		return fmt.Errorf("containerID and image required")
+	}
+	dest := filepath.Join(ctrRoot, req.ContainerID, "root")
+	klog.Infof("guest-pull %s -> %s", req.Image, dest)
+	return pullImage(dest, req.Image)
 }
 
 func (a *agent) start(payload json.RawMessage) error {
