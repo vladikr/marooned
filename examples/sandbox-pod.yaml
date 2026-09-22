@@ -4,6 +4,7 @@
 #   ./cluster-up/kubectl.sh run --rm -i -n default verify-svc --image=quay.io/prometheus/busybox:latest --restart=Never -- wget -qO- http://isolated-busybox1:8080/
 # Expect: marooned-guest-ok
 # kubelet HTTP probes are rewritten to exec wget 127.0.0.1 (pause podIP has no httpd).
+# emptyDir /scratch is a guest tmpfs:  $K exec isolated-busybox1 -- cat /scratch/ok  → vol-ok
 apiVersion: v1
 kind: Pod
 metadata:
@@ -23,7 +24,13 @@ spec:
         port: 8080
       initialDelaySeconds: 2
       periodSeconds: 5
-    command: ["/bin/sh", "-c", "echo marooned-guest-ok; echo marooned-guest-ok > /tmp/marooned-ok; echo marooned-guest-ok > /tmp/index.html; exec httpd -f -p 8080 -h /tmp"]
+    command: ["/bin/sh", "-c", "echo marooned-guest-ok; echo marooned-guest-ok > /tmp/marooned-ok; echo marooned-guest-ok > /tmp/index.html; echo vol-ok > /scratch/ok; exec httpd -f -p 8080 -h /tmp"]
+    volumeMounts:
+    - name: scratch
+      mountPath: /scratch
+  volumes:
+  - name: scratch
+    emptyDir: {}
 ---
 # selector-less Service; adaptor EndpointSlice kubernetes.io/service-name=isolated-busybox1
 apiVersion: v1

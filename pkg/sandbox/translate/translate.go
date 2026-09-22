@@ -154,7 +154,7 @@ func Translate(in Input) Result {
 	if err := applyDRA(vmi, in.Pod); err != nil {
 		res.Errors = append(res.Errors, err)
 	}
-	mounts, volErrs := applyVolumes(vmi, in.Pod, res.TEE)
+	mounts, volErrs := applyVolumes(vmi, sandbox.RestoreVolumes(in.Pod), res.TEE)
 	res.MountTable = mounts
 	res.Errors = append(res.Errors, volErrs...)
 

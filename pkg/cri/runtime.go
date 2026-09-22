@@ -255,10 +255,11 @@ type AgentDialer func(sandboxID string) (*agentproto.Client, error)
 
 // Runtime is the Phase 2 CRI implementation.
 type Runtime struct {
-	store    *Store
-	dial     AgentDialer
-	waitVM   func(ctx context.Context, podNamespace, podName string) (vmiRef, agentAddr string, err error)
-	noteSize func(ns, name string, n int64)
+	store     *Store
+	dial      AgentDialer
+	waitVM    func(ctx context.Context, podNamespace, podName string) (vmiRef, agentAddr string, err error)
+	noteSize  func(ns, name string, n int64)
+	mountsFor func(ns, name string) []agentproto.Mount
 }
 
 func NewRuntime(store *Store, waitVM func(context.Context, string, string) (string, string, error), dial AgentDialer) *Runtime {
@@ -267,6 +268,10 @@ func NewRuntime(store *Store, waitVM func(context.Context, string, string) (stri
 
 func (r *Runtime) SetNoteSize(fn func(ns, name string, n int64)) {
 	r.noteSize = fn
+}
+
+func (r *Runtime) SetMountsFor(fn func(ns, name string) []agentproto.Mount) {
+	r.mountsFor = fn
 }
 
 func (r *Runtime) RunPodSandbox(ctx context.Context, req *RunPodSandboxRequest) (*PodSandbox, error) {
@@ -391,6 +396,12 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 			return fmt.Errorf("rootfs upload: %w", putErr)
 		}
 	}
+	var mounts []agentproto.Mount
+	if r.mountsFor != nil {
+		if sb := r.store.GetSandbox(c.SandboxID); sb != nil {
+			mounts = r.mountsFor(sb.Namespace, sb.Name)
+		}
+	}
 	_, err = cli.Call(agentproto.MethodStart, agentproto.StartRequest{
 		ContainerID: id,
 		Image:       c.Image,
@@ -398,6 +409,7 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 		Args:        c.Args,
 		Env:         c.Env,
 		WorkDir:     c.WorkDir,
+		Mounts:      mounts,
 	}, 60*time.Second)
 	if err != nil {
 		return err

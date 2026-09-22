@@ -15,6 +15,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"maroonedpods.io/maroonedpods/pkg/cri"
+	"maroonedpods.io/maroonedpods/pkg/sandbox"
 	"maroonedpods.io/maroonedpods/pkg/sandbox/agentproto"
 	"maroonedpods.io/maroonedpods/pkg/sandbox/vsock"
 	"maroonedpods.io/maroonedpods/pkg/util"
@@ -40,6 +41,7 @@ func main() {
 		store := cri.NewStore()
 		rt := cri.NewRuntime(store, waitForVMI(kube, *agentTimeout), dialAgent(store))
 		rt.SetNoteSize(annotateRootfsBytes(kube))
+		rt.SetMountsFor(guestMounts(kube))
 		runtime = rt
 	}
 
@@ -148,6 +150,28 @@ func annotateRootfsBytes(kube *kubernetes.Clientset) func(ns, name string, n int
 		if _, err := kube.CoreV1().Pods(ns).Update(ctx, copyPod, metav1.UpdateOptions{}); err != nil {
 			klog.Infof("annotate rootfs-bytes %s/%s: %v", ns, name, err)
 		}
+	}
+}
+
+func guestMounts(kube *kubernetes.Clientset) func(ns, name string) []agentproto.Mount {
+	return func(ns, name string) []agentproto.Mount {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		pod, err := kube.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			klog.Infof("guest mounts %s/%s: %v", ns, name, err)
+			return nil
+		}
+		var out []agentproto.Mount
+		for _, m := range sandbox.GuestMounts(pod) {
+			out = append(out, agentproto.Mount{
+				VolumeName: m.VolumeName,
+				GuestPath:  m.GuestPath,
+				Kind:       m.Kind,
+				ReadOnly:   m.ReadOnly,
+			})
+		}
+		return out
 	}
 }
 

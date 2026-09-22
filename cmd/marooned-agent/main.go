@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -166,7 +167,7 @@ func (a *agent) start(payload json.RawMessage) error {
 		return err
 	}
 	for _, m := range req.Mounts {
-		if err := ensureMount(m); err != nil {
+		if err := ensureMountIn(ctrRoot, req.ContainerID, m); err != nil {
 			return err
 		}
 	}
@@ -379,19 +380,29 @@ func (a *agent) mounts(payload json.RawMessage) error {
 }
 
 func ensureMount(m agentproto.Mount) error {
+	return ensureMountIn(ctrRoot, "", m)
+}
+
+func ensureMountIn(base, containerID string, m agentproto.Mount) error {
 	if m.GuestPath == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(m.GuestPath), 0755); err != nil {
+	target := m.GuestPath
+	if containerID != "" {
+		root := filepath.Join(base, containerID, "root")
+		target = filepath.Join(root, strings.TrimPrefix(m.GuestPath, "/"))
+	}
+	if err := os.MkdirAll(target, 0755); err != nil {
 		return err
 	}
 	switch m.Kind {
 	case "tmpfs":
-		if err := os.MkdirAll(m.GuestPath, 0755); err != nil {
-			return err
+		err := syscall.Mount("tmpfs", target, "tmpfs", 0, "")
+		if err == syscall.EBUSY {
+			return nil
 		}
-		return syscall.Mount("tmpfs", m.GuestPath, "tmpfs", 0, "")
+		return err
 	default:
-		return os.MkdirAll(m.GuestPath, 0755)
+		return nil
 	}
 }

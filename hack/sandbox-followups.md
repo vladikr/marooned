@@ -42,7 +42,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - exec -it: verified (os.Pipe + close parent ends; kubectl returns after the command)
 - First-start: virt-launcher 3/3 in ~3s (IfNotPresent disks); guest exec works immediately. Warm pool still later if we need pre-booted VMs.
 - Guest network: verified (10.0.2.2, Service wget, Ready 1/1 via exec probe pid-file). status.podIP is still the pause.
-- Volumes into the guest (snapshot exists; agent mount table)
+- Volumes: emptyDir → guest tmpfs via snapshot + Start Mounts (needs cluster verify). PVC virtio-blk still attach-only.
 - Multi-container / init containers
 - Large-image unpack (full tar over vsock)
 - e2e asserts logs/exec/os-release, not only Running
