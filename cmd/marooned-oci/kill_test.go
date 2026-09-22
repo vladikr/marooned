@@ -70,12 +70,21 @@ func TestLoadExecProcessJSON(t *testing.T) {
 	if err := os.WriteFile(p, []byte(`{"terminal":false,"args":["cat","/tmp/marooned-ok"]}`), 0644); err != nil {
 		t.Fatal(err)
 	}
-	id, proc := loadExec([]string{"--process", p, "62e35ec016f018713016c16c292c296f98cbbff696c2dc8cec2920d9719cf9d7"})
+	id, proc, _ := loadExec([]string{"--process", p, "62e35ec016f018713016c16c292c296f98cbbff696c2dc8cec2920d9719cf9d7"})
 	if id != "62e35ec016f018713016c16c292c296f98cbbff696c2dc8cec2920d9719cf9d7" {
 		t.Fatalf("id %s", id)
 	}
 	if len(proc.Args) != 2 || proc.Args[0] != "cat" {
 		t.Fatalf("args %v", proc.Args)
+	}
+}
+
+func TestLoadExecPidFile(t *testing.T) {
+	dir := t.TempDir()
+	pf := filepath.Join(dir, "pid")
+	_, _, got := loadExec([]string{"--pid-file", pf, "abc123", "true"})
+	if got != pf {
+		t.Fatalf("pidFile %q", got)
 	}
 }
 

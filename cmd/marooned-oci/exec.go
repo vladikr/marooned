@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -18,7 +19,7 @@ type ociProcess struct {
 	Env      []string `json:"env"`
 }
 
-func loadExec(args []string) (id string, proc ociProcess) {
+func loadExec(args []string) (id string, proc ociProcess, pidFile string) {
 	processFile := ""
 	tty := false
 	needVal := map[string]bool{
@@ -35,6 +36,11 @@ func loadExec(args []string) (id string, proc ociProcess) {
 			i++
 		case strings.HasPrefix(a, "--process="):
 			processFile = strings.TrimPrefix(a, "--process=")
+		case a == "--pid-file" && i+1 < len(args):
+			pidFile = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--pid-file="):
+			pidFile = strings.TrimPrefix(a, "--pid-file=")
 		case a == "-t" || a == "--tty":
 			tty = true
 		case a == "--":
@@ -71,9 +77,16 @@ func loadExec(args []string) (id string, proc ociProcess) {
 		proc.Terminal = true
 	}
 	_ = os.MkdirAll("/run/marooned-oci", 0755)
-	dbg, _ := json.Marshal(map[string]interface{}{"id": id, "processFile": processFile, "tty": proc.Terminal, "args": proc.Args})
+	dbg, _ := json.Marshal(map[string]interface{}{"id": id, "processFile": processFile, "pidFile": pidFile, "tty": proc.Terminal, "args": proc.Args})
 	_ = os.WriteFile("/run/marooned-oci/last-exec.json", dbg, 0644)
-	return id, proc
+	return id, proc, pidFile
+}
+
+func writeExecPidFile(path string) {
+	if path == "" {
+		return
+	}
+	_ = os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())+"\n"), 0644)
 }
 
 func readOCIProcess(path string) (ociProcess, error) {

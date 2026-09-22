@@ -252,7 +252,8 @@ func doDelete(root string, args []string) int {
 }
 
 func doExec(root string, args []string) int {
-	id, proc := loadExec(args)
+	id, proc, pidFile := loadExec(args)
+	writeExecPidFile(pidFile)
 	if id == "" {
 		fatal("exec: missing id")
 	}
