@@ -21,6 +21,7 @@
 		maroonedpods_server \
 		maroonedpods_operator \
 		marooned_shim \
+		marooned_vsockfwd \
 		marooned_agent \
 		marooned_oci \
 		build-sandbox-image \
@@ -33,7 +34,7 @@
 		fossa
 all: build
 
-build:  maroonedpods_controller maroonedpods_server maroonedpods_operator marooned_shim marooned_agent marooned_oci
+build:  maroonedpods_controller maroonedpods_server maroonedpods_operator marooned_shim marooned_vsockfwd marooned_agent marooned_oci
 
 DOCKER?=1
 ifeq (${DOCKER}, 1)
@@ -136,6 +137,10 @@ maroonedpods_server:
 marooned_shim:
 	go build -o marooned_shim -v cmd/marooned-shim/*.go
 	chmod 777 marooned_shim
+
+marooned_vsockfwd:
+	CGO_ENABLED=0 go build -o marooned_vsockfwd -v ./cmd/marooned-vsockfwd
+	chmod 777 marooned_vsockfwd
 
 marooned_agent:
 	go build -o marooned_agent -v cmd/marooned-agent/*.go

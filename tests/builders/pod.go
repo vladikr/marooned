@@ -72,6 +72,15 @@ func (b *PodBuilder) WithRuntimeClass(name string) *PodBuilder {
 	return b
 }
 
+// WithCommand sets command on the last container.
+func (b *PodBuilder) WithCommand(cmd ...string) *PodBuilder {
+	if len(b.pod.Spec.Containers) == 0 {
+		return b
+	}
+	b.pod.Spec.Containers[len(b.pod.Spec.Containers)-1].Command = cmd
+	return b
+}
+
 // WithRestartPolicy sets the restart policy
 func (b *PodBuilder) WithRestartPolicy(policy v1.RestartPolicy) *PodBuilder {
 	b.pod.Spec.RestartPolicy = policy
@@ -88,6 +97,7 @@ func NewSandboxPod(name, namespace string) *v1.Pod {
 	return NewPod(name, namespace).
 		WithRuntimeClass(util.RuntimeClassName).
 		WithContainer("box", "busybox").
+		WithCommand("/bin/sh", "-c", "echo marooned-guest-ok > /tmp/index.html; exec httpd -f -p 8080 -h /tmp").
 		WithRestartPolicy(v1.RestartPolicyAlways).
 		Build()
 }

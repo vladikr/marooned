@@ -3,6 +3,9 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
+
 	jsonpatch "gomodules.xyz/jsonpatch/v2"
 	admissionv1 "k8s.io/api/admission/v1"
 	v1 "k8s.io/api/core/v1"
@@ -10,7 +13,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"maroonedpods.io/maroonedpods/pkg/webhook"
-	"net/http"
 )
 
 const (
@@ -21,13 +23,19 @@ type Handler struct {
 	request         *admissionv1.AdmissionRequest
 	maroonedpodsCli kubernetes.Interface
 	maroonedpodsNS  string
+	vsockfwdImage   string
 }
 
 func NewHandler(Request *admissionv1.AdmissionRequest, maroonedpodsCli kubernetes.Interface, maroonedpodsNS string) *Handler {
+	img := os.Getenv("MAROONED_VSOCKFWD_IMAGE")
+	if img == "" {
+		img = webhook.DefaultVsockfwdImage
+	}
 	return &Handler{
 		request:         Request,
 		maroonedpodsCli: maroonedpodsCli,
 		maroonedpodsNS:  maroonedpodsNS,
+		vsockfwdImage:   img,
 	}
 }
 
@@ -45,7 +53,37 @@ func (v Handler) Handle() (*admissionv1.AdmissionReview, error) {
 	if webhook.IsSandboxPod(&pod) {
 		return v.mutateSandboxPod(&pod)
 	}
+	if webhook.IsMaroonedVirtLauncher(&pod) {
+		return v.mutateVirtLauncher(&pod)
+	}
 	return reviewResponse(v.request.UID, true, http.StatusAccepted, allowPodRequest), nil
+}
+
+func (v Handler) mutateVirtLauncher(pod *v1.Pod) (*admissionv1.AdmissionReview, error) {
+	original, err := json.Marshal(pod)
+	if err != nil {
+		return nil, err
+	}
+	mutated := pod.DeepCopy()
+	if err := webhook.MutateVirtLauncher(mutated, v.vsockfwdImage); err != nil {
+		return reviewResponse(v.request.UID, false, http.StatusForbidden, err.Error()), nil
+	}
+	modified, err := json.Marshal(mutated)
+	if err != nil {
+		return nil, err
+	}
+	ops, err := jsonpatch.CreatePatch(original, modified)
+	if err != nil {
+		return nil, err
+	}
+	if len(ops) == 0 {
+		return reviewResponse(v.request.UID, true, http.StatusAccepted, "virt-launcher already has vsockfwd"), nil
+	}
+	patch, err := json.Marshal(ops)
+	if err != nil {
+		return nil, err
+	}
+	return reviewResponseWithPatch(v.request.UID, true, http.StatusAccepted, "virt-launcher vsockfwd injected", patch), nil
 }
 
 func (v Handler) mutateSandboxPod(pod *v1.Pod) (*admissionv1.AdmissionReview, error) {

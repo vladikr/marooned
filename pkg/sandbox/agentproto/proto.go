@@ -11,14 +11,19 @@ import (
 )
 
 const (
-	MethodPing       = "Ping"
-	MethodStart      = "Start"
-	MethodStop       = "Stop"
-	MethodWait       = "Wait"
-	MethodExec       = "Exec"
-	MethodLogs       = "Logs"
-	MethodMountTable = "MountTable"
-	MethodAttest     = "Attest"
+	MethodPing          = "Ping"
+	MethodRootfs        = "Rootfs"
+	MethodPrepareRootfs = "PrepareRootfs"
+	MethodStart         = "Start"
+	MethodStop          = "Stop"
+	MethodWait          = "Wait"
+	MethodStatus        = "Status"
+	MethodExec          = "Exec"
+	MethodExecTTY       = "ExecTTY"
+	MethodLogs          = "Logs"
+	MethodStats         = "Stats"
+	MethodMountTable    = "MountTable"
+	MethodAttest        = "Attest"
 )
 
 // Envelope is a length-prefixed JSON request or response.
@@ -41,6 +46,21 @@ type StartRequest struct {
 	Mounts      []Mount  `json:"mounts"`
 	Privileged  bool     `json:"privileged"`
 	Stdin       bool     `json:"stdin"`
+}
+
+// RootfsChunk is a piece of the container rootfs tarball (OCI bundle root).
+type RootfsChunk struct {
+	ContainerID string `json:"containerID"`
+	Data        []byte `json:"data"`
+	EOF         bool   `json:"eof"`
+}
+
+// PrepareRootfsRequest asks the agent to mkfs+mount the user-rootfs emptyDisk.
+type PrepareRootfsRequest struct {
+	ContainerID string `json:"containerID"`
+	Serial      string `json:"serial"`
+	ImageBytes  int64  `json:"imageBytes"`
+	DiskBytes   int64  `json:"diskBytes"`
 }
 
 // Mount is a guest path already backed by a virtio disk or tmpfs.
@@ -75,6 +95,33 @@ type LogsRequest struct {
 type LogsResponse struct {
 	Stream string `json:"stream"` // stdout|stderr
 	Data   string `json:"data"`
+}
+
+// StatusRequest is a non-blocking guest process liveness check.
+type StatusRequest struct {
+	ContainerID string `json:"containerID"`
+}
+
+// StatusResponse is whether the guest workload is still running.
+type StatusResponse struct {
+	Running  bool   `json:"running"`
+	Pid      int    `json:"pid"`
+	ExitCode int32  `json:"exitCode"`
+	Restarts uint32 `json:"restarts"`
+}
+
+// StatsRequest asks for guest process cgroup-ish usage.
+type StatsRequest struct {
+	ContainerID string `json:"containerID"`
+}
+
+// StatsResponse is CPU/memory of the guest workload (not the pause container).
+type StatsResponse struct {
+	CPUNano           uint64 `json:"cpuNano"`
+	RSSBytes          uint64 `json:"rssBytes"`
+	WorkingSetBytes   uint64 `json:"workingSetBytes"`
+	Pids              uint64 `json:"pids"`
+	TimestampUnixNano int64  `json:"timestampUnixNano"`
 }
 
 // WriteEnvelope writes a 4-byte big-endian length then JSON.
@@ -128,6 +175,8 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
+func (c *Client) Conn() net.Conn { return c.conn }
+
 func (c *Client) Call(method string, payload interface{}, timeout time.Duration) (Envelope, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -161,4 +210,30 @@ func (c *Client) Call(method string, payload interface{}, timeout time.Duration)
 func (c *Client) Ping(timeout time.Duration) error {
 	_, err := c.Call(MethodPing, nil, timeout)
 	return err
+}
+
+const rootfsChunk = 256 * 1024
+
+// PutRootfs streams a tar of the container rootfs to the guest agent.
+func (c *Client) PutRootfs(containerID string, r io.Reader, timeout time.Duration) error {
+	if timeout > 0 {
+		_ = c.conn.SetDeadline(time.Now().Add(timeout))
+		defer c.conn.SetDeadline(time.Time{})
+	}
+	buf := make([]byte, rootfsChunk)
+	for {
+		n, err := io.ReadFull(r, buf)
+		if n > 0 {
+			if _, callErr := c.Call(MethodRootfs, RootfsChunk{ContainerID: containerID, Data: buf[:n]}, 0); callErr != nil {
+				return callErr
+			}
+		}
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			_, err = c.Call(MethodRootfs, RootfsChunk{ContainerID: containerID, EOF: true}, 0)
+			return err
+		}
+		if err != nil {
+			return err
+		}
+	}
 }

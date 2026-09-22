@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
+	"os"
 	"sync"
 	"time"
 
 	"k8s.io/klog/v2"
 
+	"maroonedpods.io/maroonedpods/pkg/sandbox"
 	"maroonedpods.io/maroonedpods/pkg/sandbox/agentproto"
 )
 
@@ -27,8 +31,13 @@ type RuntimeService interface {
 	RemoveContainer(ctx context.Context, id string) error
 	ContainerStatus(ctx context.Context, id string) (*Container, error)
 	ExecSync(ctx context.Context, id string, cmd []string, timeout time.Duration) (stdout, stderr []byte, exitCode int32, err error)
+	Logs(ctx context.Context, id string) (string, error)
+	ExecTTY(ctx context.Context, id string, cmd []string, conn net.Conn) error
 	ListPodSandbox(ctx context.Context) ([]*PodSandbox, error)
 	ListContainers(ctx context.Context) ([]*Container, error)
+	ContainerStats(ctx context.Context, id string) (*ContainerStats, error)
+	PodSandboxStats(ctx context.Context, id string) (*PodSandboxStats, error)
+	WaitContainer(ctx context.Context, id string) error
 }
 
 type RunPodSandboxRequest struct {
@@ -36,15 +45,18 @@ type RunPodSandboxRequest struct {
 	PodNamespace string
 	PodUID       string
 	Attempt      uint32
+	RootfsBytes  int64
 }
 
 type CreateContainerRequest struct {
-	Name    string
-	Image   string
-	Command []string
-	Args    []string
-	Env     []string
-	WorkDir string
+	Name        string
+	Image       string
+	Command     []string
+	Args        []string
+	Env         []string
+	WorkDir     string
+	RootfsPath  string
+	RootfsBytes int64
 }
 
 type PodSandbox struct {
@@ -57,15 +69,40 @@ type PodSandbox struct {
 }
 
 type Container struct {
-	ID        string
-	SandboxID string
-	Name      string
-	Image     string
-	Command   []string
-	Args      []string
-	Env       []string
-	WorkDir   string
-	State     string
+	ID           string
+	SandboxID    string
+	Name         string
+	Image        string
+	Command      []string
+	Args         []string
+	Env          []string
+	WorkDir      string
+	RootfsPath   string
+	RootfsBytes  int64
+	State        string
+	Ready        bool
+	RestartCount uint32
+	Pid          int
+	ExitCode     int32
+}
+
+// ContainerStats is guest workload usage, not the host pause cgroup.
+type ContainerStats struct {
+	ID                string
+	CPUNano           uint64
+	RSSBytes          uint64
+	WorkingSetBytes   uint64
+	Pids              uint64
+	TimestampUnixNano int64
+}
+
+// PodSandboxStats is the sandbox aggregate (one container today).
+type PodSandboxStats struct {
+	ID                string
+	CPUNano           uint64
+	RSSBytes          uint64
+	Pids              uint64
+	TimestampUnixNano int64
 }
 
 // UnimplementedRuntime is the Phase 0 shim.
@@ -93,12 +130,25 @@ func (UnimplementedRuntime) ContainerStatus(context.Context, string) (*Container
 func (UnimplementedRuntime) ExecSync(context.Context, string, []string, time.Duration) ([]byte, []byte, int32, error) {
 	return nil, nil, 0, ErrUnimplemented
 }
+func (UnimplementedRuntime) Logs(context.Context, string) (string, error) {
+	return "", ErrUnimplemented
+}
+func (UnimplementedRuntime) ExecTTY(context.Context, string, []string, net.Conn) error {
+	return ErrUnimplemented
+}
 func (UnimplementedRuntime) ListPodSandbox(context.Context) ([]*PodSandbox, error) {
 	return nil, ErrUnimplemented
 }
 func (UnimplementedRuntime) ListContainers(context.Context) ([]*Container, error) {
 	return nil, ErrUnimplemented
 }
+func (UnimplementedRuntime) ContainerStats(context.Context, string) (*ContainerStats, error) {
+	return nil, ErrUnimplemented
+}
+func (UnimplementedRuntime) PodSandboxStats(context.Context, string) (*PodSandboxStats, error) {
+	return nil, ErrUnimplemented
+}
+func (UnimplementedRuntime) WaitContainer(context.Context, string) error { return ErrUnimplemented }
 
 // Store holds in-memory sandbox and container records.
 type Store struct {
@@ -205,13 +255,23 @@ type AgentDialer func(sandboxID string) (*agentproto.Client, error)
 
 // Runtime is the Phase 2 CRI implementation.
 type Runtime struct {
-	store  *Store
-	dial   AgentDialer
-	waitVM func(ctx context.Context, podNamespace, podName string) (vmiRef, agentAddr string, err error)
+	store     *Store
+	dial      AgentDialer
+	waitVM    func(ctx context.Context, podNamespace, podName string) (vmiRef, agentAddr string, err error)
+	noteSize  func(ns, name string, n int64)
+	mountsFor func(ns, name string) []agentproto.Mount
 }
 
 func NewRuntime(store *Store, waitVM func(context.Context, string, string) (string, string, error), dial AgentDialer) *Runtime {
 	return &Runtime{store: store, waitVM: waitVM, dial: dial}
+}
+
+func (r *Runtime) SetNoteSize(fn func(ns, name string, n int64)) {
+	r.noteSize = fn
+}
+
+func (r *Runtime) SetMountsFor(fn func(ns, name string) []agentproto.Mount) {
+	r.mountsFor = fn
 }
 
 func (r *Runtime) RunPodSandbox(ctx context.Context, req *RunPodSandboxRequest) (*PodSandbox, error) {
@@ -220,43 +280,49 @@ func (r *Runtime) RunPodSandbox(ctx context.Context, req *RunPodSandboxRequest) 
 		id = req.PodNamespace + "-" + req.PodName
 	}
 	klog.Infof("RunPodSandbox %s/%s", req.PodNamespace, req.PodName)
+	if r.noteSize != nil && req.RootfsBytes > 0 {
+		r.noteSize(req.PodNamespace, req.PodName, req.RootfsBytes)
+	}
 	if existing := r.store.GetSandbox(id); existing != nil && existing.State == "SANDBOX_READY" && r.store.AgentAddr(id) != "" {
 		return existing, nil
 	}
-	vmi, addr, err := r.waitVM(ctx, req.PodNamespace, req.PodName)
-	if err != nil {
-		return nil, err
-	}
-	r.store.SetAgentAddr(id, addr)
-	if r.dial != nil {
-		var last error
-		n := 0
-		for {
-			cli, err := r.dial(id)
+	var last error
+	n := 0
+	for {
+		vmi, addr, err := r.waitVM(ctx, req.PodNamespace, req.PodName)
+		if err != nil {
+			if last != nil {
+				return nil, fmt.Errorf("agent ping: %v; %w", last, err)
+			}
+			return nil, err
+		}
+		r.store.SetAgentAddr(id, addr)
+		if r.dial == nil {
+			sb := &PodSandbox{ID: id, Name: req.PodName, Namespace: req.PodNamespace, UID: req.PodUID, State: "SANDBOX_READY", VMI: vmi}
+			r.store.PutSandbox(sb)
+			return sb, nil
+		}
+		cli, err := r.dial(id)
+		if err == nil {
+			err = cli.Ping(3 * time.Second)
+			_ = cli.Close()
 			if err == nil {
-				err = cli.Ping(3 * time.Second)
-				_ = cli.Close()
-				if err == nil {
-					sb := &PodSandbox{ID: id, Name: req.PodName, Namespace: req.PodNamespace, UID: req.PodUID, State: "SANDBOX_READY", VMI: vmi}
-					r.store.PutSandbox(sb)
-					return sb, nil
-				}
-			}
-			last = err
-			n++
-			if n == 1 || n%5 == 0 {
-				klog.Infof("waiting for guest agent at %s (%d): %v", addr, n, last)
-			}
-			select {
-			case <-ctx.Done():
-				return nil, fmt.Errorf("agent ping: %w", last)
-			case <-time.After(time.Second):
+				sb := &PodSandbox{ID: id, Name: req.PodName, Namespace: req.PodNamespace, UID: req.PodUID, State: "SANDBOX_READY", VMI: vmi}
+				r.store.PutSandbox(sb)
+				return sb, nil
 			}
 		}
+		last = err
+		n++
+		if n == 1 || n%5 == 0 {
+			klog.Infof("waiting for guest agent at %s (%d): %v", addr, n, last)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("agent ping: %w", last)
+		case <-time.After(time.Second):
+		}
 	}
-	sb := &PodSandbox{ID: id, Name: req.PodName, Namespace: req.PodNamespace, UID: req.PodUID, State: "SANDBOX_READY", VMI: vmi}
-	r.store.PutSandbox(sb)
-	return sb, nil
 }
 
 func (r *Runtime) StopPodSandbox(_ context.Context, id string) error {
@@ -283,7 +349,7 @@ func (r *Runtime) PodSandboxStatus(_ context.Context, id string) (*PodSandbox, e
 
 func (r *Runtime) CreateContainer(_ context.Context, sandboxID string, req *CreateContainerRequest) (*Container, error) {
 	id := sandboxID + "-" + req.Name
-	c := &Container{ID: id, SandboxID: sandboxID, Name: req.Name, Image: req.Image, Command: req.Command, Args: req.Args, Env: req.Env, WorkDir: req.WorkDir, State: "CONTAINER_CREATED"}
+	c := &Container{ID: id, SandboxID: sandboxID, Name: req.Name, Image: req.Image, Command: req.Command, Args: req.Args, Env: req.Env, WorkDir: req.WorkDir, RootfsPath: req.RootfsPath, RootfsBytes: req.RootfsBytes, State: "CONTAINER_CREATED"}
 	r.store.PutContainer(c)
 	return c, nil
 }
@@ -303,6 +369,39 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 		return err
 	}
 	defer cli.Close()
+	imageBytes := c.RootfsBytes
+	if imageBytes == 0 && c.RootfsPath != "" {
+		if st, err := os.Stat(c.RootfsPath); err == nil {
+			imageBytes = st.Size()
+		}
+	}
+	qty := sandbox.UserRootfsCapacity(imageBytes)
+	disk := qty.Value()
+	if _, err := cli.Call(agentproto.MethodPrepareRootfs, agentproto.PrepareRootfsRequest{
+		ContainerID: id,
+		Serial:      sandbox.UserRootfsSerial,
+		ImageBytes:  imageBytes,
+		DiskBytes:   disk,
+	}, 90*time.Second); err != nil {
+		return fmt.Errorf("prepare user-rootfs (image %d bytes, disk %d bytes): %w", imageBytes, disk, err)
+	}
+	if c.RootfsPath != "" {
+		f, err := os.Open(c.RootfsPath)
+		if err != nil {
+			return fmt.Errorf("rootfs %s: %w", c.RootfsPath, err)
+		}
+		putErr := cli.PutRootfs(id, f, 3*time.Minute)
+		_ = f.Close()
+		if putErr != nil {
+			return fmt.Errorf("rootfs upload: %w", putErr)
+		}
+	}
+	var mounts []agentproto.Mount
+	if r.mountsFor != nil {
+		if sb := r.store.GetSandbox(c.SandboxID); sb != nil {
+			mounts = r.mountsFor(sb.Namespace, sb.Name)
+		}
+	}
 	_, err = cli.Call(agentproto.MethodStart, agentproto.StartRequest{
 		ContainerID: id,
 		Image:       c.Image,
@@ -310,6 +409,7 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 		Args:        c.Args,
 		Env:         c.Env,
 		WorkDir:     c.WorkDir,
+		Mounts:      mounts,
 	}, 60*time.Second)
 	if err != nil {
 		return err
@@ -345,6 +445,42 @@ func (r *Runtime) ContainerStatus(_ context.Context, id string) (*Container, err
 	if c == nil {
 		return nil, fmt.Errorf("container %s not found", id)
 	}
+	if r.dial == nil {
+		return c, nil
+	}
+	cli, err := r.dial(c.SandboxID)
+	if err != nil {
+		c.Ready = false
+		if c.State == "CONTAINER_RUNNING" {
+			c.State = "CONTAINER_EXITED"
+		}
+		r.store.PutContainer(c)
+		return c, nil
+	}
+	defer cli.Close()
+	resp, err := cli.Call(agentproto.MethodStatus, agentproto.StatusRequest{ContainerID: id}, 5*time.Second)
+	if err != nil {
+		c.Ready = false
+		if c.State == "CONTAINER_RUNNING" {
+			c.State = "CONTAINER_EXITED"
+		}
+		r.store.PutContainer(c)
+		return c, nil
+	}
+	var st agentproto.StatusResponse
+	if len(resp.Payload) > 0 {
+		_ = json.Unmarshal(resp.Payload, &st)
+	}
+	c.Pid = st.Pid
+	c.ExitCode = st.ExitCode
+	c.RestartCount = st.Restarts
+	c.Ready = st.Running
+	if st.Running {
+		c.State = "CONTAINER_RUNNING"
+	} else if c.State == "CONTAINER_RUNNING" {
+		c.State = "CONTAINER_EXITED"
+	}
+	r.store.PutContainer(c)
 	return c, nil
 }
 
@@ -377,10 +513,143 @@ func (r *Runtime) ExecSync(_ context.Context, id string, cmd []string, timeout t
 	return []byte(out.Stdout), []byte(out.Stderr), out.ExitCode, nil
 }
 
+func (r *Runtime) Logs(_ context.Context, id string) (string, error) {
+	c := r.store.GetContainer(id)
+	if c == nil {
+		return "", fmt.Errorf("container %s not found", id)
+	}
+	if r.dial == nil {
+		return "", ErrUnimplemented
+	}
+	cli, err := r.dial(c.SandboxID)
+	if err != nil {
+		return "", err
+	}
+	defer cli.Close()
+	resp, err := cli.Call(agentproto.MethodLogs, agentproto.LogsRequest{ContainerID: id}, 10*time.Second)
+	if err != nil {
+		return "", err
+	}
+	var out agentproto.LogsResponse
+	if len(resp.Payload) > 0 {
+		_ = json.Unmarshal(resp.Payload, &out)
+	}
+	return out.Data, nil
+}
+
+func (r *Runtime) ExecTTY(_ context.Context, id string, cmd []string, conn net.Conn) error {
+	c := r.store.GetContainer(id)
+	if c == nil {
+		return fmt.Errorf("container %s not found", id)
+	}
+	if r.dial == nil {
+		return ErrUnimplemented
+	}
+	cli, err := r.dial(c.SandboxID)
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+	if err := agentproto.WriteEnvelope(cli.Conn(), agentproto.Envelope{ID: "1", Method: agentproto.MethodExecTTY, Payload: mustJSON(agentproto.ExecRequest{ContainerID: id, Command: cmd})}); err != nil {
+		return err
+	}
+	ack, err := agentproto.ReadEnvelope(cli.Conn())
+	if err != nil {
+		return err
+	}
+	if !ack.OK {
+		return fmt.Errorf("ExecTTY: %s", ack.Error)
+	}
+	go func() {
+		_, _ = io.Copy(cli.Conn(), conn)
+	}()
+	_, _ = io.Copy(conn, cli.Conn())
+	return nil
+}
+
+func mustJSON(v interface{}) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
+}
+
 func (r *Runtime) ListPodSandbox(context.Context) ([]*PodSandbox, error) {
 	return r.store.ListSandboxes(), nil
 }
 
 func (r *Runtime) ListContainers(context.Context) ([]*Container, error) {
 	return r.store.ListContainers(), nil
+}
+
+func (r *Runtime) ContainerStats(_ context.Context, id string) (*ContainerStats, error) {
+	c := r.store.GetContainer(id)
+	if c == nil {
+		return nil, fmt.Errorf("container %s not found", id)
+	}
+	if r.dial == nil {
+		return nil, ErrUnimplemented
+	}
+	cli, err := r.dial(c.SandboxID)
+	if err != nil {
+		return nil, err
+	}
+	defer cli.Close()
+	resp, err := cli.Call(agentproto.MethodStats, agentproto.StatsRequest{ContainerID: id}, 8*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	var out agentproto.StatsResponse
+	if len(resp.Payload) > 0 {
+		if err := json.Unmarshal(resp.Payload, &out); err != nil {
+			return nil, err
+		}
+	}
+	return &ContainerStats{
+		ID:                id,
+		CPUNano:           out.CPUNano,
+		RSSBytes:          out.RSSBytes,
+		WorkingSetBytes:   out.WorkingSetBytes,
+		Pids:              out.Pids,
+		TimestampUnixNano: out.TimestampUnixNano,
+	}, nil
+}
+
+func (r *Runtime) PodSandboxStats(ctx context.Context, id string) (*PodSandboxStats, error) {
+	if r.store.GetSandbox(id) == nil {
+		return nil, fmt.Errorf("sandbox %s not found", id)
+	}
+	var cpu, rss, pids uint64
+	var ts int64
+	for _, c := range r.store.ListContainers() {
+		if c.SandboxID != id {
+			continue
+		}
+		st, err := r.ContainerStats(ctx, c.ID)
+		if err != nil {
+			continue
+		}
+		cpu += st.CPUNano
+		rss += st.RSSBytes
+		pids += st.Pids
+		if st.TimestampUnixNano > ts {
+			ts = st.TimestampUnixNano
+		}
+	}
+	return &PodSandboxStats{ID: id, CPUNano: cpu, RSSBytes: rss, Pids: pids, TimestampUnixNano: ts}, nil
+}
+
+func (r *Runtime) WaitContainer(_ context.Context, id string) error {
+	c := r.store.GetContainer(id)
+	if c == nil {
+		return fmt.Errorf("container %s not found", id)
+	}
+	if r.dial == nil {
+		return ErrUnimplemented
+	}
+	cli, err := r.dial(c.SandboxID)
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+	_, err = cli.Call(agentproto.MethodWait, map[string]string{"containerID": id}, 0)
+	return err
 }

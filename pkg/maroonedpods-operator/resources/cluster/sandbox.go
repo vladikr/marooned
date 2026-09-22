@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"maroonedpods.io/maroonedpods/pkg/sandbox"
 	utils2 "maroonedpods.io/maroonedpods/pkg/util"
 )
 
@@ -56,8 +57,8 @@ func createRuntimeClass() *nodev1.RuntimeClass {
 		Handler: utils2.RuntimeHandler,
 		Overhead: &nodev1.Overhead{
 			PodFixed: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("25m"),
-				corev1.ResourceMemory: resource.MustParse("32Mi"),
+				corev1.ResourceCPU:    resource.MustParse(sandbox.RuntimeClassOverheadCPU),
+				corev1.ResourceMemory: resource.MustParse(sandbox.RuntimeClassOverheadMemory),
 			},
 		},
 	}
@@ -94,7 +95,12 @@ func createShimClusterRoleBinding() *rbacv1.ClusterRoleBinding {
 }
 
 func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
+	// Node CRI helper: bind host unix socket, install marooned-oci,
+	// chmod hostPath. Unprivileged container_t cannot bind cri.sock on
+	// container_var_run_t (SELinux EACCES) or overwrite /opt/marooned
+	// (usr_t). Sidecar stays unprivileged; no hostNetwork/hostPID.
 	priv := true
+	allowEsc := true
 	hostPathDir := corev1.HostPathDirectoryOrCreate
 	return &appsv1.DaemonSet{
 		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "DaemonSet"},
@@ -115,19 +121,23 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: utils2.ShimServiceAccountName,
-					// vsock CIDs of KubeVirt guests are in the node's vsock
-					// namespace; a pod netns cannot connect (timeout).
-					HostNetwork: true,
-					HostPID:     true,
+					// Agent traffic is unix:// on this hostPath. The
+					// virt-launcher sidecar dials vsock; the shim must not.
+					HostNetwork: false,
+					HostPID:     false,
 					Containers: []corev1.Container{
 						{
 							Name:            "shim",
 							Image:           image,
 							ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 							Args:            []string{"-socket", "/var/run/marooned/cri.sock", "-agent-timeout", "3m"},
-							SecurityContext: &corev1.SecurityContext{Privileged: &priv},
+							SecurityContext: &corev1.SecurityContext{
+								Privileged:               &priv,
+								AllowPrivilegeEscalation: &allowEsc,
+							},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "marooned-run", MountPath: "/var/run/marooned"},
+								{Name: "marooned-oci", MountPath: "/run/marooned-oci"},
 								{Name: "containerd", MountPath: "/run/containerd"},
 								{Name: "host-opt", MountPath: "/host-opt"},
 								{Name: "host-usr-local-bin", MountPath: "/host-usr-local-bin"},
@@ -140,6 +150,12 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 							Name: "marooned-run",
 							VolumeSource: corev1.VolumeSource{
 								HostPath: &corev1.HostPathVolumeSource{Path: "/var/run/marooned", Type: &hostPathDir},
+							},
+						},
+						{
+							Name: "marooned-oci",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{Path: "/run/marooned-oci", Type: &hostPathDir},
 							},
 						},
 						{

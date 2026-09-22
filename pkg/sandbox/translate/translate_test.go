@@ -101,6 +101,44 @@ func TestTranslateMemoryFloor(t *testing.T) {
 	}
 }
 
+func TestTranslateSandboxLauncherLabel(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	p.UID = "pod-uid-1"
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1", OwnerPod: true})
+	if res.VMI.Labels[util.SandboxVMILabel] != "true" {
+		t.Fatal("sandbox VMI must be labeled so virt-launcher is selectable")
+	}
+	if res.VMI.Labels[util.SandboxIDLabel] != "pod-uid-1" {
+		t.Fatalf("sandbox-id %s", res.VMI.Labels[util.SandboxIDLabel])
+	}
+}
+
+func TestTranslateUserRootfsEmptyDisk(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1", RootfsBytes: 5 * 1024 * 1024})
+	found := false
+	for _, vol := range res.VMI.Spec.Volumes {
+		if vol.Name == sandbox.UserRootfsVolume && vol.EmptyDisk != nil {
+			found = true
+			if vol.EmptyDisk.Capacity.Value() != 256*1024*1024 {
+				t.Fatalf("capacity %d", vol.EmptyDisk.Capacity.Value())
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing user-rootfs emptyDisk")
+	}
+	serial := false
+	for _, d := range res.VMI.Spec.Domain.Devices.Disks {
+		if d.Name == sandbox.UserRootfsVolume && d.Serial == sandbox.UserRootfsSerial {
+			serial = true
+		}
+	}
+	if !serial {
+		t.Fatal("user-rootfs disk serial")
+	}
+}
+
 func TestTranslateAutoattachVSOCK(t *testing.T) {
 	p := podWithResources("1", "512Mi")
 	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})
@@ -131,11 +169,19 @@ func TestTranslateDefaultAgentDisk(t *testing.T) {
 	if fw.KernelBoot.Container.Image != util.DefaultSandboxKernelImage {
 		t.Fatalf("kernel image %s", fw.KernelBoot.Container.Image)
 	}
+	if fw.KernelBoot.Container.ImagePullPolicy != corev1.PullIfNotPresent {
+		t.Fatalf("kernel pull %s", fw.KernelBoot.Container.ImagePullPolicy)
+	}
+	for _, vol := range res.VMI.Spec.Volumes {
+		if vol.ContainerDisk != nil && vol.ContainerDisk.ImagePullPolicy != corev1.PullIfNotPresent {
+			t.Fatalf("rootfs pull %s", vol.ContainerDisk.ImagePullPolicy)
+		}
+	}
 }
 
 func TestTranslateHugepages(t *testing.T) {
 	p := podWithResources("1", "1Gi")
-	p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("hugepages-2Mi")] = resource.MustParse("64Mi")
+	p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("hugepages-2Mi")] = resource.MustParse("2Gi")
 	res := Translate(Input{Pod: p, Config: testConfig()})
 	if len(res.Errors) != 0 {
 		t.Fatalf("errors: %v", res.Errors)
@@ -146,12 +192,35 @@ func TestTranslateHugepages(t *testing.T) {
 	if res.VMI.Spec.Domain.Memory.Hugepages == nil || res.VMI.Spec.Domain.Memory.Hugepages.PageSize != "2Mi" {
 		t.Fatalf("vmi hugepages not set")
 	}
+	got := res.VMI.Spec.Domain.Resources.Requests[corev1.ResourceName("hugepages-2Mi")]
+	guest := *res.VMI.Spec.Domain.Memory.Guest
+	if got.Cmp(guest) != 0 {
+		t.Fatalf("vmi hugepages request %s want guest %s", got.String(), guest.String())
+	}
+}
+
+func TestTranslateHugepagesLessThanGuestSkipped(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("hugepages-2Mi")] = resource.MustParse("64Mi")
+	res := Translate(Input{Pod: p, Config: testConfig()})
+	if len(res.Errors) != 0 {
+		t.Fatalf("errors: %v", res.Errors)
+	}
+	if res.Hugepage != "" {
+		t.Fatalf("hugepage %s, want skipped", res.Hugepage)
+	}
+	if res.VMI.Spec.Domain.Memory != nil && res.VMI.Spec.Domain.Memory.Hugepages != nil {
+		t.Fatal("VMI must not hugepage-back when request < guest RAM")
+	}
+	if len(res.Warnings) == 0 {
+		t.Fatal("expected warning")
+	}
 }
 
 func TestTranslateHugepagesAndTEEAllowed(t *testing.T) {
 	p := podWithResources("1", "1Gi")
 	p.Annotations = map[string]string{util.TEEAnnotation: sandbox.TEESNP}
-	p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("hugepages-2Mi")] = resource.MustParse("64Mi")
+	p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("hugepages-2Mi")] = resource.MustParse("2Gi")
 	res := Translate(Input{Pod: p, Config: testConfig()})
 	if len(res.Errors) != 0 {
 		t.Fatalf("hugepages + TEE should be allowed: %v", res.Errors)
@@ -333,8 +402,21 @@ func TestTranslateNetworkMasqueradeDefault(t *testing.T) {
 	if iface.Masquerade == nil {
 		t.Fatalf("expected masquerade default, got %+v", iface)
 	}
-	if len(iface.Ports) != 1 || iface.Ports[0].Port != 1024 {
+	if len(iface.Ports) < 1 || iface.Ports[0].Port != 1024 {
 		t.Fatalf("masquerade must expose agent port 1024, got %+v", iface.Ports)
+	}
+}
+
+func TestTranslateMasqueradeExposesContainerPorts(t *testing.T) {
+	p := podWithResources("1", "1Gi")
+	p.Spec.Containers[0].Ports = []corev1.ContainerPort{{Name: "http", ContainerPort: 8080, Protocol: corev1.ProtocolTCP}}
+	res := Translate(Input{Pod: p, Config: testConfig()})
+	iface := res.VMI.Spec.Domain.Devices.Interfaces[0]
+	if len(iface.Ports) != 2 {
+		t.Fatalf("ports %+v", iface.Ports)
+	}
+	if iface.Ports[1].Port != 8080 || iface.Ports[1].Name != "http" {
+		t.Fatalf("workload port %+v", iface.Ports[1])
 	}
 	if res.VMI.Spec.Networks[0].Pod == nil {
 		t.Fatal("network source must be pod: {}")

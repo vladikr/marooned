@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,29 @@ func TestUnimplemented(t *testing.T) {
 	_, err := r.RunPodSandbox(context.Background(), &RunPodSandboxRequest{PodName: "x"})
 	if err != ErrUnimplemented {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestContainerStatusMarksExitedWhenAgentGone(t *testing.T) {
+	store := NewStore()
+	store.PutContainer(&Container{ID: "c1", SandboxID: "sb", State: "CONTAINER_RUNNING", Ready: true})
+	r := NewRuntime(store, nil, func(string) (*agentproto.Client, error) {
+		return nil, fmt.Errorf("vsock dead")
+	})
+	c, err := r.ContainerStatus(context.Background(), "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.State != "CONTAINER_EXITED" || c.Ready {
+		t.Fatalf("state %s ready %v", c.State, c.Ready)
+	}
+}
+
+func TestContainerStatsMissing(t *testing.T) {
+	r := NewRuntime(NewStore(), nil, nil)
+	_, err := r.ContainerStats(context.Background(), "nope")
+	if err == nil {
+		t.Fatal("expected missing container")
 	}
 }
 
@@ -49,6 +73,32 @@ func TestRunPodSandboxNotReadyUntilPing(t *testing.T) {
 	}
 	if sb := store.GetSandbox("uid"); sb != nil && sb.State == "SANDBOX_READY" {
 		t.Fatal("sandbox must not be READY before a successful ping")
+	}
+}
+
+func TestRunPodSandboxAbortsWhenPodGone(t *testing.T) {
+	store := NewStore()
+	n := 0
+	r := NewRuntime(store, func(context.Context, string, string) (string, string, error) {
+		n++
+		if n > 2 {
+			return "", "", fmt.Errorf("pod ns/p is gone")
+		}
+		return "vmi", "unix:/tmp/missing.sock", nil
+	}, func(string) (*agentproto.Client, error) {
+		return nil, fmt.Errorf("no such file or directory")
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := r.RunPodSandbox(ctx, &RunPodSandboxRequest{PodName: "p", PodNamespace: "ns", PodUID: "uid"})
+	if err == nil {
+		t.Fatal("expected abort")
+	}
+	if !strings.Contains(err.Error(), "gone") {
+		t.Fatalf("got %v", err)
+	}
+	if store.GetSandbox("uid") != nil {
+		t.Fatal("must not mark ready")
 	}
 }
 

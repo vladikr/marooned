@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -21,33 +22,54 @@ import (
 )
 
 type container struct {
-	id     string
-	cmd    *exec.Cmd
-	stdout bytes.Buffer
-	stderr bytes.Buffer
-	mu     sync.Mutex
-	exited bool
-	code   int32
+	id       string
+	cmd      *exec.Cmd
+	stdout   bytes.Buffer
+	stderr   bytes.Buffer
+	mu       sync.Mutex
+	exited   bool
+	code     int32
+	restarts uint32
+	done     chan struct{}
 }
 
 type agent struct {
-	mu   sync.Mutex
-	ctrs map[string]*container
+	mu         sync.Mutex
+	ctrs       map[string]*container
+	unpackers  map[string]*unpackJob
+	imageBytes map[string]int64
+	diskBytes  map[string]int64
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "container-init" {
+		os.Exit(runContainerInit())
+	}
+	if len(os.Args) > 1 && os.Args[1] == "pidns-exec" {
+		os.Exit(runPidnsExec())
+	}
 	klog.InitFlags(nil)
 	listen := flag.String("listen", "vsock://:1024", "listen address: vsock://:port, tcp://host:port, or unix:///path")
 	flag.Parse()
 
-	a := &agent{ctrs: map[string]*container{}}
-	ln, err := vsock.Listen(*listen)
-	if err != nil {
-		klog.Warningf("listen %s: %v; falling back to tcp://0.0.0.0:1024", *listen, err)
-		ln, err = vsock.Listen("tcp://0.0.0.0:1024")
+	a := &agent{
+		ctrs:       map[string]*container{},
+		unpackers:  map[string]*unpackJob{},
+		imageBytes: map[string]int64{},
+		diskBytes:  map[string]int64{},
+	}
+	var ln net.Listener
+	var err error
+	for i := 0; i < 50; i++ {
+		ln, err = vsock.Listen(*listen)
+		if err == nil {
+			break
+		}
+		klog.Warningf("listen %s: %v (retry)", *listen, err)
+		time.Sleep(100 * time.Millisecond)
 	}
 	if err != nil {
-		klog.Fatalf("listen: %v", err)
+		klog.Fatalf("listen %s: %v (not falling back to TCP; vsockfwd cannot use it)", *listen, err)
 	}
 	klog.Infof("marooned-agent listening on %s (%T)", ln.Addr().String(), ln)
 	for {
@@ -62,12 +84,21 @@ func main() {
 
 func (a *agent) serve(conn net.Conn) {
 	defer conn.Close()
+	defer func() {
+		if rec := recover(); rec != nil {
+			klog.Errorf("agent serve panic (pid 1 must not exit): %v", rec)
+		}
+	}()
 	for {
 		env, err := agentproto.ReadEnvelope(conn)
 		if err != nil {
 			if err != io.EOF {
 				klog.V(4).Infof("read: %v", err)
 			}
+			return
+		}
+		if env.Method == agentproto.MethodExecTTY {
+			a.execTTY(conn, env)
 			return
 		}
 		resp := a.handle(env)
@@ -82,12 +113,22 @@ func (a *agent) handle(env agentproto.Envelope) agentproto.Envelope {
 	var err error
 	switch env.Method {
 	case agentproto.MethodPing:
+	case agentproto.MethodPrepareRootfs:
+		err = a.prepareRootfs(env.Payload)
+	case agentproto.MethodRootfs:
+		err = a.rootfs(env.Payload)
 	case agentproto.MethodStart:
 		err = a.start(env.Payload)
 	case agentproto.MethodStop:
 		err = a.stop(env.Payload)
 	case agentproto.MethodWait:
 		err = a.wait(env.Payload)
+	case agentproto.MethodStatus:
+		var resp agentproto.StatusResponse
+		resp, err = a.status(env.Payload)
+		if err == nil {
+			out.Payload, _ = json.Marshal(resp)
+		}
 	case agentproto.MethodExec:
 		var resp agentproto.ExecResponse
 		resp, err = a.exec(env.Payload)
@@ -97,6 +138,12 @@ func (a *agent) handle(env agentproto.Envelope) agentproto.Envelope {
 	case agentproto.MethodLogs:
 		var resp agentproto.LogsResponse
 		resp, err = a.logs(env.Payload)
+		if err == nil {
+			out.Payload, _ = json.Marshal(resp)
+		}
+	case agentproto.MethodStats:
+		var resp agentproto.StatsResponse
+		resp, err = a.stats(env.Payload)
 		if err == nil {
 			out.Payload, _ = json.Marshal(resp)
 		}
@@ -120,27 +167,45 @@ func (a *agent) start(payload json.RawMessage) error {
 		return err
 	}
 	for _, m := range req.Mounts {
-		if err := ensureMount(m); err != nil {
+		if err := ensureMountIn(ctrRoot, req.ContainerID, m); err != nil {
 			return err
 		}
 	}
-	argv := append(append([]string{}, req.Command...), req.Args...)
-	if len(argv) == 0 {
-		argv = []string{"/bin/sh", "-c", "sleep infinity"}
+	root := filepath.Join(ctrRoot, req.ContainerID, "root")
+	var cmd *exec.Cmd
+	if st, err := os.Stat(root); err == nil && st.IsDir() {
+		cmd, err = startInRoot(root, req)
+		if err != nil {
+			return err
+		}
+	} else {
+		argv := append(append([]string{}, req.Command...), req.Args...)
+		if len(argv) == 0 {
+			argv = []string{"/bin/sh", "-c", "sleep infinity"}
+		}
+		cmd = exec.Command(argv[0], argv[1:]...)
+		if req.WorkDir != "" {
+			cmd.Dir = req.WorkDir
+		}
+		cmd.Env = append(os.Environ(), req.Env...)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
-	cmd := exec.Command(argv[0], argv[1:]...)
-	if req.WorkDir != "" {
-		cmd.Dir = req.WorkDir
-	}
-	cmd.Env = append(os.Environ(), req.Env...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	ctr := &container{id: req.ContainerID, cmd: cmd}
+	ctr := &container{id: req.ContainerID, cmd: cmd, done: make(chan struct{})}
 	cmd.Stdout = &ctr.stdout
 	cmd.Stderr = &ctr.stderr
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	klog.Infof("started %s chroot=%s argv=%v pid=%d", req.ContainerID, root, cmd.Args, cmd.Process.Pid)
 	a.mu.Lock()
+	if prev := a.ctrs[req.ContainerID]; prev != nil {
+		prev.mu.Lock()
+		ctr.restarts = prev.restarts
+		if prev.cmd != nil {
+			ctr.restarts++
+		}
+		prev.mu.Unlock()
+	}
 	a.ctrs[req.ContainerID] = ctr
 	a.mu.Unlock()
 	go func() {
@@ -155,8 +220,53 @@ func (a *agent) start(payload json.RawMessage) error {
 			}
 		}
 		ctr.mu.Unlock()
+		close(ctr.done)
 	}()
 	return nil
+}
+
+func (a *agent) ctrHostPid(id string) int {
+	a.mu.Lock()
+	ctr := a.ctrs[id]
+	a.mu.Unlock()
+	if ctr == nil || ctr.cmd == nil || ctr.cmd.Process == nil {
+		return 0
+	}
+	pid := ctr.cmd.Process.Pid
+	if err := syscall.Kill(pid, 0); err != nil {
+		return 0
+	}
+	return pid
+}
+
+func (a *agent) status(payload json.RawMessage) (agentproto.StatusResponse, error) {
+	var req agentproto.StatusRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return agentproto.StatusResponse{}, err
+	}
+	a.mu.Lock()
+	ctr := a.ctrs[req.ContainerID]
+	a.mu.Unlock()
+	if ctr == nil {
+		return agentproto.StatusResponse{}, fmt.Errorf("not found")
+	}
+	ctr.mu.Lock()
+	defer ctr.mu.Unlock()
+	out := agentproto.StatusResponse{ExitCode: ctr.code, Restarts: ctr.restarts}
+	if ctr.cmd != nil && ctr.cmd.Process != nil {
+		out.Pid = ctr.cmd.Process.Pid
+	}
+	if ctr.exited {
+		return out, nil
+	}
+	if out.Pid > 0 {
+		if err := syscall.Kill(out.Pid, 0); err != nil {
+			out.ExitCode = 255
+			return out, nil
+		}
+	}
+	out.Running = true
+	return out, nil
 }
 
 func (a *agent) stop(payload json.RawMessage) error {
@@ -182,23 +292,14 @@ func (a *agent) wait(payload json.RawMessage) error {
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return err
 	}
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		a.mu.Lock()
-		ctr := a.ctrs[req.ContainerID]
-		a.mu.Unlock()
-		if ctr == nil {
-			return fmt.Errorf("not found")
-		}
-		ctr.mu.Lock()
-		done := ctr.exited
-		ctr.mu.Unlock()
-		if done {
-			return nil
-		}
-		time.Sleep(200 * time.Millisecond)
+	a.mu.Lock()
+	ctr := a.ctrs[req.ContainerID]
+	a.mu.Unlock()
+	if ctr == nil || ctr.done == nil {
+		return fmt.Errorf("not found")
 	}
-	return fmt.Errorf("timeout")
+	<-ctr.done
+	return nil
 }
 
 func (a *agent) exec(payload json.RawMessage) (agentproto.ExecResponse, error) {
@@ -209,7 +310,32 @@ func (a *agent) exec(payload json.RawMessage) (agentproto.ExecResponse, error) {
 	if len(req.Command) == 0 {
 		return agentproto.ExecResponse{ExitCode: 1, Stderr: "empty command"}, nil
 	}
-	cmd := exec.Command(req.Command[0], req.Command[1:]...)
+	a.mu.Lock()
+	ctr := a.ctrs[req.ContainerID]
+	a.mu.Unlock()
+	if ctr != nil {
+		ctr.mu.Lock()
+		dead := ctr.exited
+		ctr.mu.Unlock()
+		if dead || a.ctrHostPid(req.ContainerID) == 0 {
+			return agentproto.ExecResponse{ExitCode: 1, Stderr: "container process has exited"}, nil
+		}
+	}
+	argv := append([]string{}, req.Command...)
+	root := filepath.Join(ctrRoot, req.ContainerID, "root")
+	cmd := exec.Command(argv[0], argv[1:]...)
+	if st, err := os.Stat(root); err == nil && st.IsDir() && a.ctrHostPid(req.ContainerID) > 0 {
+		argv[0] = lookPathInRoot(root, argv[0], nil)
+		cmd = nsenterExecCmd(a.ctrHostPid(req.ContainerID), root, argv)
+		cmd.Dir = "/"
+		cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "MAROONED_SKIP_PROC=1"}
+	} else if st, err := os.Stat(root); err == nil && st.IsDir() {
+		argv[0] = lookPathInRoot(root, argv[0], nil)
+		cmd = exec.Command(argv[0], argv[1:]...)
+		cmd.Dir = "/"
+		cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Chroot: root}
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -254,19 +380,29 @@ func (a *agent) mounts(payload json.RawMessage) error {
 }
 
 func ensureMount(m agentproto.Mount) error {
+	return ensureMountIn(ctrRoot, "", m)
+}
+
+func ensureMountIn(base, containerID string, m agentproto.Mount) error {
 	if m.GuestPath == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(m.GuestPath), 0755); err != nil {
+	target := m.GuestPath
+	if containerID != "" {
+		root := filepath.Join(base, containerID, "root")
+		target = filepath.Join(root, strings.TrimPrefix(m.GuestPath, "/"))
+	}
+	if err := os.MkdirAll(target, 0755); err != nil {
 		return err
 	}
 	switch m.Kind {
 	case "tmpfs":
-		if err := os.MkdirAll(m.GuestPath, 0755); err != nil {
-			return err
+		err := syscall.Mount("tmpfs", target, "tmpfs", 0, "")
+		if err == syscall.EBUSY {
+			return nil
 		}
-		return syscall.Mount("tmpfs", m.GuestPath, "tmpfs", 0, "")
+		return err
 	default:
-		return os.MkdirAll(m.GuestPath, 0755)
+		return nil
 	}
 }

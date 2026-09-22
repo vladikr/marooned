@@ -1,0 +1,21 @@
+FROM golang:1.19-alpine as builder
+
+RUN apk update && apk add make
+
+ARG CACHEBUST=0
+COPY pkg /workdir/app/pkg
+COPY staging /workdir/app/staging
+COPY cmd /workdir/app/cmd
+COPY vendor /workdir/app/vendor
+COPY go.mod /workdir/app/go.mod
+COPY go.sum /workdir/app/go.sum
+COPY Makefile /workdir/app/Makefile
+
+WORKDIR /workdir/app
+
+RUN make marooned_vsockfwd
+
+FROM alpine:3.18
+COPY --from=builder /workdir/app/marooned_vsockfwd /app/marooned-vsockfwd
+WORKDIR /app
+ENTRYPOINT ["/app/marooned-vsockfwd"]

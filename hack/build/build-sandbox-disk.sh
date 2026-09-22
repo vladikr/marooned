@@ -10,6 +10,24 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd -P)"
 out="${root}/_out/sandbox-disk"
 mkdir -p "${out}/rootfs" "${out}/kernel"
+
+# Rootless podman leaves _out owned by the overflow uid; host curl then
+# dies with "client returned ERROR on write" (exit 23).
+reclaim_out() {
+  if [ -w "${out}" ]; then
+    return 0
+  fi
+  echo "reclaiming ${out} (not writable by $(id -u))"
+  if command -v podman >/dev/null 2>&1; then
+    podman unshare chown -R 0:0 "${out}" || true
+  fi
+  if [ ! -w "${out}" ]; then
+    echo "${out} is not writable. Run: podman unshare chown -R 0:0 ${out}" >&2
+    exit 1
+  fi
+}
+reclaim_out
+
 export GO111MODULE="${GO111MODULE:-on}"
 export GOFLAGS="${GOFLAGS:--mod=vendor}"
 
@@ -41,6 +59,7 @@ build_agent() {
   exit 1
 }
 build_agent
+reclaim_out
 
 echo "fetching alpine minirootfs and linux-lts"
 curl -fsSL -o "${out}/minirootfs.tgz" \
@@ -58,10 +77,37 @@ tar -C "${out}/kpkg" -xzf "${out}/linux-lts.apk" 2>/dev/null || tar -C "${out}/k
 find "${out}/kpkg" -name 'vmlinuz*' | head -1 | xargs -I{} cp {} "${out}/kernel/vmlinuz"
 cp "${out}/marooned-agent" "${out}/rootfs/usr/local/bin/marooned-agent"
 chmod +x "${out}/rootfs/usr/local/bin/marooned-agent"
-if [ -d "${out}/kpkg/lib/modules" ]; then
-  mkdir -p "${out}/rootfs/lib"
-  cp -a "${out}/kpkg/lib/modules" "${out}/rootfs/lib/"
+# vsock is insmod'd in initrd. Copying the full linux-lts module tree
+# fills a 512M disk (~hundreds of MiB) so user rootfs unpack hits ENOSPC.
+# mke2fs needs e2fsprogs-libs (libext2fs) and util-linux-libs (libblkid).
+apkindex="${out}/APKINDEX"
+curl -fsSL https://dl-cdn.alpinelinux.org/alpine/v3.18/main/x86_64/APKINDEX.tar.gz | tar -xzO APKINDEX >"$apkindex"
+apk_ver() {
+  awk -v p="$1" '$0=="P:"p {want=1} want && /^V:/ {print substr($0,3); exit}' "$apkindex"
+}
+extract_apk() {
+  local pkg="$1" ver
+  ver="$(apk_ver "$pkg")"
+  [ -n "$ver" ] || { echo "no alpine package $pkg" >&2; return 1; }
+  echo "fetching ${pkg}-${ver}"
+  curl -fsSL -o "${out}/${pkg}.apk" \
+    "https://dl-cdn.alpinelinux.org/alpine/v3.18/main/x86_64/${pkg}-${ver}.apk"
+  tar -C "${out}/rootfs" -xzf "${out}/${pkg}.apk" 2>/dev/null || tar -C "${out}/rootfs" -xf "${out}/${pkg}.apk"
+}
+extract_apk e2fsprogs
+extract_apk e2fsprogs-libs
+extract_apk util-linux-libs || extract_apk libblkid || true
+extract_apk util-linux-misc || extract_apk util-linux || true
+extract_apk libcom_err || true
+extract_apk libuuid || true
+# musl loads from /lib; alpine apks often put .so files in /usr/lib
+mkdir -p "${out}/rootfs/lib"
+if [ -d "${out}/rootfs/usr/lib" ]; then
+  find "${out}/rootfs/usr/lib" -maxdepth 1 -name '*.so*' -exec cp -a {} "${out}/rootfs/lib/" \;
 fi
+# apk metadata is not needed in the guest
+rm -rf "${out}/rootfs/.PKGINFO" "${out}/rootfs/.SIGN"* "${out}/rootfs/.[A-Z]"* 2>/dev/null || true
+ls -l "${out}/rootfs/lib"/libext2fs.so* "${out}/rootfs/lib"/libcom_err.so* "${out}/rootfs/lib"/libuuid.so* 2>/dev/null || true
 rm -f "${out}/rootfs/sbin/init"
 cat > "${out}/rootfs/sbin/init" << 'INIT'
 #!/bin/sh
@@ -73,10 +119,37 @@ mkdir -p /dev/pts /run /tmp
 modprobe vsock 2>/dev/null || true
 modprobe virtio_vsock 2>/dev/null || true
 modprobe vmw_vsock_virtio_transport 2>/dev/null || true
+modprobe virtio_net 2>/dev/null || true
 ip link set lo up 2>/dev/null || true
-ip link set eth0 up 2>/dev/null || true
-udhcpc -i eth0 -n -q -t 8 2>/dev/null || true
-exec /usr/local/bin/marooned-agent -listen vsock://:1024
+dev=""
+i=0
+while [ "$i" -lt 10 ]; do
+  for n in eth0 ens1 ens2 enp1s0; do
+    if ip link show "$n" >/dev/null 2>&1; then
+      dev=$n
+      break
+    fi
+  done
+  [ -n "$dev" ] && break
+  i=$((i+1))
+  sleep 1
+done
+if [ -n "$dev" ]; then
+  ip link set "$dev" up 2>/dev/null || true
+  # udhcpc needs AF_PACKET (af_packet.ko). Masquerade guests are 10.0.2.2.
+  if ! udhcpc -i "$dev" -n -q -t 8; then
+    ip addr add 10.0.2.2/24 dev "$dev" 2>/dev/null || true
+    ip route add default via 10.0.2.1 2>/dev/null || true
+  fi
+fi
+# Agent must not be PID 1: a Go process that exits (panic, deadlock
+# abort) is exit_group(2) and the kernel panics. busybox sh reaps and
+# restarts the agent.
+while true; do
+  /usr/local/bin/marooned-agent -listen vsock://:1024
+  echo "marooned-agent exited $?; restarting"
+  sleep 1
+done
 INIT
 chmod +x "${out}/rootfs/sbin/init"
 
@@ -102,6 +175,7 @@ copy_mod() {
   gzip -dc "$f" > "$ird/lib/modules/${n}.ko"
 }
 for m in virtio virtio_ring virtio_pci virtio_pci_legacy_dev virtio_pci_modern_dev virtio_blk \
+         failover net_failover virtio_net af_packet \
          crc16 libcrc32c crc32c_generic crc32c-intel mbcache jbd2 ext4 \
          vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
   copy_mod "$m"
@@ -118,6 +192,7 @@ $BB mount -t sysfs sys /sys
 $BB mount -t devtmpfs dev /dev || $BB mount -t tmpfs tmpfs /dev
 mkdir -p /newroot
 for m in virtio virtio_ring virtio_pci_legacy_dev virtio_pci_modern_dev virtio_pci virtio_blk \
+         failover net_failover virtio_net af_packet \
          crc16 libcrc32c crc32c_generic crc32c-intel mbcache jbd2 ext4 \
          vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
   [ -f /lib/modules/${m}.ko ] && $BB insmod /lib/modules/${m}.ko && echo "insmod $m"
@@ -145,7 +220,7 @@ gzip -dc "${out}/kernel/initrd" | cpio -t | grep -E '^\./init$|busybox|^./bin/sh
 
 echo "creating ext4 qcow2"
 rm -f "${out}/disk.raw" "${out}/disk.qcow2"
-truncate -s 512M "${out}/disk.raw"
+truncate -s 128M "${out}/disk.raw"
 mke2fs -t ext4 -d "${out}/rootfs" -E root_owner=0:0 -F "${out}/disk.raw"
 qemu-img convert -f raw -O qcow2 "${out}/disk.raw" "${out}/disk.qcow2"
 

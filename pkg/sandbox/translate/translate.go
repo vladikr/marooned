@@ -45,13 +45,14 @@ type Mount struct {
 
 // Input is the pod plus resolved sandbox config and bound node.
 type Input struct {
-	Pod       *corev1.Pod
-	Config    mpv1.SandboxConfig
-	Node      string
-	TEE       string
-	Namespace string
-	Name      string
-	OwnerPod  bool
+	Pod         *corev1.Pod
+	Config      mpv1.SandboxConfig
+	Node        string
+	TEE         string
+	Namespace   string
+	Name        string
+	OwnerPod    bool
+	RootfsBytes int64
 }
 
 // Translate builds a hidden sandbox VMI from a user Pod.
@@ -95,6 +96,7 @@ func Translate(in Input) Result {
 
 	vmi.Labels = map[string]string{
 		util.SandboxModeLabel:      util.SandboxModeSandbox,
+		util.SandboxVMILabel:       "true",
 		util.SandboxTEELabel:       res.TEE,
 		util.SandboxSizeClassLabel: res.SizeClass,
 	}
@@ -132,13 +134,19 @@ func Translate(in Input) Result {
 	}
 
 	applyBoot(vmi, in.Config, res.TEE)
-	applyNetwork(vmi, in.Config)
+	applyNetwork(vmi, in.Config, in.Pod)
 	applyRootfs(vmi, in.Config, res.TEE)
+	applyUserRootfs(vmi, in.RootfsBytes)
 	hugepage, hugepageErr := applyHugepages(vmi, in.Pod)
 	if hugepageErr != nil {
 		res.Errors = append(res.Errors, hugepageErr)
 	}
 	res.Hugepage = hugepage
+	if hugepage == "" && hugepageErr == nil {
+		if _, q := podHugepageRequest(in.Pod); q.CmpInt64(0) > 0 {
+			res.Warnings = append(res.Warnings, "hugepages request is smaller than guest memory; VMI is not hugepage-backed")
+		}
+	}
 
 	if err := applySRIOV(vmi, in.Pod, in.Config, res.TEE); err != nil {
 		res.Errors = append(res.Errors, err)
@@ -146,7 +154,7 @@ func Translate(in Input) Result {
 	if err := applyDRA(vmi, in.Pod); err != nil {
 		res.Errors = append(res.Errors, err)
 	}
-	mounts, volErrs := applyVolumes(vmi, in.Pod, res.TEE)
+	mounts, volErrs := applyVolumes(vmi, sandbox.RestoreVolumes(in.Pod), res.TEE)
 	res.MountTable = mounts
 	res.Errors = append(res.Errors, volErrs...)
 
@@ -316,15 +324,16 @@ func applyBoot(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig, tee s
 		KernelBoot: &virtv1.KernelBoot{
 			KernelArgs: kb.KernelArgs,
 			Container: &virtv1.KernelBootContainer{
-				Image:      kb.Image,
-				KernelPath: kb.KernelPath,
-				InitrdPath: kb.InitrdPath,
+				Image:           kb.Image,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				KernelPath:      kb.KernelPath,
+				InitrdPath:      kb.InitrdPath,
 			},
 		},
 	}
 }
 
-func applyNetwork(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig) {
+func applyNetwork(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig, pod *corev1.Pod) {
 	iface := virtv1.Interface{Name: defaultNetName}
 	binding := sandbox.BindingL2Bridge
 	if cfg.Network != nil && cfg.Network.Binding != "" {
@@ -332,7 +341,7 @@ func applyNetwork(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig) {
 	}
 	if binding == sandbox.BindingMasquerade {
 		iface.InterfaceBindingMethod = virtv1.InterfaceBindingMethod{Masquerade: &virtv1.InterfaceMasquerade{}}
-		iface.Ports = []virtv1.Port{{Name: "agent", Port: int32(sandbox.DefaultAgentPort), Protocol: "TCP"}}
+		iface.Ports = sandbox.WorkloadPorts(pod)
 	} else {
 		iface.Binding = &virtv1.PluginBinding{Name: binding}
 	}
@@ -357,29 +366,69 @@ func applyRootfs(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig, tee
 	vmi.Spec.Volumes = append(vmi.Spec.Volumes, virtv1.Volume{
 		Name: rootDiskName,
 		VolumeSource: virtv1.VolumeSource{
-			ContainerDisk: &virtv1.ContainerDiskSource{Image: image},
+			ContainerDisk: &virtv1.ContainerDiskSource{
+				Image:           image,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+			},
 		},
 	})
 	_ = tee
 }
 
-func applyHugepages(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod) (string, error) {
-	var page string
-	var qty resource.Quantity
+func applyUserRootfs(vmi *virtv1.VirtualMachineInstance, imageBytes int64) {
+	cap := sandbox.UserRootfsCapacity(imageBytes)
+	vmi.Spec.Domain.Devices.Disks = append(vmi.Spec.Domain.Devices.Disks, virtv1.Disk{
+		Name:   sandbox.UserRootfsVolume,
+		Serial: sandbox.UserRootfsSerial,
+		DiskDevice: virtv1.DiskDevice{
+			Disk: &virtv1.DiskTarget{Bus: virtv1.DiskBusVirtio},
+		},
+	})
+	vmi.Spec.Volumes = append(vmi.Spec.Volumes, virtv1.Volume{
+		Name: sandbox.UserRootfsVolume,
+		VolumeSource: virtv1.VolumeSource{
+			EmptyDisk: &virtv1.EmptyDiskSource{Capacity: cap},
+		},
+	})
+}
+
+func podHugepageRequest(pod *corev1.Pod) (page string, qty resource.Quantity) {
 	for _, c := range pod.Spec.Containers {
 		for name, q := range c.Resources.Requests {
 			if !strings.HasPrefix(string(name), "hugepages-") {
 				continue
 			}
 			ps := strings.TrimPrefix(string(name), "hugepages-")
-			if page != "" && page != ps {
-				return "", fmt.Errorf("multiple hugepage sizes requested: %s and %s", page, ps)
-			}
 			page = ps
-			qty = q
+			qty.Add(q)
 		}
 	}
+	return page, qty
+}
+
+func applyHugepages(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod) (string, error) {
+	page, qty := podHugepageRequest(pod)
 	if page == "" {
+		return "", nil
+	}
+	sizes := map[string]struct{}{}
+	for _, c := range pod.Spec.Containers {
+		for name := range c.Resources.Requests {
+			if strings.HasPrefix(string(name), "hugepages-") {
+				sizes[strings.TrimPrefix(string(name), "hugepages-")] = struct{}{}
+			}
+		}
+	}
+	if len(sizes) > 1 {
+		return "", fmt.Errorf("multiple hugepage sizes requested")
+	}
+	// KubeVirt hugepage-backs all guest RAM; request must equal Memory.Guest
+	// or virt-launcher is invalid (64Mi request vs 512Mi guest).
+	guest := resource.MustParse("0")
+	if vmi.Spec.Domain.Memory != nil && vmi.Spec.Domain.Memory.Guest != nil {
+		guest = vmi.Spec.Domain.Memory.Guest.DeepCopy()
+	}
+	if qty.Cmp(guest) < 0 {
 		return "", nil
 	}
 	if vmi.Spec.Domain.Memory == nil {
@@ -389,7 +438,12 @@ func applyHugepages(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod) (string
 	if vmi.Spec.Domain.Resources.Requests == nil {
 		vmi.Spec.Domain.Resources.Requests = corev1.ResourceList{}
 	}
-	vmi.Spec.Domain.Resources.Requests[corev1.ResourceName("hugepages-"+page)] = qty
+	if vmi.Spec.Domain.Resources.Limits == nil {
+		vmi.Spec.Domain.Resources.Limits = corev1.ResourceList{}
+	}
+	name := corev1.ResourceName("hugepages-" + page)
+	vmi.Spec.Domain.Resources.Requests[name] = guest
+	vmi.Spec.Domain.Resources.Limits[name] = guest
 	return page, nil
 }
 

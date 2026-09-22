@@ -82,7 +82,21 @@ printf "\n"
 rsynch_fail_count=0
 
 _rsync() {
-    rsync -al "$@"
+    # -a includes -og (owner/group). Rootless podman maps container
+    # root to a high host uid (e.g. 590824). rsync then asks the
+    # builder to chown that uid, which is not in the user namespace
+    # (EINVAL 22, rsync code 23). Keep archive mode minus ownership.
+    rsync -al --no-owner --no-group "$@"
+}
+
+# Files written by rootless podman show up as the overflow uid on the
+# host. Outbound rsync runs as the user and cannot mkstemp there.
+reclaim_host_tree() {
+    local dir="$1"
+    [ -d "$dir" ] || return 0
+    if command -v podman >/dev/null 2>&1; then
+        podman unshare chown -R 0:0 "$dir" || true
+    fi
 }
 
 echo "Rsyncing ${MAROONEDPODS_DIR} to container"
@@ -97,6 +111,8 @@ _rsync \
     --exclude 'cluster-up/cluster/**/.kubectl' \
     --exclude 'cluster-up/cluster/**/.oc' \
     --exclude 'cluster-up/cluster/**/.kubeconfig' \
+    --exclude "_out" \
+    --exclude "bin" \
     --exclude ".vagrant" \
     ${MAROONEDPODS_DIR}/ \
     "rsync://root@127.0.0.1:${RSYNCD_PORT}/build"
@@ -129,6 +145,8 @@ echo "Starting bazel server"
 # Run the command
 test -t 1 && USE_TTY="-it"
 ${MAROONEDPODS_CRI} exec ${USE_TTY} ${BAZEL_BUILDER_SERVER} /entrypoint-bazel.sh "$@"
+
+reclaim_host_tree "${MAROONEDPODS_DIR}"
 
 # Copy the whole maroonedpods data out to get generated sources and formatting changes
 _rsync \

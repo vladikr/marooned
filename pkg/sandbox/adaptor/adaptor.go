@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -184,7 +185,11 @@ func (a *Adaptor) execute(key string) (error, enqueueState) {
 		return nil, Forget
 	}
 
-	vmi, err := a.ensureVMI(pod, cfg)
+	rootfsBytes := rootfsBytesFromPod(pod)
+	// Do not delay VMI create for the CRI size hint. virt-launcher init
+	// is the long pole; default emptyDisk (256Mi) is enough to start.
+
+	vmi, err := a.ensureVMI(pod, cfg, rootfsBytes)
 	if err != nil {
 		a.recorder.Eventf(pod, corev1.EventTypeWarning, "SandboxVMIFailed", "%v", err)
 		return err, BackOff
@@ -205,7 +210,7 @@ func (a *Adaptor) execute(key string) (error, enqueueState) {
 	return nil, Forget
 }
 
-func (a *Adaptor) ensureVMI(pod *corev1.Pod, cfg mpv1.SandboxConfig) (*virtv1.VirtualMachineInstance, error) {
+func (a *Adaptor) ensureVMI(pod *corev1.Pod, cfg mpv1.SandboxConfig, rootfsBytes int64) (*virtv1.VirtualMachineInstance, error) {
 	plan := sandbox.PlanVMI(pod, cfg.InfraNamespace)
 	if plan.OwnerPod && plan.Name == "" {
 		return nil, fmt.Errorf("waiting for pod UID to name in-namespace VMI")
@@ -219,12 +224,13 @@ func (a *Adaptor) ensureVMI(pod *corev1.Pod, cfg mpv1.SandboxConfig) (*virtv1.Vi
 
 	trPod := sandbox.RestoreVolumes(pod)
 	tr := translate.Translate(translate.Input{
-		Pod:       trPod,
-		Config:    cfg,
-		Node:      pod.Spec.NodeName,
-		Namespace: plan.Namespace,
-		Name:      plan.Name,
-		OwnerPod:  plan.OwnerPod,
+		Pod:         trPod,
+		Config:      cfg,
+		Node:        pod.Spec.NodeName,
+		Namespace:   plan.Namespace,
+		Name:        plan.Name,
+		OwnerPod:    plan.OwnerPod,
+		RootfsBytes: rootfsBytes,
 	})
 	if len(tr.Errors) > 0 {
 		return nil, tr.Errors[0]
@@ -334,12 +340,13 @@ func (a *Adaptor) applyTranslation(vmi *virtv1.VirtualMachineInstance, tr transl
 
 func (a *Adaptor) annotatePod(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstance) error {
 	want := fmt.Sprintf("%s/%s", vmi.Namespace, vmi.Name)
-	ip := guestIP(vmi)
+	ip := a.serviceBackendIP(vmi)
 	cid := ""
 	if vmi.Status.VSOCKCID != nil {
 		cid = strconv.FormatUint(uint64(*vmi.Status.VSOCKCID), 10)
 	}
-	if pod.Annotations != nil && pod.Annotations[util.VMIAnnotation] == want && pod.Annotations[util.GuestIPAnnotation] == ip && pod.Annotations[util.VsockCIDAnnotation] == cid {
+	se := vmi.Status.SelinuxContext
+	if pod.Annotations != nil && pod.Annotations[util.VMIAnnotation] == want && pod.Annotations[util.GuestIPAnnotation] == ip && pod.Annotations[util.VsockCIDAnnotation] == cid && pod.Annotations[util.SelinuxContextAnnotation] == se {
 		return nil
 	}
 	copyPod := pod.DeepCopy()
@@ -352,6 +359,11 @@ func (a *Adaptor) annotatePod(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstanc
 	}
 	if cid != "" {
 		copyPod.Annotations[util.VsockCIDAnnotation] = cid
+		// The node-local shim writes /var/run/marooned/<pod-uid>/cid from
+		// this annotation; the adaptor is not on the node.
+	}
+	if se != "" {
+		copyPod.Annotations[util.SelinuxContextAnnotation] = se
 	}
 	_, err := a.maroonedpodsCli.CoreV1().Pods(copyPod.Namespace).Update(context.Background(), copyPod, metav1.UpdateOptions{})
 	return err
@@ -396,6 +408,21 @@ func (a *Adaptor) deleteSandboxVMI(pod *corev1.Pod, cfg mpv1.SandboxConfig) {
 	}
 }
 
+func rootfsBytesFromPod(pod *corev1.Pod) int64 {
+	if pod.Annotations == nil {
+		return 0
+	}
+	s := pod.Annotations[util.RootfsBytesAnnotation]
+	if s == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
 func stripSandboxFinalizer(finalizers []string) []string {
 	out := finalizers[:0]
 	for _, f := range finalizers {
@@ -417,7 +444,7 @@ func (a *Adaptor) reconcilePool() {
 }
 
 func (a *Adaptor) publishEndpointSlice(pod *corev1.Pod, vmi *virtv1.VirtualMachineInstance) error {
-	ip := guestIP(vmi)
+	ip := a.serviceBackendIP(vmi)
 	if ip == "" {
 		return nil
 	}
@@ -438,6 +465,7 @@ func (a *Adaptor) publishEndpointSlice(pod *corev1.Pod, vmi *virtv1.VirtualMachi
 			Conditions: discoveryv1.EndpointConditions{Ready: &ready},
 			NodeName:   &pod.Spec.NodeName,
 		}},
+		Ports: endpointPorts(pod),
 	}
 	_, err := a.maroonedpodsCli.DiscoveryV1().EndpointSlices(pod.Namespace).Create(context.Background(), slice, metav1.CreateOptions{})
 	if k8serrors.IsAlreadyExists(err) {
@@ -446,6 +474,7 @@ func (a *Adaptor) publishEndpointSlice(pod *corev1.Pod, vmi *virtv1.VirtualMachi
 			return getErr
 		}
 		cur.Endpoints = slice.Endpoints
+		cur.Ports = slice.Ports
 		_, err = a.maroonedpodsCli.DiscoveryV1().EndpointSlices(pod.Namespace).Update(context.Background(), cur, metav1.UpdateOptions{})
 	}
 	return err
@@ -466,6 +495,53 @@ func guestIP(vmi *virtv1.VirtualMachineInstance) string {
 		}
 	}
 	return ""
+}
+
+// serviceBackendIP is reachable from other pods. Masquerade guests are
+// 10.0.2.2; use the virt-launcher pod IP so kube-proxy can DNAT.
+func (a *Adaptor) serviceBackendIP(vmi *virtv1.VirtualMachineInstance) string {
+	if ip := guestIP(vmi); ip != "" && !strings.HasPrefix(ip, "10.0.2.") {
+		return ip
+	}
+	if ip := a.virtLauncherPodIP(vmi); ip != "" {
+		return ip
+	}
+	return guestIP(vmi)
+}
+
+func (a *Adaptor) virtLauncherPodIP(vmi *virtv1.VirtualMachineInstance) string {
+	if vmi.UID == "" {
+		return ""
+	}
+	list, err := a.maroonedpodsCli.CoreV1().Pods(vmi.Namespace).List(context.Background(), metav1.ListOptions{
+		LabelSelector: virtv1.CreatedByLabel + "=" + string(vmi.UID),
+	})
+	if err != nil {
+		return ""
+	}
+	for i := range list.Items {
+		if ip := list.Items[i].Status.PodIP; ip != "" {
+			return ip
+		}
+	}
+	return ""
+}
+
+func endpointPorts(pod *corev1.Pod) []discoveryv1.EndpointPort {
+	var out []discoveryv1.EndpointPort
+	for _, p := range sandbox.WorkloadPorts(pod) {
+		if p.Port == int32(sandbox.DefaultAgentPort) {
+			continue
+		}
+		port := p.Port
+		name := p.Name
+		proto := corev1.Protocol(p.Protocol)
+		if proto == "" {
+			proto = corev1.ProtocolTCP
+		}
+		out = append(out, discoveryv1.EndpointPort{Name: &name, Port: &port, Protocol: &proto})
+	}
+	return out
 }
 
 func splitRef(ref string) (string, string) {

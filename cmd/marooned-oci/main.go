@@ -84,6 +84,14 @@ func main() {
 		os.Exit(doDelete(root, rest))
 	case "exec":
 		os.Exit(doExec(root, rest))
+	case "log-pump":
+		os.Exit(doLogPump(root, rest))
+	case "events":
+		os.Exit(doEvents(root, rest))
+	case "guest-wait":
+		os.Exit(doGuestWait(root, rest))
+	case "guest-start":
+		os.Exit(doGuestStart(root, rest))
 	default:
 		fatal("unknown command %s", cmd)
 	}
@@ -129,15 +137,9 @@ func doCreate(root string, args []string) int {
 	if meta.Sandbox {
 		_ = os.WriteFile(filepath.Join(dir, "sandbox"), []byte("1"), 0644)
 	}
-	// CRI-O often has drop_infra_ctr: there is no pause sandbox, only the
-	// user container. Always register the sandbox before start.
-	if meta.Namespace != "" && meta.UID != "" {
-		if _, err := shimJSON("POST", "/v1/RunPodSandbox", map[string]string{
-			"podName": meta.Name, "podNamespace": meta.Namespace, "podUID": meta.UID,
-		}); err != nil {
-			fatal("RunPodSandbox: %v", err)
-		}
-	}
+	// Do not wait for the VMI/agent here. kubelet runtimeRequestTimeout
+	// is 2m; virt-launcher init is longer. guest-start waits in the
+	// background after start returns.
 	return 0
 }
 
@@ -159,50 +161,55 @@ func doStart(root string, args []string) int {
 	if strings.TrimSpace(string(mustRead(filepath.Join(dir, "sandbox")))) == "1" {
 		return 0
 	}
-	bundle := strings.TrimSpace(string(mustRead(filepath.Join(dir, "bundle"))))
-	argsCmd, _ := processArgs(bundle)
-	podUID := strings.TrimSpace(string(mustRead(filepath.Join(dir, "poduid"))))
-	ctrName := strings.TrimSpace(string(mustRead(filepath.Join(dir, "ctrname"))))
-	if ctrName == "" {
-		ctrName = "box"
-	}
-	if len(argsCmd) > 0 && podUID != "" {
-		pod := strings.TrimSpace(string(mustRead(filepath.Join(dir, "pod"))))
-		ns, name, _ := strings.Cut(pod, "/")
-		if ns != "" && name != "" {
-			if _, err := shimJSON("POST", "/v1/RunPodSandbox", map[string]string{
-				"podName": name, "podNamespace": ns, "podUID": podUID,
-			}); err != nil {
-				fatal("RunPodSandbox: %v", err)
-			}
-		}
-		criID := podUID + "-" + ctrName
-		_ = os.WriteFile(filepath.Join(dir, "criid"), []byte(criID), 0644)
-		if _, err := shimJSON("POST", "/v1/CreateContainer", map[string]interface{}{
-			"sandboxID": podUID,
-			"container": map[string]interface{}{"name": ctrName, "command": argsCmd},
-		}); err != nil {
-			fatal("CreateContainer: %v", err)
-		}
-		if _, err := shimJSON("POST", "/v1/StartContainer", map[string]string{"id": criID}); err != nil {
-			fatal("StartContainer: %v", err)
-		}
-	}
+	startGuestStart(root, id)
 	return 0
 }
 
 func doState(root string, args []string) int {
 	id := lastID(args)
-	st, err := readState(filepath.Join(root, id))
+	dir := filepath.Join(root, id)
+	st, err := readState(dir)
 	if err != nil {
 		fatal("state: %v", err)
 	}
 	if st.PID > 1 && !pidAlive(st.PID) {
 		st.Status = "stopped"
 	}
+	if st.Status == "running" && guestHasExited(dir) {
+		st.Status = "stopped"
+	}
 	enc := json.NewEncoder(os.Stdout)
 	_ = enc.Encode(st)
 	return 0
+}
+
+func guestHasExited(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "guest-exited")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(dir, "guest-started")); err != nil {
+		return false
+	}
+	return !guestRunning(dir)
+}
+
+func guestRunning(dir string) bool {
+	criID := strings.TrimSpace(string(mustRead(filepath.Join(dir, "criid"))))
+	if criID == "" {
+		return false
+	}
+	body, err := shimJSON("POST", "/v1/ContainerStatus", map[string]string{"id": criID})
+	if err != nil {
+		return false
+	}
+	var st struct {
+		State string `json:"State"`
+		Ready bool   `json:"Ready"`
+	}
+	if err := json.Unmarshal(body, &st); err != nil {
+		return false
+	}
+	return st.Ready || st.State == "CONTAINER_RUNNING"
 }
 
 func doKill(root string, args []string) int {
@@ -245,16 +252,20 @@ func doDelete(root string, args []string) int {
 }
 
 func doExec(root string, args []string) int {
-	id := lastID(args)
-	var cmd []string
-	for i, a := range args {
-		if a == "--" && i+1 < len(args) {
-			cmd = args[i+1:]
-			break
-		}
+	id, proc, pidFile := loadExec(args)
+	writeExecPidFile(pidFile)
+	if id == "" {
+		fatal("exec: missing id")
 	}
+	if mapped := strings.TrimSpace(string(mustRead(filepath.Join(root, id, "criid")))); mapped != "" {
+		id = mapped
+	}
+	cmd := proc.Args
 	if len(cmd) == 0 {
 		cmd = []string{"true"}
+	}
+	if proc.Terminal {
+		return doExecTTY(id, cmd)
 	}
 	body, err := shimJSON("POST", "/v1/ExecSync", map[string]interface{}{
 		"id": id, "command": cmd, "timeout": 30,
@@ -280,6 +291,37 @@ func lastID(args []string) string {
 		fatal("missing id")
 	}
 	return id
+}
+
+// parseExecArgs is runc-style: exec [opts] <id> <command> [args]
+func parseExecArgs(args []string) (id string, cmd []string) {
+	needVal := map[string]bool{
+		"--cwd": true, "--user": true, "--process": true, "--pid-file": true,
+		"--apparmor": true, "--cgroup": true, "--preserve-fds": true,
+	}
+	var pos []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			pos = append(pos, args[i+1:]...)
+			break
+		}
+		if strings.HasPrefix(a, "-") {
+			name := a
+			if j := strings.IndexByte(a, '='); j >= 0 {
+				name = a[:j]
+			} else if needVal[a] && i+1 < len(args) {
+				i++
+			}
+			_ = name
+			continue
+		}
+		pos = append(pos, a)
+	}
+	if len(pos) == 0 {
+		return "", nil
+	}
+	return pos[0], pos[1:]
 }
 
 // parseKillArgs implements runc's kill CLI: kill [-a] <id> [<signal>]
@@ -553,6 +595,7 @@ func shimJSON(method, path string, payload interface{}) ([]byte, error) {
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{
 		Transport: &http.Transport{
+			DisableKeepAlives: true,
 			Dial: func(network, addr string) (net.Conn, error) {
 				return net.Dial("unix", shimSock)
 			},

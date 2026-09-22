@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -25,8 +26,9 @@ func IsSandboxPod(pod *corev1.Pod) bool {
 }
 
 // MutateSandboxPod applies the sandbox admission rules in place:
-// persist stripped volume spec, set placement, finalizer, mode label,
-// strip devices/hugepages/PVCs. CPU/memory requests stay.
+// finalizer, mode label, placement, persist volumes that cannot attach
+// twice (PVC/ephemeral/emptyDir). CPU, memory, hugepages, extended
+// devices, and resourceClaims stay so the scheduler/quota/DRA see them.
 func MutateSandboxPod(pod *corev1.Pod) error {
 	// Do not re-add the finalizer on a deleting pod; that traps the object
 	// in Terminating (adaptor strips it, webhook puts it back).
@@ -46,17 +48,77 @@ func MutateSandboxPod(pod *corev1.Pod) error {
 		return err
 	}
 
-	stripPodResourceClaims(pod)
 	keptVolumes, droppedVolumeNames := filterVolumes(pod.Spec.Volumes)
 	pod.Spec.Volumes = keptVolumes
 
 	for i := range pod.Spec.Containers {
-		stripContainer(&pod.Spec.Containers[i], droppedVolumeNames)
+		dropVolumeRefs(&pod.Spec.Containers[i], droppedVolumeNames)
+		rewriteProbesToExec(&pod.Spec.Containers[i])
 	}
 	for i := range pod.Spec.InitContainers {
-		stripContainer(&pod.Spec.InitContainers[i], droppedVolumeNames)
+		dropVolumeRefs(&pod.Spec.InitContainers[i], droppedVolumeNames)
 	}
 	return nil
+}
+
+// HTTP/TCP probes hit status.podIP (the CRI-O pause). Rewrite them to
+// exec wget against 127.0.0.1 so kubelet uses CRI exec in the guest.
+func rewriteProbesToExec(c *corev1.Container) {
+	rewriteProbeToExec(c.LivenessProbe)
+	rewriteProbeToExec(c.ReadinessProbe)
+	rewriteProbeToExec(c.StartupProbe)
+}
+
+func rewriteProbeToExec(p *corev1.Probe) {
+	if p == nil {
+		return
+	}
+	url := probeURL(p)
+	if url == "" {
+		return
+	}
+	p.Exec = &corev1.ExecAction{Command: []string{"wget", "-qO-", url}}
+	p.HTTPGet = nil
+	p.TCPSocket = nil
+	p.GRPC = nil
+	// CRI exec over vsock is slower than a local HTTP GET. The default
+	// timeoutSeconds=1 surfaces as "exit code -1" / unknown readiness.
+	if p.TimeoutSeconds <= 1 {
+		p.TimeoutSeconds = 10
+	}
+	if p.InitialDelaySeconds < 5 {
+		p.InitialDelaySeconds = 5
+	}
+}
+
+func probeURL(p *corev1.Probe) string {
+	if p.HTTPGet != nil {
+		port := p.HTTPGet.Port.IntValue()
+		if port <= 0 {
+			return ""
+		}
+		path := p.HTTPGet.Path
+		if path == "" {
+			path = "/"
+		}
+		host := p.HTTPGet.Host
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		scheme := strings.ToLower(string(p.HTTPGet.Scheme))
+		if scheme == "" {
+			scheme = "http"
+		}
+		return scheme + "://" + host + ":" + strconv.Itoa(port) + path
+	}
+	if p.TCPSocket != nil {
+		port := p.TCPSocket.Port.IntValue()
+		if port <= 0 {
+			return ""
+		}
+		return "http://127.0.0.1:" + strconv.Itoa(port) + "/"
+	}
+	return ""
 }
 
 func persistVolumeSnapshot(pod *corev1.Pod) error {
@@ -85,32 +147,9 @@ func hasFinalizer(finalizers []string, name string) bool {
 	return false
 }
 
-func stripPodResourceClaims(pod *corev1.Pod) {
-	pod.Spec.ResourceClaims = nil
-}
-
-func stripContainer(c *corev1.Container, droppedVolumeNames map[string]struct{}) {
-	c.Resources.Requests = keepCPUMemory(c.Resources.Requests)
-	c.Resources.Limits = keepCPUMemory(c.Resources.Limits)
-	c.Resources.Claims = nil
+func dropVolumeRefs(c *corev1.Container, droppedVolumeNames map[string]struct{}) {
 	c.VolumeMounts = filterVolumeMounts(c.VolumeMounts, droppedVolumeNames)
 	c.VolumeDevices = filterVolumeDevices(c.VolumeDevices, droppedVolumeNames)
-}
-
-func keepCPUMemory(list corev1.ResourceList) corev1.ResourceList {
-	if list == nil {
-		return nil
-	}
-	out := corev1.ResourceList{}
-	for name, qty := range list {
-		if name == resourceCPU || name == resourceMemory || name == resourceEphemeralStorage {
-			out[name] = qty
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 func isWorkloadVolume(vol corev1.Volume) bool {

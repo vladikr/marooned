@@ -1,0 +1,49 @@
+# Non-busybox smoke: CPython in the guest. Pull first:
+#   ./cluster-up/ssh.sh node01 "sudo crictl pull public.ecr.aws/docker/library/python:3.12-alpine"
+# Then:
+#   $K apply -f examples/sandbox-python.yaml
+#   $K exec isolated-python -- python3 -c 'import sys; print(sys.version)'
+#   $K exec isolated-python -- cat /scratch/ok
+#   IP=$($K get pod isolated-python -o jsonpath='{.metadata.annotations.maroonedpods\.io/guest-ip}')
+#   $K run --rm -i --image=quay.io/prometheus/busybox:latest --restart=Never verify-py -- wget -qO- http://$IP:8080/
+apiVersion: v1
+kind: Pod
+metadata:
+  name: isolated-python
+spec:
+  runtimeClassName: marooned
+  containers:
+  - name: box
+    image: public.ecr.aws/docker/library/python:3.12-alpine
+    imagePullPolicy: IfNotPresent
+    ports:
+    - name: http
+      containerPort: 8080
+    readinessProbe:
+      httpGet:
+        path: /
+        port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 5
+    command:
+    - python3
+    - -c
+    - |
+      import os
+      from http.server import HTTPServer, BaseHTTPRequestHandler
+      os.makedirs("/scratch", exist_ok=True)
+      open("/scratch/ok", "w").write("vol-ok\n")
+      class H(BaseHTTPRequestHandler):
+          def do_GET(self):
+              self.send_response(200)
+              self.end_headers()
+              self.wfile.write(b"marooned-python-ok\n")
+          def log_message(self, *args):
+              pass
+      HTTPServer(("0.0.0.0", 8080), H).serve_forever()
+    volumeMounts:
+    - name: scratch
+      mountPath: /scratch
+  volumes:
+  - name: scratch
+    emptyDir: {}

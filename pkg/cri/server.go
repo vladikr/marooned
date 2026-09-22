@@ -21,14 +21,22 @@ type Server struct {
 }
 
 func (s *Server) Start() error {
-	if err := os.MkdirAll(filepath.Dir(s.Socket), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.Socket), 0777); err != nil {
 		return err
 	}
-	_ = os.Remove(s.Socket)
+	if err := os.Remove(s.Socket); err != nil && !os.IsNotExist(err) {
+		klog.Warningf("remove stale %s: %v", s.Socket, err)
+	}
 	ln, err := net.Listen("unix", s.Socket)
 	if err != nil {
-		return err
+		_ = os.Chmod(s.Socket, 0777)
+		_ = os.Remove(s.Socket)
+		ln, err = net.Listen("unix", s.Socket)
+		if err != nil {
+			return fmt.Errorf("listen %s: %w", s.Socket, err)
+		}
 	}
+	_ = os.Chmod(s.Socket, 0777)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -44,8 +52,13 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/RemoveContainer", s.wrap(s.removeContainer))
 	mux.HandleFunc("/v1/ContainerStatus", s.wrap(s.containerStatus))
 	mux.HandleFunc("/v1/ExecSync", s.wrap(s.execSync))
+	mux.HandleFunc("/v1/Logs", s.wrap(s.logs))
+	mux.HandleFunc("/v1/ExecTTY", s.execTTY)
 	mux.HandleFunc("/v1/ListPodSandbox", s.wrap(s.listPodSandbox))
 	mux.HandleFunc("/v1/ListContainers", s.wrap(s.listContainers))
+	mux.HandleFunc("/v1/WaitContainer", s.wrap(s.waitContainer))
+	mux.HandleFunc("/v1/ContainerStats", s.wrap(s.containerStats))
+	mux.HandleFunc("/v1/PodSandboxStats", s.wrap(s.podSandboxStats))
 	s.httpSrv = &http.Server{Handler: mux}
 	klog.Infof("marooned CRI shim listening on %s", s.Socket)
 	return s.httpSrv.Serve(ln)
@@ -242,6 +255,41 @@ func (s *Server) execSync(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"stdout": string(stdout), "stderr": string(stderr), "exitCode": code})
 }
 
+func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
+	var req idReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	data, err := s.Runtime.Logs(r.Context(), req.ID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]string{"data": data})
+}
+
+func (s *Server) execTTY(w http.ResponseWriter, r *http.Request) {
+	var req execReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		writeErr(w, fmt.Errorf("no hijack"))
+		return
+	}
+	conn, bufrw, err := hj.Hijack()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	_, _ = bufrw.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n")
+	_ = bufrw.Flush()
+	_ = s.Runtime.ExecTTY(r.Context(), req.ID, req.Command, conn)
+}
+
 func (s *Server) listPodSandbox(w http.ResponseWriter, r *http.Request) {
 	list, err := s.Runtime.ListPodSandbox(r.Context())
 	if err != nil {
@@ -258,4 +306,47 @@ func (s *Server) listContainers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, list)
+}
+
+func (s *Server) waitContainer(w http.ResponseWriter, r *http.Request) {
+	var req idReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	klog.Infof("WaitContainer %s", req.ID)
+	if err := s.Runtime.WaitContainer(r.Context(), req.ID); err != nil {
+		writeErr(w, err)
+		return
+	}
+	klog.Infof("WaitContainer %s exited", req.ID)
+	writeJSON(w, map[string]string{"status": "exited"})
+}
+
+func (s *Server) containerStats(w http.ResponseWriter, r *http.Request) {
+	var req idReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	st, err := s.Runtime.ContainerStats(r.Context(), req.ID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, st)
+}
+
+func (s *Server) podSandboxStats(w http.ResponseWriter, r *http.Request) {
+	var req idReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	st, err := s.Runtime.PodSandboxStats(r.Context(), req.ID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, st)
 }
