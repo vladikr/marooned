@@ -219,6 +219,11 @@ func (a *Adaptor) ensureVMI(pod *corev1.Pod, cfg mpv1.SandboxConfig, rootfsBytes
 	if vmi, err := a.lookupExisting(pod, plan); err != nil {
 		return nil, err
 	} else if vmi != nil {
+		if vmi.Status.Phase == virtv1.Failed || vmi.Status.Phase == virtv1.Succeeded {
+			klog.Infof("sandbox VMI %s/%s is %s; deleting to recreate", vmi.Namespace, vmi.Name, vmi.Status.Phase)
+			_ = a.maroonedpodsCli.KubevirtClient().KubevirtV1().VirtualMachineInstances(vmi.Namespace).Delete(context.Background(), vmi.Name, metav1.DeleteOptions{})
+			return nil, fmt.Errorf("recreating VMI after phase %s", vmi.Status.Phase)
+		}
 		return vmi, nil
 	}
 
