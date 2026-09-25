@@ -411,43 +411,16 @@ func pidAlive(pid int) bool {
 	return syscall.Kill(pid, 0) == nil
 }
 
-func startPause(id, dir string) int {
-	if pid := startPauseSystemd(id, dir); pid > 1 && pidAlive(pid) {
-		return pid
-	}
-	return startPauseFork(dir)
-}
-
 func pauseUnit(id string) string {
 	return "marooned-oci-" + id + ".service"
 }
 
-func startPauseSystemd(id, dir string) int {
-	self, err := os.Executable()
-	if err != nil {
-		self = os.Args[0]
-	}
-	unit := pauseUnit(id)
-	_ = exec.Command("systemctl", "stop", unit).Run()
-	args := []string{"--unit=" + unit, "--collect", self, "pause"}
-	if dir != "" {
-		args = append(args, dir)
-	}
-	cmd := exec.Command("systemd-run", args...)
-	if err := cmd.Run(); err != nil {
-		return 0
-	}
-	for i := 0; i < 20; i++ {
-		out, err := exec.Command("systemctl", "show", "-p", "MainPID", "--value", unit).Output()
-		if err == nil {
-			pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
-			if pid > 1 && pidAlive(pid) {
-				return pid
-			}
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return 0
+// startPause forks the dummy as a descendant of this process (conmon's
+// child). systemd-run must not be used: that process is not waitable by
+// conmon, which then reports exit -1 and a zero FinishedAt.
+func startPause(id, dir string) int {
+	_ = exec.Command("systemctl", "stop", pauseUnit(id)).Run()
+	return startPauseFork(dir)
 }
 
 func startPauseFork(dir string) int {
@@ -460,7 +433,6 @@ func startPauseFork(dir string) int {
 		args = append(args, dir)
 	}
 	cmd := exec.Command(self, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	out, err := cmd.Output()
 	if err != nil {
 		fatal("pause-daemon: %v", err)
@@ -483,7 +455,6 @@ func runPauseDaemon(rest []string) int {
 	}
 	args := append([]string{"pause"}, rest...)
 	inner := exec.Command(self, args...)
-	inner.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	inner.Stdin = nil
 	inner.Stdout = nil
 	inner.Stderr = nil

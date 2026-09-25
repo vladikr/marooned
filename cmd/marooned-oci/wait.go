@@ -70,7 +70,6 @@ func finishOCIContainer(dir, id string, code int) {
 	if st.PID > 1 {
 		_ = syscall.Kill(st.PID, syscall.SIGTERM)
 	}
-	_ = exec.Command("systemctl", "kill", "-s", "SIGTERM", pauseUnit(id)).Run()
 }
 
 func writeCrioExit(id string, code int) error {
