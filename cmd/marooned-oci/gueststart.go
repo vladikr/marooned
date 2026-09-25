@@ -30,13 +30,7 @@ func doGuestStart(root string, args []string) int {
 	dir := filepath.Join(root, id)
 	if err := runGuestStart(root, id, dir); err != nil {
 		gslog(dir, err.Error())
-		_ = os.WriteFile(filepath.Join(dir, "guest-exited"), []byte("1"), 0644)
-		stopHostPause(dir, id)
-		writeCrioExit(id, 1)
-		if st, err := readState(dir); err == nil {
-			st.Status = "stopped"
-			writeState(dir, st)
-		}
+		finishOCIContainer(dir, id, 1)
 		return 1
 	}
 	return 0

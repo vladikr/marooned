@@ -48,15 +48,22 @@ func doGuestWait(root string, args []string) int {
 	_ = shimJSONWait("/v1/WaitContainer", map[string]string{"id": criID})
 	code := guestExitCode(criID)
 	gwlog(dir, fmt.Sprintf("guest exited code=%d", code))
+	finishOCIContainer(dir, id, code)
+	gwlog(dir, "notified crio exit")
+	return 0
+}
+
+// finishOCIContainer records the guest exit for CRI-O before stopping the
+// host pause. Killing pause first made conmon/kubelet see SIGKILL (-1)
+// with a zero FinishedAt — init containers never went Succeeded.
+func finishOCIContainer(dir, id string, code int) {
 	_ = os.WriteFile(filepath.Join(dir, "guest-exited"), []byte("1"), 0644)
-	stopHostPause(dir, id)
 	writeCrioExit(id, code)
 	if st, err := readState(dir); err == nil {
 		st.Status = "stopped"
 		writeState(dir, st)
 	}
-	gwlog(dir, "notified crio exit")
-	return 0
+	stopHostPause(dir, id)
 }
 
 func stopHostPause(dir, id string) {
@@ -65,17 +72,36 @@ func stopHostPause(dir, id string) {
 		return
 	}
 	_ = exec.Command("systemctl", "stop", pauseUnit(id)).Run()
+	pids := []int{}
 	if st.PID > 1 {
-		_ = syscall.Kill(st.PID, syscall.SIGTERM)
-		time.Sleep(200 * time.Millisecond)
-		_ = syscall.Kill(st.PID, syscall.SIGKILL)
+		pids = append(pids, st.PID)
 	}
 	if pf := strings.TrimSpace(string(mustRead(filepath.Join(dir, "pidfile")))); pf != "" {
 		if b, err := os.ReadFile(pf); err == nil {
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 1 {
-				_ = syscall.Kill(pid, syscall.SIGKILL)
+				pids = append(pids, pid)
 			}
 		}
+	}
+	for _, pid := range pids {
+		_ = syscall.Kill(pid, syscall.SIGTERM)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		alive := false
+		for _, pid := range pids {
+			if err := syscall.Kill(pid, 0); err == nil {
+				alive = true
+				break
+			}
+		}
+		if !alive {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	for _, pid := range pids {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
 	}
 }
 

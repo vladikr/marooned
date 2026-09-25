@@ -22,6 +22,26 @@ func TestWriteCrioExit(t *testing.T) {
 	}
 }
 
+func TestFinishOCIContainerWritesExitBeforeStop(t *testing.T) {
+	dir := t.TempDir()
+	exits := t.TempDir()
+	old := crioExitDirs
+	crioExitDirs = []string{exits}
+	defer func() { crioExitDirs = old }()
+
+	finishOCIContainer(dir, "initctr", 0)
+	got, err := os.ReadFile(filepath.Join(exits, "initctr"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "0\n" {
+		t.Fatalf("got %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "guest-exited")); err != nil {
+		t.Fatal("guest-exited stamp")
+	}
+}
+
 func TestGuestHasExitedBeforeStart(t *testing.T) {
 	dir := t.TempDir()
 	if guestHasExited(dir) {
