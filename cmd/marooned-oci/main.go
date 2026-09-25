@@ -62,16 +62,22 @@ func main() {
 	rest := filtered[1:]
 	switch cmd {
 	case "pause-daemon":
-		os.Exit(runPauseDaemon())
+		os.Exit(runPauseDaemon(rest))
 	case "pause":
 		// Do not use select{}: the runtime treats "all goroutines asleep"
 		// as a deadlock and exits 2. Block on SIGTERM so CRI-O kill works.
+		// Optional dir: on SIGTERM, exit with that dir's exitcode file
+		// (guest wait writes it) so conmon sees the real status.
+		pauseDir := ""
+		if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+			pauseDir = rest[0]
+		}
 		signal.Ignore(syscall.SIGHUP, syscall.SIGPIPE)
 		detachFromRuntimeCgroup(os.Getpid())
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
 		<-ch
-		os.Exit(0)
+		os.Exit(pauseExitCode(pauseDir))
 	case "create":
 		os.Exit(doCreate(root, rest))
 	case "start":
@@ -120,7 +126,7 @@ func doCreate(root string, args []string) int {
 	}
 	dir := filepath.Join(root, id)
 	_ = os.MkdirAll(dir, 0755)
-	pid := startPause(id)
+	pid := startPause(id, dir)
 	st := state{OCIVersion: "1.0.2", ID: id, Status: "created", PID: pid, Bundle: bundle}
 	writeState(dir, st)
 	if pidFile != "" {
@@ -151,7 +157,7 @@ func doStart(root string, args []string) int {
 		fatal("start: %v", err)
 	}
 	if st.PID <= 1 || !pidAlive(st.PID) {
-		st.PID = startPause(id)
+		st.PID = startPause(id, dir)
 		if pf := strings.TrimSpace(string(mustRead(filepath.Join(dir, "pidfile")))); pf != "" {
 			_ = os.WriteFile(pf, []byte(strconv.Itoa(st.PID)), 0644)
 		}
@@ -405,25 +411,29 @@ func pidAlive(pid int) bool {
 	return syscall.Kill(pid, 0) == nil
 }
 
-func startPause(id string) int {
-	if pid := startPauseSystemd(id); pid > 1 && pidAlive(pid) {
+func startPause(id, dir string) int {
+	if pid := startPauseSystemd(id, dir); pid > 1 && pidAlive(pid) {
 		return pid
 	}
-	return startPauseFork()
+	return startPauseFork(dir)
 }
 
 func pauseUnit(id string) string {
 	return "marooned-oci-" + id + ".service"
 }
 
-func startPauseSystemd(id string) int {
+func startPauseSystemd(id, dir string) int {
 	self, err := os.Executable()
 	if err != nil {
 		self = os.Args[0]
 	}
 	unit := pauseUnit(id)
 	_ = exec.Command("systemctl", "stop", unit).Run()
-	cmd := exec.Command("systemd-run", "--unit="+unit, "--collect", self, "pause")
+	args := []string{"--unit=" + unit, "--collect", self, "pause"}
+	if dir != "" {
+		args = append(args, dir)
+	}
+	cmd := exec.Command("systemd-run", args...)
 	if err := cmd.Run(); err != nil {
 		return 0
 	}
@@ -440,12 +450,16 @@ func startPauseSystemd(id string) int {
 	return 0
 }
 
-func startPauseFork() int {
+func startPauseFork(dir string) int {
 	self, err := os.Executable()
 	if err != nil {
 		self = os.Args[0]
 	}
-	cmd := exec.Command(self, "pause-daemon")
+	args := []string{"pause-daemon"}
+	if dir != "" {
+		args = append(args, dir)
+	}
+	cmd := exec.Command(self, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	out, err := cmd.Output()
 	if err != nil {
@@ -462,12 +476,13 @@ func startPauseFork() int {
 	return pid
 }
 
-func runPauseDaemon() int {
+func runPauseDaemon(rest []string) int {
 	self, err := os.Executable()
 	if err != nil {
 		self = os.Args[0]
 	}
-	inner := exec.Command(self, "pause")
+	args := append([]string{"pause"}, rest...)
+	inner := exec.Command(self, args...)
 	inner.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	inner.Stdin = nil
 	inner.Stdout = nil
