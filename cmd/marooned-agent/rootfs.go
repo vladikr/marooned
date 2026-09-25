@@ -33,8 +33,7 @@ func (a *agent) rootfs(payload []byte) error {
 	if req.ContainerID == "" {
 		return fmt.Errorf("containerID required")
 	}
-	dir := filepath.Join(ctrRoot, req.ContainerID)
-	dest := filepath.Join(dir, "root")
+	dest := a.containerDir(req.ContainerID)
 	a.mu.Lock()
 	job := a.unpackers[req.ContainerID]
 	a.mu.Unlock()

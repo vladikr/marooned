@@ -53,8 +53,12 @@ func GuestMountsFor(pod *corev1.Pod, container string) []GuestMount {
 		return nil
 	}
 	src := RestoreVolumes(pod)
+	skip := RootfsVolumeName(src)
 	volByName := map[string]corev1.Volume{}
 	for _, v := range src.Spec.Volumes {
+		if skip != "" && v.Name == skip {
+			continue
+		}
 		volByName[v.Name] = v
 	}
 	var out []GuestMount

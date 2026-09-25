@@ -40,6 +40,7 @@ type agent struct {
 	unpackers  map[string]*unpackJob
 	imageBytes map[string]int64
 	diskBytes  map[string]int64
+	roots      map[string]string
 }
 
 func main() {
@@ -58,6 +59,7 @@ func main() {
 		unpackers:  map[string]*unpackJob{},
 		imageBytes: map[string]int64{},
 		diskBytes:  map[string]int64{},
+		roots:      map[string]string{},
 	}
 	var ln net.Listener
 	var err error
@@ -115,7 +117,11 @@ func (a *agent) handle(env agentproto.Envelope) agentproto.Envelope {
 	switch env.Method {
 	case agentproto.MethodPing:
 	case agentproto.MethodPrepareRootfs:
-		err = a.prepareRootfs(env.Payload)
+		var resp agentproto.PrepareRootfsResponse
+		resp, err = a.prepareRootfs(env.Payload)
+		if err == nil {
+			out.Payload, _ = json.Marshal(resp)
+		}
 	case agentproto.MethodPullImage:
 		err = a.pull(env.Payload)
 	case agentproto.MethodRootfs:
@@ -175,7 +181,11 @@ func (a *agent) pull(payload json.RawMessage) error {
 	if req.ContainerID == "" || req.Image == "" {
 		return fmt.Errorf("containerID and image required")
 	}
-	dest := filepath.Join(ctrRoot, req.ContainerID, "root")
+	dest := a.containerDir(req.ContainerID)
+	if rootfsPopulated(dest) {
+		klog.Infof("guest-pull skip, rootfs populated at %s", dest)
+		return nil
+	}
 	klog.Infof("guest-pull %s -> %s", req.Image, dest)
 	return pullImage(dest, req.Image)
 }
@@ -191,11 +201,11 @@ func (a *agent) start(payload json.RawMessage) error {
 			// Bind the raw disk after that, inside startInRoot.
 			continue
 		}
-		if err := ensureMountIn(ctrRoot, req.ContainerID, m); err != nil {
+		if err := ensureMountInRoot(a.containerDir(req.ContainerID), m); err != nil {
 			return err
 		}
 	}
-	root := filepath.Join(ctrRoot, req.ContainerID, "root")
+	root := a.containerDir(req.ContainerID)
 	var cmd *exec.Cmd
 	if st, err := os.Stat(root); err == nil && st.IsDir() {
 		cmd, err = startInRoot(root, req)
@@ -346,7 +356,7 @@ func (a *agent) exec(payload json.RawMessage) (agentproto.ExecResponse, error) {
 		}
 	}
 	argv := append([]string{}, req.Command...)
-	root := filepath.Join(ctrRoot, req.ContainerID, "root")
+	root := a.containerDir(req.ContainerID)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	if st, err := os.Stat(root); err == nil && st.IsDir() && a.ctrHostPid(req.ContainerID) > 0 {
 		argv[0] = lookPathInRoot(root, argv[0], nil)
@@ -408,12 +418,19 @@ func ensureMount(m agentproto.Mount) error {
 }
 
 func ensureMountIn(base, containerID string, m agentproto.Mount) error {
+	root := ""
+	if containerID != "" {
+		root = filepath.Join(base, containerID, "root")
+	}
+	return ensureMountInRoot(root, m)
+}
+
+func ensureMountInRoot(root string, m agentproto.Mount) error {
 	if m.GuestPath == "" {
 		return nil
 	}
 	target := m.GuestPath
-	if containerID != "" {
-		root := filepath.Join(base, containerID, "root")
+	if root != "" {
 		target = filepath.Join(root, strings.TrimPrefix(m.GuestPath, "/"))
 	}
 	if m.Kind == "block" {

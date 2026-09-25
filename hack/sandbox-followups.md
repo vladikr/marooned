@@ -45,7 +45,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - Volumes: emptyDir tmpfs + filesystem PVC + block volumeDevices verified. RWX is virtio-blk too (no virtiofs; virt-launcher stays non-root).
 - Image: ImageVolume FG for sandbox/kernel containerDisk. Guest-pull verified (`guest-pull quay.io/prometheus/busybox:latest ok`; no host tar). Host tar remains last-resort fallback.
 - Multi-container / init: verified (`isolated-multi` Ready; `cat /shared/ready` → init-ok). One VMI; pause stays under conmon so init exit 0 is waitable.
-- Large-image unpack: host tar remains last-resort (guest-pull used for nginx/python; python hit ECR 429 then retry ok)
+- Large-image: PVC rootfs via `maroonedpods.io/rootfs-volume` (skip pull when populated). Host tar last-resort.
 - e2e: tests/e2e_sandbox_test.go already checks guest exec (`/tmp/index.html`, `/scratch/ok`, httpd) + logs, not only Running
 - One cgroup: document guest+virt-launcher limits; do not join qemu to user pod cgroup yet
 - Python: verified (`python3` 3.12.14, `/scratch/ok` → vol-ok, wget 127.0.0.1:8080 → marooned-python-ok)

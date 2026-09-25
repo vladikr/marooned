@@ -136,7 +136,9 @@ func Translate(in Input) Result {
 	applyBoot(vmi, in.Config, res.TEE)
 	applyNetwork(vmi, in.Config, in.Pod)
 	applyRootfs(vmi, in.Config, res.TEE)
-	applyUserRootfs(vmi, in.RootfsBytes, sandbox.WorkloadCount(in.Pod))
+	if err := applyUserRootfs(vmi, in.Pod, in.RootfsBytes, sandbox.WorkloadCount(in.Pod)); err != nil {
+		res.Errors = append(res.Errors, err)
+	}
 	hugepage, hugepageErr := applyHugepages(vmi, in.Pod)
 	if hugepageErr != nil {
 		res.Errors = append(res.Errors, hugepageErr)
@@ -362,21 +364,42 @@ func applyRootfs(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig, tee
 	_ = tee
 }
 
-func applyUserRootfs(vmi *virtv1.VirtualMachineInstance, imageBytes int64, workloads int) {
-	cap := sandbox.UserRootfsCapacityN(imageBytes, workloads)
-	vmi.Spec.Domain.Devices.Disks = append(vmi.Spec.Domain.Devices.Disks, virtv1.Disk{
+func applyUserRootfs(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod, imageBytes int64, workloads int) error {
+	want := sandbox.RootfsVolumeName(pod)
+	pvc := sandbox.RootfsPVC(pod)
+	if want != "" && pvc == nil {
+		return fmt.Errorf("annotation %s=%q is not a PVC volume", util.RootfsVolumeAnnotation, want)
+	}
+	disk := virtv1.Disk{
 		Name:   sandbox.UserRootfsVolume,
 		Serial: sandbox.UserRootfsSerial,
 		DiskDevice: virtv1.DiskDevice{
 			Disk: &virtv1.DiskTarget{Bus: virtv1.DiskBusVirtio},
 		},
-	})
+	}
+	vmi.Spec.Domain.Devices.Disks = append(vmi.Spec.Domain.Devices.Disks, disk)
+	if pvc != nil {
+		vmi.Spec.Volumes = append(vmi.Spec.Volumes, virtv1.Volume{
+			Name: sandbox.UserRootfsVolume,
+			VolumeSource: virtv1.VolumeSource{
+				PersistentVolumeClaim: &virtv1.PersistentVolumeClaimVolumeSource{
+					PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: pvc.ClaimName,
+						ReadOnly:  pvc.ReadOnly,
+					},
+				},
+			},
+		})
+		return nil
+	}
+	cap := sandbox.UserRootfsCapacityN(imageBytes, workloads)
 	vmi.Spec.Volumes = append(vmi.Spec.Volumes, virtv1.Volume{
 		Name: sandbox.UserRootfsVolume,
 		VolumeSource: virtv1.VolumeSource{
 			EmptyDisk: &virtv1.EmptyDiskSource{Capacity: cap},
 		},
 	})
+	return nil
 }
 
 func podHugepageRequest(pod *corev1.Pod) (page string, qty resource.Quantity) {
@@ -501,7 +524,11 @@ func applyVolumes(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod) ([]Mount,
 			uses[d.Name] = append(uses[d.Name], volumeUse{path: d.DevicePath, kind: "block"})
 		}
 	}
+	rootfsVol := sandbox.RootfsVolumeName(pod)
 	for _, vol := range pod.Spec.Volumes {
+		if rootfsVol != "" && vol.Name == rootfsVol {
+			continue
+		}
 		switch {
 		case vol.PersistentVolumeClaim != nil:
 			// RWO and RWX both virtio-blk. Do not use virtiofs (would need

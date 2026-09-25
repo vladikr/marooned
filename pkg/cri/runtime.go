@@ -377,16 +377,25 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 	}
 	qty := sandbox.UserRootfsCapacity(imageBytes)
 	disk := qty.Value()
-	if _, err := cli.Call(agentproto.MethodPrepareRootfs, agentproto.PrepareRootfsRequest{
-		ContainerID: id,
-		Serial:      sandbox.UserRootfsSerial,
-		ImageBytes:  imageBytes,
-		DiskBytes:   disk,
-	}, 90*time.Second); err != nil {
+	prep, err := cli.Call(agentproto.MethodPrepareRootfs, agentproto.PrepareRootfsRequest{
+		ContainerID:   id,
+		ContainerName: c.Name,
+		Serial:        sandbox.UserRootfsSerial,
+		ImageBytes:    imageBytes,
+		DiskBytes:     disk,
+	}, 90*time.Second)
+	if err != nil {
 		return fmt.Errorf("prepare user-rootfs (image %d bytes, disk %d bytes): %w", imageBytes, disk, err)
 	}
+	var prepResp agentproto.PrepareRootfsResponse
+	if len(prep.Payload) > 0 {
+		_ = json.Unmarshal(prep.Payload, &prepResp)
+	}
 	pulled := false
-	if c.Image != "" {
+	if prepResp.Populated {
+		klog.Infof("user-rootfs populated at %s, skip guest-pull", prepResp.Path)
+		pulled = true
+	} else if c.Image != "" {
 		klog.Infof("guest-pull %s", c.Image)
 		_, err = cli.Call(agentproto.MethodPullImage, map[string]string{
 			"containerID": id,

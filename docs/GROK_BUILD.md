@@ -334,15 +334,19 @@ a side channel.
 | emptyDir | virtio empty disk **or** guest tmpfs | mount at path |
 | configMap/secret/projected | extra small disk (iso/fs) or agent files | write into the container root |
 | container image | **not a disk of layers via virtiofs** | see images |
+| image on PVC (`maroonedpods.io/rootfs-volume`) | virtio-blk serial `userrootfs` | skip guest-pull if `/bin/sh` is already there |
 
 Image start policy for v1 (pick **ImageVolume / containerDisk** first;
 it is KubeVirt-native and needs no virtiofs):
 
 1. Adaptor attaches the workload image as a KubeVirt ImageVolume or
    containerDisk if the image can be used that way.
-2. Else agent pulls the image **inside the guest** (needs guest network
+2. Else a PVC named by `maroonedpods.io/rootfs-volume` is the user-rootfs
+   disk (pre-seeded or a large unpack target). Skip pull when populated.
+3. Else agent pulls the image **inside the guest** (needs guest network
    on CUDN and a pull secret projected as a disk).
-3. Never unpack on the host and virtiofs the directory in v1.
+4. Never unpack on the host and virtiofs the directory in v1. Host tar
+   over vsock is last-resort only.
 
 CSI attach happens only on virt-launcher. Webhook already stripped
 PVCs from the user Pod so kubelet does not NodePublish them twice.

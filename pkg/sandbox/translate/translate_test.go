@@ -139,6 +139,56 @@ func TestTranslateUserRootfsEmptyDisk(t *testing.T) {
 	}
 }
 
+func TestTranslateRootfsPVCReplacesEmptyDisk(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	p.Annotations = map[string]string{util.RootfsVolumeAnnotation: "root"}
+	p.Spec.Volumes = []corev1.Volume{{
+		Name: "root",
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "img"},
+		},
+	}}
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})
+	if len(res.Errors) != 0 {
+		t.Fatalf("%v", res.Errors)
+	}
+	foundPVC, foundEmpty := false, false
+	for _, vol := range res.VMI.Spec.Volumes {
+		if vol.Name == sandbox.UserRootfsVolume {
+			if vol.PersistentVolumeClaim != nil && vol.PersistentVolumeClaim.ClaimName == "img" {
+				foundPVC = true
+			}
+			if vol.EmptyDisk != nil {
+				foundEmpty = true
+			}
+		}
+		if vol.Name == "vol-root" {
+			t.Fatal("rootfs PVC must not also attach as a data disk")
+		}
+	}
+	if !foundPVC || foundEmpty {
+		t.Fatalf("pvc=%v empty=%v", foundPVC, foundEmpty)
+	}
+	serial := false
+	for _, d := range res.VMI.Spec.Domain.Devices.Disks {
+		if d.Name == sandbox.UserRootfsVolume && d.Serial == sandbox.UserRootfsSerial {
+			serial = true
+		}
+	}
+	if !serial {
+		t.Fatal("userrootfs serial")
+	}
+}
+
+func TestTranslateRootfsAnnotationNotPVC(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	p.Annotations = map[string]string{util.RootfsVolumeAnnotation: "missing"}
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})
+	if len(res.Errors) == 0 {
+		t.Fatal("expected error")
+	}
+}
+
 func TestTranslateUserRootfsGrowsWithWorkloads(t *testing.T) {
 	p := podWithResources("1", "512Mi")
 	p.Spec.InitContainers = []corev1.Container{{Name: "init", Image: "busybox"}}

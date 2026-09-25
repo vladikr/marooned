@@ -56,12 +56,19 @@ type RootfsChunk struct {
 	EOF         bool   `json:"eof"`
 }
 
-// PrepareRootfsRequest asks the agent to mkfs+mount the user-rootfs emptyDisk.
+// PrepareRootfsRequest asks the agent to mkfs+mount the user-rootfs disk.
 type PrepareRootfsRequest struct {
-	ContainerID string `json:"containerID"`
-	Serial      string `json:"serial"`
-	ImageBytes  int64  `json:"imageBytes"`
-	DiskBytes   int64  `json:"diskBytes"`
+	ContainerID   string `json:"containerID"`
+	ContainerName string `json:"containerName,omitempty"`
+	Serial        string `json:"serial"`
+	ImageBytes    int64  `json:"imageBytes"`
+	DiskBytes     int64  `json:"diskBytes"`
+}
+
+// PrepareRootfsResponse reports whether the disk already has a rootfs.
+type PrepareRootfsResponse struct {
+	Populated bool   `json:"populated"`
+	Path      string `json:"path,omitempty"`
 }
 
 // Mount is a guest path already backed by a virtio disk or tmpfs.

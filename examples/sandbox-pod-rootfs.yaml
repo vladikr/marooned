@@ -1,0 +1,38 @@
+# Deliver a large image on a PVC instead of emptyDisk + vsock tar.
+# maroonedpods.io/rootfs-volume names the claim. First start guest-pulls onto
+# it; a later Pod with the same PVC skips pull (shim: "user-rootfs populated").
+#
+#   $K apply -f examples/sandbox-pod-rootfs.yaml
+#   $K exec isolated-rootfs -- cat /tmp/ok
+#   $K delete pod isolated-rootfs --wait
+#   $K apply -f examples/sandbox-pod-rootfs.yaml
+#   $K logs -n marooned-system ds/marooned-shim | grep 'user-rootfs populated'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: isolated-rootfs-disk
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: isolated-rootfs
+  annotations:
+    maroonedpods.io/rootfs-volume: root
+spec:
+  runtimeClassName: marooned
+  containers:
+  - name: box
+    image: quay.io/prometheus/busybox:latest
+    imagePullPolicy: Never
+    command: ["/bin/sh", "-c", "echo rootfs-ok > /tmp/ok; exec httpd -f -p 8080 -h /tmp"]
+  volumes:
+  - name: root
+    persistentVolumeClaim:
+      claimName: isolated-rootfs-disk

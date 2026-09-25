@@ -81,6 +81,32 @@ func TestGuestMountsPVCSerial(t *testing.T) {
 	}
 }
 
+func TestGuestMountsSkipsRootfsVolume(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+			util.RootfsVolumeAnnotation: "root",
+		}},
+		Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{
+				{Name: "root", VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "img"},
+				}},
+				{Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			},
+			Containers: []corev1.Container{{
+				VolumeMounts: []corev1.VolumeMount{
+					{Name: "root", MountPath: "/"},
+					{Name: "scratch", MountPath: "/scratch"},
+				},
+			}},
+		},
+	}
+	got := GuestMounts(pod)
+	if len(got) != 1 || got[0].VolumeName != "scratch" {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestGuestMountsForInitAndApp(t *testing.T) {
 	pod := &corev1.Pod{Spec: corev1.PodSpec{
 		Volumes: []corev1.Volume{{
