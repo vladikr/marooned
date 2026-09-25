@@ -341,12 +341,10 @@ it is KubeVirt-native and needs no virtiofs):
 
 1. Adaptor attaches the workload image as a KubeVirt ImageVolume or
    containerDisk if the image can be used that way.
-2. Else a PVC named by `maroonedpods.io/rootfs-volume` is the user-rootfs
-   disk (pre-seeded or a large unpack target). Skip pull when populated.
-3. Else agent pulls the image **inside the guest** (needs guest network
-   on CUDN and a pull secret projected as a disk).
-4. Never unpack on the host and virtiofs the directory in v1. Host tar
-   over vsock is last-resort only.
+2. Else copy the **node-local CRI-O/runc tree** (already pulled by kubelet)
+   onto a sized emptyDisk. Resize the VMI if 256Mi is too small.
+3. Else a PVC named by `maroonedpods.io/rootfs-volume` (platform/air-gap).
+4. Else agent pulls inside the guest. Never virtiofs the host overlay.
 
 CSI attach happens only on virt-launcher. Webhook already stripped
 PVCs from the user Pod so kubelet does not NodePublish them twice.

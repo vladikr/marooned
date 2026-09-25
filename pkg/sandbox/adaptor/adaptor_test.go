@@ -34,6 +34,20 @@ func TestPVCPodVMINamespaceIsPodNamespace(t *testing.T) {
 	}
 }
 
+func TestEmptyDiskTooSmall(t *testing.T) {
+	pod := &corev1.Pod{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "box"}}}}
+	vmi := translate.Translate(translate.Input{Pod: pod, Config: sandbox.EffectiveSandbox(nil), RootfsBytes: 0}).VMI
+	if emptyDiskTooSmall(vmi, pod, 0) {
+		t.Fatal("unknown size is not too small")
+	}
+	if emptyDiskTooSmall(vmi, pod, 5*1024*1024) {
+		t.Fatal("busybox fits in 256Mi")
+	}
+	if !emptyDiskTooSmall(vmi, pod, 400*1024*1024) {
+		t.Fatal("400Mi image needs a bigger emptyDisk")
+	}
+}
+
 func TestDisklessVMINamespaceIsPodNamespace(t *testing.T) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

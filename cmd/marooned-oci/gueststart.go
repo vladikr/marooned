@@ -64,33 +64,21 @@ func runGuestStart(root, id, dir string) error {
 	criID := podUID + "-" + ctrName
 	_ = os.WriteFile(filepath.Join(dir, "criid"), []byte(criID), 0644)
 	ctr := map[string]interface{}{"name": ctrName, "command": spec.Args, "env": spec.Env, "workDir": spec.Cwd, "image": spec.Image}
-	startOnce := func() error {
-		if _, err := shimJSON("POST", "/v1/CreateContainer", map[string]interface{}{
-			"sandboxID": podUID,
-			"container": ctr,
-		}); err != nil {
-			return fmt.Errorf("CreateContainer: %w", err)
-		}
-		gslog(dir, "StartContainer "+criID)
-		if _, err := shimJSON("POST", "/v1/StartContainer", map[string]string{"id": criID}); err != nil {
-			return fmt.Errorf("StartContainer: %w", err)
-		}
-		return nil
-	}
-	if err := startOnce(); err != nil {
-		if spec.Root == "" {
-			return err
-		}
-		gslog(dir, "guest-pull failed, host tar fallback: "+err.Error())
-		tarPath := filepath.Join("/var/run/marooned", podUID, "rootfs-"+ctrName+".tar")
-		if terr := tarDirectory(spec.Root, tarPath); terr != nil {
-			return fmt.Errorf("%v; tar: %w", err, terr)
-		}
-		ctr["rootfsPath"] = tarPath
+	if spec.Root != "" {
+		// CRI-O already unpacked this tree for runc. Send that, do not Hub-pull again.
+		ctr["rootfsPath"] = spec.Root
 		ctr["rootfsBytes"] = dirSize(spec.Root)
-		if err2 := startOnce(); err2 != nil {
-			return err2
-		}
+		gslog(dir, fmt.Sprintf("host rootfs %s (%d bytes)", spec.Root, ctr["rootfsBytes"]))
+	}
+	if _, err := shimJSON("POST", "/v1/CreateContainer", map[string]interface{}{
+		"sandboxID": podUID,
+		"container": ctr,
+	}); err != nil {
+		return fmt.Errorf("CreateContainer: %w", err)
+	}
+	gslog(dir, "StartContainer "+criID)
+	if _, err := shimJSON("POST", "/v1/StartContainer", map[string]string{"id": criID}); err != nil {
+		return fmt.Errorf("StartContainer: %w", err)
 	}
 	_ = os.WriteFile(filepath.Join(dir, "guest-started"), []byte("1"), 0644)
 	ns, pname, _ := strings.Cut(pod, "/")

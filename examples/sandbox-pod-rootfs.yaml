@@ -1,6 +1,6 @@
-# Deliver a large image on a PVC instead of emptyDisk + vsock tar.
-# maroonedpods.io/rootfs-volume names the claim. First start guest-pulls onto
-# it; a later Pod with the same PVC skips pull (shim: "user-rootfs populated").
+# Platform/air-gap hatch: pre-seed a PVC with a rootfs. App users do not
+# do this — they only set image: on the Pod (emptyDisk is sized from the
+# node-local CRI-O copy).
 #
 #   $K apply -f examples/sandbox-pod-rootfs.yaml
 #   $K exec isolated-rootfs -- cat /tmp/ok

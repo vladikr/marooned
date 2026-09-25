@@ -391,39 +391,41 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 	if len(prep.Payload) > 0 {
 		_ = json.Unmarshal(prep.Payload, &prepResp)
 	}
-	pulled := false
+	filled := false
+	var fillErr error
 	if prepResp.Populated {
-		klog.Infof("user-rootfs populated at %s, skip guest-pull", prepResp.Path)
-		pulled = true
-	} else if c.Image != "" {
+		klog.Infof("user-rootfs populated at %s, skip copy", prepResp.Path)
+		filled = true
+	}
+	if !filled && c.RootfsPath != "" {
+		klog.Infof("host rootfs %s (runc tree, %d bytes)", c.RootfsPath, imageBytes)
+		if err := putHostRootfs(cli, id, c.RootfsPath, imageBytes); err != nil {
+			fillErr = err
+			klog.Infof("host rootfs copy failed, will try guest-pull: %v", err)
+		} else {
+			filled = true
+			klog.Infof("host rootfs copy ok")
+		}
+	}
+	if !filled && c.Image != "" {
 		klog.Infof("guest-pull %s", c.Image)
 		_, err = cli.Call(agentproto.MethodPullImage, map[string]string{
 			"containerID": id,
 			"image":       c.Image,
 		}, 3*time.Minute)
 		if err == nil {
-			pulled = true
+			filled = true
 			klog.Infof("guest-pull %s ok", c.Image)
 		} else {
-			klog.Infof("guest-pull %s failed, will try host tar: %v", c.Image, err)
+			fillErr = err
+			klog.Infof("guest-pull %s failed: %v", c.Image, err)
 		}
 	}
-	if !pulled {
-		if c.RootfsPath == "" {
-			if c.Image == "" {
-				return fmt.Errorf("no image ref and no host rootfs tar")
-			}
-			return fmt.Errorf("guest-pull %s: %w", c.Image, err)
+	if !filled {
+		if fillErr != nil {
+			return fmt.Errorf("fill user-rootfs: %w", fillErr)
 		}
-		f, err := os.Open(c.RootfsPath)
-		if err != nil {
-			return fmt.Errorf("rootfs %s: %w", c.RootfsPath, err)
-		}
-		putErr := cli.PutRootfs(id, f, 3*time.Minute)
-		_ = f.Close()
-		if putErr != nil {
-			return fmt.Errorf("rootfs upload: %w", putErr)
-		}
+		return fmt.Errorf("no image ref and no host rootfs")
 	}
 	var mounts []agentproto.Mount
 	if r.mountsFor != nil {
@@ -446,6 +448,39 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 	c.State = "CONTAINER_RUNNING"
 	r.store.PutContainer(c)
 	return nil
+}
+
+func putRootfsTimeout(n int64) time.Duration {
+	d := 3 * time.Minute
+	if n > 0 {
+		d += time.Duration(n/(50*1024*1024)) * time.Second
+	}
+	if d > 60*time.Minute {
+		d = 60 * time.Minute
+	}
+	return d
+}
+
+func putHostRootfs(cli *agentproto.Client, id, path string, bytes int64) error {
+	st, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	timeout := putRootfsTimeout(bytes)
+	if !st.IsDir() {
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		return cli.PutRootfs(id, f, timeout)
+	}
+	pr, pw := io.Pipe()
+	go func() {
+		err := sandbox.TarTree(pw, path)
+		_ = pw.CloseWithError(err)
+	}()
+	return cli.PutRootfs(id, pr, timeout)
 }
 
 func (r *Runtime) StopContainer(_ context.Context, id string, _ time.Duration) error {
