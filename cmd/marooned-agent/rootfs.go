@@ -187,6 +187,15 @@ func startInRoot(root string, req agentproto.StartRequest) (*exec.Cmd, error) {
 	if err := prepareChroot(root); err != nil {
 		return nil, err
 	}
+	for _, m := range req.Mounts {
+		if m.Kind != "block" {
+			continue
+		}
+		target := filepath.Join(root, strings.TrimPrefix(m.GuestPath, "/"))
+		if err := bindBlockDevice(target, m); err != nil {
+			return nil, err
+		}
+	}
 	env := cmd.Env
 	if cwd != "" && cwd != "/" {
 		env = append(append([]string{}, env...), "MAROONED_WORKDIR="+cwd)

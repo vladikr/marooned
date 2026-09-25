@@ -186,6 +186,11 @@ func (a *agent) start(payload json.RawMessage) error {
 		return err
 	}
 	for _, m := range req.Mounts {
+		if m.Kind == "block" {
+			// prepareChroot bind-mounts VM /dev over the rootfs /dev.
+			// Bind the raw disk after that, inside startInRoot.
+			continue
+		}
 		if err := ensureMountIn(ctrRoot, req.ContainerID, m); err != nil {
 			return err
 		}
@@ -411,6 +416,9 @@ func ensureMountIn(base, containerID string, m agentproto.Mount) error {
 		root := filepath.Join(base, containerID, "root")
 		target = filepath.Join(root, strings.TrimPrefix(m.GuestPath, "/"))
 	}
+	if m.Kind == "block" {
+		return bindBlockDevice(target, m)
+	}
 	if err := os.MkdirAll(target, 0755); err != nil {
 		return err
 	}
@@ -428,23 +436,32 @@ func ensureMountIn(base, containerID string, m agentproto.Mount) error {
 	}
 }
 
-func mountVirtioBlk(target string, m agentproto.Mount) error {
-	serial := m.Serial
+var diskWait = 60 * time.Second
+
+func waitDiskBySerial(volumeName, serial string) (string, error) {
 	if serial == "" {
-		serial = sandbox.DiskSerial(m.VolumeName)
+		serial = sandbox.DiskSerial(volumeName)
 	}
 	var dev string
 	var last error
-	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
+	deadline := time.Now().Add(diskWait)
+	for {
 		dev, last = findDiskBySerial(serial)
 		if last == nil {
+			return dev, nil
+		}
+		if !time.Now().Before(deadline) {
 			break
 		}
 		time.Sleep(time.Second)
 	}
-	if dev == "" {
-		return fmt.Errorf("virtio-blk serial %q: %v", serial, last)
+	return "", fmt.Errorf("virtio-blk serial %q: %v", serial, last)
+}
+
+func mountVirtioBlk(target string, m agentproto.Mount) error {
+	dev, err := waitDiskBySerial(m.VolumeName, m.Serial)
+	if err != nil {
+		return err
 	}
 	if !hasExtSuperblock(dev) {
 		if err := mkfs(dev); err != nil {
@@ -455,7 +472,7 @@ func mountVirtioBlk(target string, m agentproto.Mount) error {
 	if m.ReadOnly {
 		flags = syscall.MS_RDONLY
 	}
-	err := syscall.Mount(dev, target, "ext4", flags, "")
+	err = syscall.Mount(dev, target, "ext4", flags, "")
 	if err != nil {
 		err = syscall.Mount(dev, target, "ext2", flags, "")
 	}
@@ -463,4 +480,64 @@ func mountVirtioBlk(target string, m agentproto.Mount) error {
 		return nil
 	}
 	return err
+}
+
+func prepareBlockTarget(target string) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return err
+	}
+	if st, err := os.Lstat(target); err == nil {
+		if st.IsDir() {
+			if err := os.Remove(target); err != nil {
+				return err
+			}
+		} else {
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	f, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+func bindBlockDevice(target string, m agentproto.Mount) error {
+	dev, err := waitDiskBySerial(m.VolumeName, m.Serial)
+	if err != nil {
+		return err
+	}
+	if err := prepareBlockTarget(target); err != nil {
+		return err
+	}
+	st, err := os.Stat(dev)
+	if err != nil {
+		return err
+	}
+	if sys, ok := st.Sys().(*syscall.Stat_t); ok {
+		_ = os.Remove(target)
+		mode := uint32(syscall.S_IFBLK | 0660)
+		if mknodErr := syscall.Mknod(target, mode, int(sys.Rdev)); mknodErr == nil {
+			if m.ReadOnly {
+				_ = os.Chmod(target, 0440)
+			}
+			return nil
+		}
+		if err := prepareBlockTarget(target); err != nil {
+			return err
+		}
+	}
+	err = syscall.Mount(dev, target, "", syscall.MS_BIND, "")
+	if err == syscall.EBUSY {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("bind %s -> %s: %w", dev, target, err)
+	}
+	if m.ReadOnly {
+		_ = syscall.Mount("", target, "", syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY, "")
+	}
+	return nil
 }

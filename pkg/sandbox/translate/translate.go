@@ -39,7 +39,7 @@ type Result struct {
 type Mount struct {
 	VolumeName string
 	GuestPath  string
-	Kind       string // virtio-blk, virtiofs, tmpfs, files
+	Kind       string // virtio-blk, block, virtiofs, tmpfs, files
 	ReadOnly   bool
 }
 
@@ -496,16 +496,22 @@ func applyDRA(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod) error {
 	return fmt.Errorf("DRA resourceClaims require a KubeVirt build with GPUsWithDRA; this cluster API does not expose those fields")
 }
 
+type volumeUse struct {
+	path     string
+	readOnly bool
+	kind     string
+}
+
 func applyVolumes(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod, tee string) ([]Mount, []error) {
 	var mounts []Mount
 	var errs []error
-	mountPaths := map[string][]corev1.VolumeMount{}
+	uses := map[string][]volumeUse{}
 	for _, c := range pod.Spec.Containers {
 		for _, m := range c.VolumeMounts {
-			mountPaths[m.Name] = append(mountPaths[m.Name], m)
+			uses[m.Name] = append(uses[m.Name], volumeUse{path: m.MountPath, readOnly: m.ReadOnly, kind: "virtio-blk"})
 		}
 		for _, d := range c.VolumeDevices {
-			mountPaths[d.Name] = append(mountPaths[d.Name], corev1.VolumeMount{Name: d.Name, MountPath: d.DevicePath})
+			uses[d.Name] = append(uses[d.Name], volumeUse{path: d.DevicePath, kind: "block"})
 		}
 	}
 	for _, vol := range pod.Spec.Volumes {
@@ -533,27 +539,37 @@ func applyVolumes(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod, tee strin
 					},
 				},
 			})
-			for _, m := range mountPaths[vol.Name] {
+			for _, u := range uses[vol.Name] {
+				kind := u.kind
+				if kind == "" {
+					kind = "virtio-blk"
+				}
 				mounts = append(mounts, Mount{
 					VolumeName: vol.Name,
-					GuestPath:  m.MountPath,
-					Kind:       "virtio-blk",
-					ReadOnly:   m.ReadOnly || vol.PersistentVolumeClaim.ReadOnly,
+					GuestPath:  u.path,
+					Kind:       kind,
+					ReadOnly:   u.readOnly || vol.PersistentVolumeClaim.ReadOnly,
 				})
 			}
 		case vol.EmptyDir != nil:
-			for _, m := range mountPaths[vol.Name] {
+			for _, u := range uses[vol.Name] {
+				if u.kind == "block" {
+					continue
+				}
 				mounts = append(mounts, Mount{
 					VolumeName: vol.Name,
-					GuestPath:  m.MountPath,
+					GuestPath:  u.path,
 					Kind:       "tmpfs",
 				})
 			}
 		case vol.ConfigMap != nil || vol.Secret != nil || vol.Projected != nil:
-			for _, m := range mountPaths[vol.Name] {
+			for _, u := range uses[vol.Name] {
+				if u.kind == "block" {
+					continue
+				}
 				mounts = append(mounts, Mount{
 					VolumeName: vol.Name,
-					GuestPath:  m.MountPath,
+					GuestPath:  u.path,
 					Kind:       "files",
 				})
 			}

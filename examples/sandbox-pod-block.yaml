@@ -1,0 +1,40 @@
+# Block PVC: volumeDevices bind the virtio-blk disk at devicePath.
+# The agent does not mkfs or mount a filesystem.
+#
+# kubevirtci local SC is filesystem-mode. The webhook strips volumeDevices
+# from the user Pod, so kubelet never checks volumeMode. A real Block PVC
+# is the same guest path.
+#
+#   $K apply -f examples/sandbox-pod-block.yaml
+#   $K exec isolated-block -- dd if=/dev/xvda bs=8 count=1
+# Expect: block-ok
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: isolated-block-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: isolated-block
+spec:
+  runtimeClassName: marooned
+  containers:
+  - name: box
+    image: quay.io/prometheus/busybox:latest
+    imagePullPolicy: Never
+    command: ["/bin/sh", "-c", "test -b /dev/xvda || exit 1; echo block-ok | dd of=/dev/xvda bs=512 conv=sync; exec sleep infinity"]
+    volumeDevices:
+    - name: data
+      devicePath: /dev/xvda
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: isolated-block-data

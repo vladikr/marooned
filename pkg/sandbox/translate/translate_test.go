@@ -335,6 +335,36 @@ func TestTranslatePVCAsVirtioBlk(t *testing.T) {
 	}
 }
 
+func TestTranslatePVCVolumeDeviceAsBlock(t *testing.T) {
+	p := podWithResources("1", "1Gi")
+	p.Spec.Volumes = []corev1.Volume{{
+		Name: "data",
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "blk"},
+		},
+	}}
+	p.Spec.Containers[0].VolumeDevices = []corev1.VolumeDevice{{Name: "data", DevicePath: "/dev/xvda"}}
+	res := Translate(Input{Pod: p, Config: testConfig()})
+	if len(res.Errors) != 0 {
+		t.Fatalf("%v", res.Errors)
+	}
+	foundDisk := false
+	for _, d := range res.VMI.Spec.Domain.Devices.Disks {
+		if d.Name == "vol-data" {
+			foundDisk = true
+			if d.Serial != sandbox.DiskSerial("data") {
+				t.Fatalf("serial %q", d.Serial)
+			}
+		}
+	}
+	if !foundDisk {
+		t.Fatal("expected virtio-blk disk for block PVC")
+	}
+	if len(res.MountTable) != 1 || res.MountTable[0].Kind != "block" || res.MountTable[0].GuestPath != "/dev/xvda" {
+		t.Fatalf("mount table: %+v", res.MountTable)
+	}
+}
+
 func TestTranslatePVCSameNamespaceNoNamespaceField(t *testing.T) {
 	p := podWithResources("1", "1Gi")
 	p.UID = "11111111-2222-3333-4444-555555555555"

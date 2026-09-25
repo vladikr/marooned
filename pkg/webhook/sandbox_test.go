@@ -367,6 +367,35 @@ func TestMutateSandboxPodVolumesAnnotationRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMutateSandboxPodVolumeDevicesRoundTrip(t *testing.T) {
+	pod := sandboxPod(func(p *corev1.Pod) {
+		p.Spec.Volumes = []corev1.Volume{{
+			Name: "data",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "blk"},
+			},
+		}}
+		p.Spec.Containers[0].VolumeDevices = []corev1.VolumeDevice{{Name: "data", DevicePath: "/dev/xvda"}}
+	})
+	if err := MutateSandboxPod(pod); err != nil {
+		t.Fatal(err)
+	}
+	if hasVolume(pod, "data") {
+		t.Fatal("block PVC must still be stripped")
+	}
+	if len(pod.Spec.Containers[0].VolumeDevices) != 0 {
+		t.Fatalf("volumeDevices must be stripped: %+v", pod.Spec.Containers[0].VolumeDevices)
+	}
+	restored := sandbox.RestoreVolumes(pod)
+	if !hasVolume(restored, "data") {
+		t.Fatal("block PVC did not round-trip")
+	}
+	devs := restored.Spec.Containers[0].VolumeDevices
+	if len(devs) != 1 || devs[0].Name != "data" || devs[0].DevicePath != "/dev/xvda" {
+		t.Fatalf("volumeDevices did not round-trip: %+v", devs)
+	}
+}
+
 func TestMutateSandboxPodDisklessPlacementUser(t *testing.T) {
 	pod := sandboxPod(nil)
 	if err := MutateSandboxPod(pod); err != nil {

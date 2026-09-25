@@ -8,7 +8,7 @@ import (
 type GuestMount struct {
 	VolumeName string `json:"volumeName"`
 	GuestPath  string `json:"guestPath"`
-	Kind       string `json:"kind"` // tmpfs, virtio-blk, files
+	Kind       string `json:"kind"` // tmpfs, virtio-blk, block, files
 	Serial     string `json:"serial,omitempty"`
 	ReadOnly   bool   `json:"readOnly"`
 }
@@ -30,8 +30,8 @@ func DiskSerial(volumeName string) string {
 }
 
 // GuestMounts returns mounts for stripped emptyDir (guest tmpfs) and PVC
-// (mkdir only until virtio-blk is mounted). Uses the webhook snapshot when
-// the live spec has already been stripped.
+// (filesystem volumeMounts → virtio-blk mount; volumeDevices → raw bind).
+// Uses the webhook snapshot when the live spec has already been stripped.
 func GuestMounts(pod *corev1.Pod) []GuestMount {
 	if pod == nil {
 		return nil
@@ -44,30 +44,48 @@ func GuestMounts(pod *corev1.Pod) []GuestMount {
 	var out []GuestMount
 	for _, c := range src.Spec.Containers {
 		for _, m := range c.VolumeMounts {
-			vol, ok := volByName[m.Name]
-			if !ok {
-				continue
+			if gm := guestMountFor(volByName, m.Name, m.MountPath, m.ReadOnly, false); gm != nil {
+				out = append(out, *gm)
 			}
-			kind := ""
-			switch {
-			case vol.EmptyDir != nil:
-				kind = "tmpfs"
-			case vol.PersistentVolumeClaim != nil || vol.Ephemeral != nil:
-				kind = "virtio-blk"
-			default:
-				continue
+		}
+		for _, d := range c.VolumeDevices {
+			if gm := guestMountFor(volByName, d.Name, d.DevicePath, false, true); gm != nil {
+				out = append(out, *gm)
 			}
-			gm := GuestMount{
-				VolumeName: vol.Name,
-				GuestPath:  m.MountPath,
-				Kind:       kind,
-				ReadOnly:   m.ReadOnly || (vol.PersistentVolumeClaim != nil && vol.PersistentVolumeClaim.ReadOnly),
-			}
-			if kind == "virtio-blk" {
-				gm.Serial = DiskSerial(vol.Name)
-			}
-			out = append(out, gm)
 		}
 	}
 	return out
+}
+
+func guestMountFor(volByName map[string]corev1.Volume, name, path string, readOnly, block bool) *GuestMount {
+	vol, ok := volByName[name]
+	if !ok {
+		return nil
+	}
+	kind := ""
+	switch {
+	case vol.EmptyDir != nil:
+		if block {
+			return nil
+		}
+		kind = "tmpfs"
+	case vol.PersistentVolumeClaim != nil || vol.Ephemeral != nil:
+		if block {
+			kind = "block"
+		} else {
+			kind = "virtio-blk"
+		}
+	default:
+		return nil
+	}
+	gm := GuestMount{
+		VolumeName: vol.Name,
+		GuestPath:  path,
+		Kind:       kind,
+		ReadOnly:   readOnly || (vol.PersistentVolumeClaim != nil && vol.PersistentVolumeClaim.ReadOnly),
+	}
+	if kind == "virtio-blk" || kind == "block" {
+		gm.Serial = DiskSerial(vol.Name)
+	}
+	return &gm
 }
