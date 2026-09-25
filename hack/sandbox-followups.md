@@ -42,8 +42,8 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - exec -it: verified (os.Pipe + close parent ends; kubectl returns after the command)
 - First-start: virt-launcher 3/3 in ~3s (IfNotPresent disks); guest exec works immediately. Warm pool still later if we need pre-booted VMs.
 - Guest network: verified (10.0.2.2, Service wget, Ready 1/1 via exec probe pid-file). status.podIP is still the pause.
-- Volumes: emptyDir tmpfs + filesystem PVC verified. Block volumeDevices: bind-device, no mkfs (needs cluster-push + `dd if=/dev/xvda`).
-- Image: enable KubeVirt ImageVolume FG (containerDisk/kernelBoot via k8s image volumes). Guest-pull for generic OCI until we virtiofs a k8s image mount. Host tar last.
+- Volumes: emptyDir tmpfs + filesystem PVC verified. Block volumeDevices verified (`dd if=/dev/xvda` → block-ok; no mkfs). RWX still virtiofs-only.
+- Image: ImageVolume FG for sandbox/kernel containerDisk. Guest-pull verified (`guest-pull quay.io/prometheus/busybox:latest ok`; no host tar). Host tar remains last-resort fallback.
 - Multi-container / init containers
 - Large-image unpack (full tar over vsock)
 - e2e: guest exec (httpd, /tmp/index.html, /scratch/ok) + logs, not only Running (busybox has no os-release)
