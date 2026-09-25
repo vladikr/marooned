@@ -515,25 +515,23 @@ func TestTranslateNilPod(t *testing.T) {
 	}
 }
 
-func TestApplyRWXFilesystem(t *testing.T) {
+func TestTranslateEphemeralRWXRejected(t *testing.T) {
 	p := podWithResources("1", "1Gi")
 	p.Spec.Volumes = []corev1.Volume{{
 		Name: "share",
 		VolumeSource: corev1.VolumeSource{
-			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "rwx"},
+			Ephemeral: &corev1.EphemeralVolumeSource{
+				VolumeClaimTemplate: &corev1.PersistentVolumeClaimTemplate{
+					Spec: corev1.PersistentVolumeClaimSpec{
+						AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
+					},
+				},
+			},
 		},
 	}}
 	res := Translate(Input{Pod: p, Config: testConfig()})
-	if err := ApplyRWXFilesystem(res.VMI, "share"); err != nil {
-		t.Fatal(err)
-	}
-	for _, d := range res.VMI.Spec.Domain.Devices.Disks {
-		if d.Name == "vol-share" {
-			t.Fatal("disk should be removed for virtiofs")
-		}
-	}
-	if len(res.VMI.Spec.Domain.Devices.Filesystems) != 1 {
-		t.Fatal("expected virtiofs filesystem")
+	if len(res.Errors) == 0 || !sandbox.IsRWXUnsupported(res.Errors[0]) {
+		t.Fatalf("expected RWX reject, got %v", res.Errors)
 	}
 }
 

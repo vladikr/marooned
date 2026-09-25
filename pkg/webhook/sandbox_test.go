@@ -396,6 +396,27 @@ func TestMutateSandboxPodVolumeDevicesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMutateSandboxPodRejectsEphemeralRWX(t *testing.T) {
+	pod := sandboxPod(func(p *corev1.Pod) {
+		p.Spec.Volumes = []corev1.Volume{{
+			Name: "share",
+			VolumeSource: corev1.VolumeSource{
+				Ephemeral: &corev1.EphemeralVolumeSource{
+					VolumeClaimTemplate: &corev1.PersistentVolumeClaimTemplate{
+						Spec: corev1.PersistentVolumeClaimSpec{
+							AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
+						},
+					},
+				},
+			},
+		}}
+	})
+	err := MutateSandboxPod(pod)
+	if !sandbox.IsRWXUnsupported(err) {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestMutateSandboxPodDisklessPlacementUser(t *testing.T) {
 	pod := sandboxPod(nil)
 	if err := MutateSandboxPod(pod); err != nil {

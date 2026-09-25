@@ -192,6 +192,9 @@ func (a *Adaptor) execute(key string) (error, enqueueState) {
 	vmi, err := a.ensureVMI(pod, cfg, rootfsBytes)
 	if err != nil {
 		a.recorder.Eventf(pod, corev1.EventTypeWarning, "SandboxVMIFailed", "%v", err)
+		if sandbox.IsRWXUnsupported(err) {
+			return err, Forget
+		}
 		return err, BackOff
 	}
 	if vmi.Status.Phase != virtv1.Running {
@@ -228,6 +231,9 @@ func (a *Adaptor) ensureVMI(pod *corev1.Pod, cfg mpv1.SandboxConfig, rootfsBytes
 	}
 
 	trPod := sandbox.RestoreVolumes(pod)
+	if err := sandbox.RejectRWXVolumes(trPod, a.pvcAccessModes); err != nil {
+		return nil, err
+	}
 	tr := translate.Translate(translate.Input{
 		Pod:         trPod,
 		Config:      cfg,
@@ -547,6 +553,14 @@ func endpointPorts(pod *corev1.Pod) []discoveryv1.EndpointPort {
 		out = append(out, discoveryv1.EndpointPort{Name: &name, Port: &port, Protocol: &proto})
 	}
 	return out
+}
+
+func (a *Adaptor) pvcAccessModes(namespace, claimName string) ([]corev1.PersistentVolumeAccessMode, error) {
+	pvc, err := a.maroonedpodsCli.CoreV1().PersistentVolumeClaims(namespace).Get(context.Background(), claimName, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return pvc.Spec.AccessModes, nil
 }
 
 func splitRef(ref string) (string, string) {

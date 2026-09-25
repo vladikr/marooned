@@ -331,7 +331,7 @@ a side channel.
 |---|---|---|
 | PVC Block | virtio-blk disk | bind device or mount if formatted |
 | PVC Filesystem RWO | virtio-blk disk (not virtiofs) | mount filesystem, bind to volumeMount.path |
-| PVC Filesystem RWX | virtiofs **only this case** | mount -t virtiofs |
+| PVC Filesystem RWX | **reject** | virtiofs skipped; full RWX virtiofsd needs privileged virt-launcher |
 | emptyDir | virtio empty disk **or** guest tmpfs | mount at path |
 | configMap/secret/projected | extra small disk (iso/fs) or agent files | write into the container root |
 | container image | **not a disk of layers via virtiofs** | see images |
@@ -580,7 +580,7 @@ initramfs attests, KBS returns passphrase. VMI YAML does not change.
 |---|---|
 | TEE + kernelBoot | reject; use UEFI sandbox-tee image |
 | TEE + SR-IOV / GPU / hostDevices | reject; PoC has no PCI passthrough |
-| TEE + virtiofs RWX | reject; host-visible tree fights the threat model |
+| RWX (any TEE) | reject; no virtiofs (would need privileged virt-launcher) |
 | TEE + live migration | reject until KubeVirt supports it |
 | TEE + guest-pull from host-untrusted registry | allowed; prefer this over host ImageVolume if the threat model includes a malicious host seeing layers |
 | TEE + hugepages | allow |
@@ -655,7 +655,7 @@ Done when: `kubectl run --runtime-class=marooned` works end to end.
 
 - RWO block + filesystem PVC as virtio-blk
 - volumeMount paths honored in guest
-- No virtiofs except explicit RWX test marked optional
+- No virtiofs; RWX PVCs are rejected
 
 ### Phase 4 — devices
 

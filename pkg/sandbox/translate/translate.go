@@ -39,7 +39,7 @@ type Result struct {
 type Mount struct {
 	VolumeName string
 	GuestPath  string
-	Kind       string // virtio-blk, block, virtiofs, tmpfs, files
+	Kind       string // virtio-blk, block, tmpfs, files
 	ReadOnly   bool
 }
 
@@ -154,7 +154,7 @@ func Translate(in Input) Result {
 	if err := applyDRA(vmi, in.Pod); err != nil {
 		res.Errors = append(res.Errors, err)
 	}
-	mounts, volErrs := applyVolumes(vmi, sandbox.RestoreVolumes(in.Pod), res.TEE)
+	mounts, volErrs := applyVolumes(vmi, sandbox.RestoreVolumes(in.Pod))
 	res.MountTable = mounts
 	res.Errors = append(res.Errors, volErrs...)
 
@@ -195,14 +195,14 @@ func resolveTEE(in Input) string {
 }
 
 func checkConflicts(pod *corev1.Pod, tee string) error {
+	if err := sandbox.RejectRWXVolumes(pod, nil); err != nil {
+		return err
+	}
 	if tee == sandbox.TEEOff {
 		return nil
 	}
 	if hasSRIOVOrHostDevice(pod) {
 		return fmt.Errorf("TEE + SR-IOV/GPU/hostDevices is not supported")
-	}
-	if hasRWXVirtiofs(pod) {
-		return fmt.Errorf("TEE + virtiofs RWX is not supported")
 	}
 	return nil
 }
@@ -218,16 +218,6 @@ func hasSRIOVOrHostDevice(pod *corev1.Pod) bool {
 		}
 	}
 	return len(pod.Spec.ResourceClaims) > 0
-}
-
-func hasRWXVirtiofs(pod *corev1.Pod) bool {
-	for _, vol := range pod.Spec.Volumes {
-		if vol.PersistentVolumeClaim != nil && vol.PersistentVolumeClaim.ReadOnly == false {
-			// Access mode is not on the pod volume; adaptor may still reject RWX+TEE later.
-			_ = vol
-		}
-	}
-	return false
 }
 
 func guestCompute(pod *corev1.Pod, cfg mpv1.SandboxConfig, tee string) (uint32, resource.Quantity) {
@@ -502,7 +492,7 @@ type volumeUse struct {
 	kind     string
 }
 
-func applyVolumes(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod, tee string) ([]Mount, []error) {
+func applyVolumes(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod) ([]Mount, []error) {
 	var mounts []Mount
 	var errs []error
 	uses := map[string][]volumeUse{}
@@ -517,9 +507,6 @@ func applyVolumes(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod, tee strin
 	for _, vol := range pod.Spec.Volumes {
 		switch {
 		case vol.PersistentVolumeClaim != nil:
-			if tee != sandbox.TEEOff {
-				// still attach as virtio-blk; RWX+TEE is rejected in checkConflicts when known
-			}
 			diskName := "vol-" + vol.Name
 			vmi.Spec.Domain.Devices.Disks = append(vmi.Spec.Domain.Devices.Disks, virtv1.Disk{
 				Name:   diskName,
@@ -576,31 +563,4 @@ func applyVolumes(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod, tee strin
 		}
 	}
 	return mounts, errs
-}
-
-// ApplyRWXFilesystem converts a previously attached virtio-blk PVC disk into virtiofs.
-// Callers must have confirmed the PVC is RWX.
-func ApplyRWXFilesystem(vmi *virtv1.VirtualMachineInstance, volumeName string) error {
-	if vmi == nil {
-		return fmt.Errorf("vmi is nil")
-	}
-	diskName := "vol-" + volumeName
-	found := false
-	disks := vmi.Spec.Domain.Devices.Disks[:0]
-	for _, d := range vmi.Spec.Domain.Devices.Disks {
-		if d.Name == diskName {
-			found = true
-			continue
-		}
-		disks = append(disks, d)
-	}
-	if !found {
-		return fmt.Errorf("volume %s not attached as a disk", volumeName)
-	}
-	vmi.Spec.Domain.Devices.Disks = disks
-	vmi.Spec.Domain.Devices.Filesystems = append(vmi.Spec.Domain.Devices.Filesystems, virtv1.Filesystem{
-		Name:     diskName,
-		Virtiofs: &virtv1.FilesystemVirtiofs{},
-	})
-	return nil
 }
