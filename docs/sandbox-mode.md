@@ -88,7 +88,7 @@ TEE guests boot UEFI (no kernelBoot), `secureBoot: false`. TDX also sets
 `features.smm.enabled: false`. Evidence is produced in the guest and verified
 off the hypervisor. Maroonedpods is not a verifier.
 
-SNP + SR-IOV / GPU is rejected. RWX PVCs are rejected (no virtiofs; virt-launcher stays non-root). Hugepages + TEE is allowed.
+SNP + SR-IOV / GPU is rejected. Hugepages + TEE is allowed. RWX PVCs attach as virtio-blk; we do not use virtiofs (virt-launcher stays non-root).
 
 Do not install a second KubeVirt CR. Enable `WorkloadEncryptionSEV` /
 `WorkloadEncryptionTDX` on the existing KubeVirt/HCO object.

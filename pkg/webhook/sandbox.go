@@ -44,10 +44,6 @@ func MutateSandboxPod(pod *corev1.Pod) error {
 		pod.Finalizers = append(pod.Finalizers, util.SandboxFinalizer)
 	}
 
-	if err := sandbox.RejectRWXVolumes(pod, nil); err != nil {
-		return err
-	}
-
 	if err := persistVolumeSnapshot(pod); err != nil {
 		return err
 	}

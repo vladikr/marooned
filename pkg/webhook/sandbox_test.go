@@ -396,7 +396,7 @@ func TestMutateSandboxPodVolumeDevicesRoundTrip(t *testing.T) {
 	}
 }
 
-func TestMutateSandboxPodRejectsEphemeralRWX(t *testing.T) {
+func TestMutateSandboxPodAllowsEphemeralRWX(t *testing.T) {
 	pod := sandboxPod(func(p *corev1.Pod) {
 		p.Spec.Volumes = []corev1.Volume{{
 			Name: "share",
@@ -410,10 +410,17 @@ func TestMutateSandboxPodRejectsEphemeralRWX(t *testing.T) {
 				},
 			},
 		}}
+		p.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{Name: "share", MountPath: "/share"}}
 	})
-	err := MutateSandboxPod(pod)
-	if !sandbox.IsRWXUnsupported(err) {
-		t.Fatalf("got %v", err)
+	if err := MutateSandboxPod(pod); err != nil {
+		t.Fatal(err)
+	}
+	if hasVolume(pod, "share") {
+		t.Fatal("RWX claim must still be stripped from the user Pod")
+	}
+	restored := sandbox.RestoreVolumes(pod)
+	if !hasVolume(restored, "share") {
+		t.Fatal("RWX claim did not round-trip")
 	}
 }
 

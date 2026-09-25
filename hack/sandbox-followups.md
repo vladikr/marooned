@@ -42,7 +42,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - exec -it: verified (os.Pipe + close parent ends; kubectl returns after the command)
 - First-start: virt-launcher 3/3 in ~3s (IfNotPresent disks); guest exec works immediately. Warm pool still later if we need pre-booted VMs.
 - Guest network: verified (10.0.2.2, Service wget, Ready 1/1 via exec probe pid-file). status.podIP is still the pause.
-- Volumes: emptyDir tmpfs + filesystem PVC + block volumeDevices verified. RWX rejected (no virtiofs; virt-launcher stays non-root).
+- Volumes: emptyDir tmpfs + filesystem PVC + block volumeDevices verified. RWX is virtio-blk too (no virtiofs; virt-launcher stays non-root).
 - Image: ImageVolume FG for sandbox/kernel containerDisk. Guest-pull verified (`guest-pull quay.io/prometheus/busybox:latest ok`; no host tar). Host tar remains last-resort fallback.
 - Multi-container / init containers
 - Large-image unpack (full tar over vsock)

@@ -195,9 +195,6 @@ func resolveTEE(in Input) string {
 }
 
 func checkConflicts(pod *corev1.Pod, tee string) error {
-	if err := sandbox.RejectRWXVolumes(pod, nil); err != nil {
-		return err
-	}
 	if tee == sandbox.TEEOff {
 		return nil
 	}
@@ -507,6 +504,8 @@ func applyVolumes(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod) ([]Mount,
 	for _, vol := range pod.Spec.Volumes {
 		switch {
 		case vol.PersistentVolumeClaim != nil:
+			// RWO and RWX both virtio-blk. Do not use virtiofs (would need
+			// privileged virt-launcher). RWX block is the live-migration path.
 			diskName := "vol-" + vol.Name
 			vmi.Spec.Domain.Devices.Disks = append(vmi.Spec.Domain.Devices.Disks, virtv1.Disk{
 				Name:   diskName,

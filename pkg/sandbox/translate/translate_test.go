@@ -515,23 +515,36 @@ func TestTranslateNilPod(t *testing.T) {
 	}
 }
 
-func TestTranslateEphemeralRWXRejected(t *testing.T) {
+func TestTranslateRWXPVCAsVirtioBlk(t *testing.T) {
 	p := podWithResources("1", "1Gi")
 	p.Spec.Volumes = []corev1.Volume{{
 		Name: "share",
 		VolumeSource: corev1.VolumeSource{
-			Ephemeral: &corev1.EphemeralVolumeSource{
-				VolumeClaimTemplate: &corev1.PersistentVolumeClaimTemplate{
-					Spec: corev1.PersistentVolumeClaimSpec{
-						AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
-					},
-				},
-			},
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "rwx"},
 		},
 	}}
+	p.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{Name: "share", MountPath: "/share"}}
 	res := Translate(Input{Pod: p, Config: testConfig()})
-	if len(res.Errors) == 0 || !sandbox.IsRWXUnsupported(res.Errors[0]) {
-		t.Fatalf("expected RWX reject, got %v", res.Errors)
+	if len(res.Errors) != 0 {
+		t.Fatalf("%v", res.Errors)
+	}
+	foundDisk, foundFS := false, false
+	for _, d := range res.VMI.Spec.Domain.Devices.Disks {
+		if d.Name == "vol-share" {
+			foundDisk = true
+		}
+	}
+	if len(res.VMI.Spec.Domain.Devices.Filesystems) > 0 {
+		foundFS = true
+	}
+	if !foundDisk {
+		t.Fatal("RWX PVC must attach as virtio-blk")
+	}
+	if foundFS {
+		t.Fatal("do not use virtiofs")
+	}
+	if len(res.MountTable) != 1 || res.MountTable[0].Kind != "virtio-blk" {
+		t.Fatalf("mount table: %+v", res.MountTable)
 	}
 }
 
