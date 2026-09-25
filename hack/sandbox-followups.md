@@ -45,11 +45,11 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - Volumes: emptyDir tmpfs + filesystem PVC + block volumeDevices verified. RWX is virtio-blk too (no virtiofs; virt-launcher stays non-root).
 - Image: ImageVolume FG for sandbox/kernel containerDisk. Guest-pull verified (`guest-pull quay.io/prometheus/busybox:latest ok`; no host tar). Host tar remains last-resort fallback.
 - Multi-container / init: verified (`isolated-multi` Ready; `cat /shared/ready` → init-ok). One VMI; pause stays under conmon so init exit 0 is waitable.
-- Large-image unpack (full tar over vsock)
-- e2e: guest exec (httpd, /tmp/index.html, /scratch/ok) + logs, not only Running (busybox has no os-release)
+- Large-image unpack: host tar remains last-resort (guest-pull used for nginx/python; python hit ECR 429 then retry ok)
+- e2e: tests/e2e_sandbox_test.go already checks guest exec (`/tmp/index.html`, `/scratch/ok`, httpd) + logs, not only Running
 - One cgroup: document guest+virt-launcher limits; do not join qemu to user pod cgroup yet
-- Python: examples/sandbox-python.yaml (needs cluster verify)
-- Kata-shaped nginx: mkdir /run + strip [::] listen; agent tmpfs /run; ipv6.ko in initrd (needs cluster verify)
+- Python: verified (`python3` 3.12.14, `/scratch/ok` → vol-ok, wget 127.0.0.1:8080 → marooned-python-ok)
+- Kata-shaped nginx: verified (Alpine os-release, Welcome to nginx, Service ClusterIP wget from another sandbox pod)
 - Node-mode (not in this repo)
 
 ## Build/test contract
