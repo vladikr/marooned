@@ -81,6 +81,34 @@ func TestGuestMountsPVCSerial(t *testing.T) {
 	}
 }
 
+func TestGuestMountsForInitAndApp(t *testing.T) {
+	pod := &corev1.Pod{Spec: corev1.PodSpec{
+		Volumes: []corev1.Volume{{
+			Name:         "shared",
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		}},
+		InitContainers: []corev1.Container{{
+			Name:         "init",
+			VolumeMounts: []corev1.VolumeMount{{Name: "shared", MountPath: "/shared"}},
+		}},
+		Containers: []corev1.Container{{
+			Name:         "box",
+			VolumeMounts: []corev1.VolumeMount{{Name: "shared", MountPath: "/shared"}},
+		}},
+	}}
+	initM := GuestMountsFor(pod, "init")
+	if len(initM) != 1 || initM[0].Kind != "tmpfs" || initM[0].GuestPath != "/shared" {
+		t.Fatalf("init: %+v", initM)
+	}
+	app := GuestMountsFor(pod, "box")
+	if len(app) != 1 || app[0].Kind != "tmpfs" {
+		t.Fatalf("app: %+v", app)
+	}
+	if n := WorkloadCount(pod); n != 2 {
+		t.Fatalf("workload count %d", n)
+	}
+}
+
 func TestGuestMountsBlockDevice(t *testing.T) {
 	pod := &corev1.Pod{Spec: corev1.PodSpec{
 		Volumes: []corev1.Volume{{

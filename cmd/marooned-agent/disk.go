@@ -26,43 +26,39 @@ func (a *agent) prepareRootfs(payload []byte) error {
 	if serial == "" {
 		serial = "userrootfs"
 	}
+	if err := os.MkdirAll(ctrRoot, 0755); err != nil {
+		return err
+	}
+	if !isMountPoint(ctrRoot) {
+		var dev string
+		var last error
+		deadline := time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) {
+			dev, last = findDiskBySerial(serial)
+			if last == nil {
+				break
+			}
+			time.Sleep(time.Second)
+		}
+		if dev == "" {
+			return fmt.Errorf("user-rootfs disk serial %q: %v", serial, last)
+		}
+		if !hasExtSuperblock(dev) {
+			if err := mkfs(dev); err != nil {
+				return fmt.Errorf("mkfs %s (image %d bytes, disk %d bytes): %w", dev, req.ImageBytes, req.DiskBytes, err)
+			}
+		}
+		if err := syscall.Mount(dev, ctrRoot, "ext4", 0, ""); err != nil {
+			if err2 := syscall.Mount(dev, ctrRoot, "ext2", 0, ""); err2 != nil {
+				if !isMountPoint(ctrRoot) {
+					return fmt.Errorf("mount %s on %s: %v; %v", dev, ctrRoot, err, err2)
+				}
+			}
+		}
+	}
 	dest := filepath.Join(ctrRoot, req.ContainerID, "root")
 	if err := os.MkdirAll(dest, 0755); err != nil {
 		return err
-	}
-	if isMountPoint(dest) {
-		a.mu.Lock()
-		a.imageBytes[req.ContainerID] = req.ImageBytes
-		a.diskBytes[req.ContainerID] = req.DiskBytes
-		a.mu.Unlock()
-		return nil
-	}
-	var dev string
-	var last error
-	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
-		dev, last = findDiskBySerial(serial)
-		if last == nil {
-			break
-		}
-		time.Sleep(time.Second)
-	}
-	if dev == "" {
-		return fmt.Errorf("user-rootfs disk serial %q: %v", serial, last)
-	}
-	if !hasExtSuperblock(dev) {
-		if err := mkfs(dev); err != nil {
-			return fmt.Errorf("mkfs %s (image %d bytes, disk %d bytes): %w", dev, req.ImageBytes, req.DiskBytes, err)
-		}
-	}
-	if err := syscall.Mount(dev, dest, "ext4", 0, ""); err != nil {
-		if err2 := syscall.Mount(dev, dest, "ext2", 0, ""); err2 != nil {
-			if isMountPoint(dest) {
-				// kubelet restart: disk still mounted from the previous start
-			} else {
-				return fmt.Errorf("mount %s on %s: %v; %v", dev, dest, err, err2)
-			}
-		}
 	}
 	a.mu.Lock()
 	a.imageBytes[req.ContainerID] = req.ImageBytes

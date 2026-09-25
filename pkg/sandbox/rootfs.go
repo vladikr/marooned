@@ -15,9 +15,18 @@ const (
 
 // UserRootfsCapacity is pulled_image_size + 128Mi, floored at 256Mi.
 func UserRootfsCapacity(imageBytes int64) resource.Quantity {
-	n := imageBytes + userRootfsSlack
-	if n < minUserRootfs {
-		n = minUserRootfs
+	return UserRootfsCapacityN(imageBytes, 1)
+}
+
+// UserRootfsCapacityN sizes the shared emptyDisk for n guest containers.
+func UserRootfsCapacityN(imageBytes int64, n int) resource.Quantity {
+	if n < 1 {
+		n = 1
 	}
-	return *resource.NewQuantity(n, resource.BinarySI)
+	min := minUserRootfs * int64(n)
+	sized := imageBytes + userRootfsSlack
+	if sized < min {
+		sized = min
+	}
+	return *resource.NewQuantity(sized, resource.BinarySI)
 }

@@ -44,7 +44,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - Guest network: verified (10.0.2.2, Service wget, Ready 1/1 via exec probe pid-file). status.podIP is still the pause.
 - Volumes: emptyDir tmpfs + filesystem PVC + block volumeDevices verified. RWX is virtio-blk too (no virtiofs; virt-launcher stays non-root).
 - Image: ImageVolume FG for sandbox/kernel containerDisk. Guest-pull verified (`guest-pull quay.io/prometheus/busybox:latest ok`; no host tar). Host tar remains last-resort fallback.
-- Multi-container / init containers
+- Multi-container / init: one VMI, per-container rootfs on shared emptyDisk, shared volumes bind-mounted (needs cluster-push + `cat /shared/ready`).
 - Large-image unpack (full tar over vsock)
 - e2e: guest exec (httpd, /tmp/index.html, /scratch/ok) + logs, not only Running (busybox has no os-release)
 - One cgroup: document guest+virt-launcher limits; do not join qemu to user pod cgroup yet

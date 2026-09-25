@@ -136,7 +136,7 @@ func Translate(in Input) Result {
 	applyBoot(vmi, in.Config, res.TEE)
 	applyNetwork(vmi, in.Config, in.Pod)
 	applyRootfs(vmi, in.Config, res.TEE)
-	applyUserRootfs(vmi, in.RootfsBytes)
+	applyUserRootfs(vmi, in.RootfsBytes, sandbox.WorkloadCount(in.Pod))
 	hugepage, hugepageErr := applyHugepages(vmi, in.Pod)
 	if hugepageErr != nil {
 		res.Errors = append(res.Errors, hugepageErr)
@@ -362,8 +362,8 @@ func applyRootfs(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig, tee
 	_ = tee
 }
 
-func applyUserRootfs(vmi *virtv1.VirtualMachineInstance, imageBytes int64) {
-	cap := sandbox.UserRootfsCapacity(imageBytes)
+func applyUserRootfs(vmi *virtv1.VirtualMachineInstance, imageBytes int64, workloads int) {
+	cap := sandbox.UserRootfsCapacityN(imageBytes, workloads)
 	vmi.Spec.Domain.Devices.Disks = append(vmi.Spec.Domain.Devices.Disks, virtv1.Disk{
 		Name:   sandbox.UserRootfsVolume,
 		Serial: sandbox.UserRootfsSerial,

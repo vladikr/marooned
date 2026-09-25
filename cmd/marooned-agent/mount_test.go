@@ -24,6 +24,13 @@ func TestEnsureMountInCreatesGuestPath(t *testing.T) {
 	}
 }
 
+func TestSharedVolPath(t *testing.T) {
+	p := sharedVolPath(agentproto.Mount{VolumeName: "scratch", GuestPath: "/scratch"})
+	if p != filepath.Join(volRoot, "scratch") {
+		t.Fatalf("%s", p)
+	}
+}
+
 func TestPrepareBlockTargetReplacesDirectory(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "dev", "xvda")

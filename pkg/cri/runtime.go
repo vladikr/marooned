@@ -96,7 +96,7 @@ type ContainerStats struct {
 	TimestampUnixNano int64
 }
 
-// PodSandboxStats is the sandbox aggregate (one container today).
+// PodSandboxStats is the sandbox aggregate (sum of guest containers).
 type PodSandboxStats struct {
 	ID                string
 	CPUNano           uint64
@@ -259,7 +259,7 @@ type Runtime struct {
 	dial      AgentDialer
 	waitVM    func(ctx context.Context, podNamespace, podName string) (vmiRef, agentAddr string, err error)
 	noteSize  func(ns, name string, n int64)
-	mountsFor func(ns, name string) []agentproto.Mount
+	mountsFor func(ns, name, container string) []agentproto.Mount
 }
 
 func NewRuntime(store *Store, waitVM func(context.Context, string, string) (string, string, error), dial AgentDialer) *Runtime {
@@ -270,7 +270,7 @@ func (r *Runtime) SetNoteSize(fn func(ns, name string, n int64)) {
 	r.noteSize = fn
 }
 
-func (r *Runtime) SetMountsFor(fn func(ns, name string) []agentproto.Mount) {
+func (r *Runtime) SetMountsFor(fn func(ns, name, container string) []agentproto.Mount) {
 	r.mountsFor = fn
 }
 
@@ -419,7 +419,7 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 	var mounts []agentproto.Mount
 	if r.mountsFor != nil {
 		if sb := r.store.GetSandbox(c.SandboxID); sb != nil {
-			mounts = r.mountsFor(sb.Namespace, sb.Name)
+			mounts = r.mountsFor(sb.Namespace, sb.Name, c.Name)
 		}
 	}
 	_, err = cli.Call(agentproto.MethodStart, agentproto.StartRequest{

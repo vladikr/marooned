@@ -12,4 +12,8 @@ func TestUserRootfsCapacity(t *testing.T) {
 	if got.Value() != want {
 		t.Fatalf("large image cap %d want %d", got.Value(), want)
 	}
+	got = UserRootfsCapacityN(5*1024*1024, 2)
+	if got.Value() != 2*256*1024*1024 {
+		t.Fatalf("two containers cap %d", got.Value())
+	}
 }

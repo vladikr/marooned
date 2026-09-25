@@ -29,10 +29,26 @@ func DiskSerial(volumeName string) string {
 	return string(b)
 }
 
-// GuestMounts returns mounts for stripped emptyDir (guest tmpfs) and PVC
-// (filesystem volumeMounts → virtio-blk mount; volumeDevices → raw bind).
-// Uses the webhook snapshot when the live spec has already been stripped.
+// WorkloadCount is init + app containers in the pod (at least 1).
+func WorkloadCount(pod *corev1.Pod) int {
+	if pod == nil {
+		return 1
+	}
+	n := len(pod.Spec.Containers) + len(pod.Spec.InitContainers)
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+// GuestMounts returns mounts for every app container (not init).
 func GuestMounts(pod *corev1.Pod) []GuestMount {
+	return GuestMountsFor(pod, "")
+}
+
+// GuestMountsFor returns mounts for one container name, or every app
+// container when name is empty. Init containers are included when named.
+func GuestMountsFor(pod *corev1.Pod, container string) []GuestMount {
 	if pod == nil {
 		return nil
 	}
@@ -42,7 +58,10 @@ func GuestMounts(pod *corev1.Pod) []GuestMount {
 		volByName[v.Name] = v
 	}
 	var out []GuestMount
-	for _, c := range src.Spec.Containers {
+	walk := func(c corev1.Container) {
+		if container != "" && c.Name != container {
+			return
+		}
 		for _, m := range c.VolumeMounts {
 			if gm := guestMountFor(volByName, m.Name, m.MountPath, m.ReadOnly, false); gm != nil {
 				out = append(out, *gm)
@@ -53,6 +72,14 @@ func GuestMounts(pod *corev1.Pod) []GuestMount {
 				out = append(out, *gm)
 			}
 		}
+	}
+	if container != "" {
+		for _, c := range src.Spec.InitContainers {
+			walk(c)
+		}
+	}
+	for _, c := range src.Spec.Containers {
+		walk(c)
 	}
 	return out
 }

@@ -1,0 +1,31 @@
+# One VMI, init then app (kubelet owns the order). Shared emptyDir is a
+# guest tmpfs bind-mounted into both rootfs trees (not virtiofs).
+#
+#   $K apply -f examples/sandbox-pod-multi.yaml
+#   $K exec isolated-multi -c box -- cat /shared/ready
+# Expect: init-ok
+apiVersion: v1
+kind: Pod
+metadata:
+  name: isolated-multi
+spec:
+  runtimeClassName: marooned
+  initContainers:
+  - name: init
+    image: quay.io/prometheus/busybox:latest
+    imagePullPolicy: Never
+    command: ["/bin/sh", "-c", "echo init-ok > /shared/ready"]
+    volumeMounts:
+    - name: shared
+      mountPath: /shared
+  containers:
+  - name: box
+    image: quay.io/prometheus/busybox:latest
+    imagePullPolicy: Never
+    command: ["/bin/sh", "-c", "cat /shared/ready; exec httpd -f -p 8080 -h /shared"]
+    volumeMounts:
+    - name: shared
+      mountPath: /shared
+  volumes:
+  - name: shared
+    emptyDir: {}

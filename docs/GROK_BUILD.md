@@ -38,8 +38,7 @@ Confidential compute is the same object model with
 - Running virt-launcher as root to make virtiofs RW
 - Second KubeVirt CR or second virt-controller
 - Merging virt-controller’s generated pod spec back onto the user Pod
-- Per-container RuntimeClass (it does not exist)
-- Multi-container pods beyond one pause + one workload in v1
+- Per-container RuntimeClass (it does not exist; the whole Pod is marooned)
 - Live migration of the hidden VMI in v1 (design so it is not painted into a corner)
 - SNP/TDX + SR-IOV/PCI passthrough in the same VMI (KubeVirt CC PoC does not support it)
 - In-cluster evidence verification by KubeVirt or by maroonedpods on the hypervisor node

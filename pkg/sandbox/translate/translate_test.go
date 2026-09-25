@@ -139,6 +139,21 @@ func TestTranslateUserRootfsEmptyDisk(t *testing.T) {
 	}
 }
 
+func TestTranslateUserRootfsGrowsWithWorkloads(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	p.Spec.InitContainers = []corev1.Container{{Name: "init", Image: "busybox"}}
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})
+	for _, vol := range res.VMI.Spec.Volumes {
+		if vol.Name == sandbox.UserRootfsVolume && vol.EmptyDisk != nil {
+			if vol.EmptyDisk.Capacity.Value() != 2*256*1024*1024 {
+				t.Fatalf("capacity %d want 512Mi", vol.EmptyDisk.Capacity.Value())
+			}
+			return
+		}
+	}
+	t.Fatal("missing user-rootfs")
+}
+
 func TestTranslateAutoattachVSOCK(t *testing.T) {
 	p := podWithResources("1", "512Mi")
 	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})

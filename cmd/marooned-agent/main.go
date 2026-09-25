@@ -419,21 +419,57 @@ func ensureMountIn(base, containerID string, m agentproto.Mount) error {
 	if m.Kind == "block" {
 		return bindBlockDevice(target, m)
 	}
-	if err := os.MkdirAll(target, 0755); err != nil {
+	if m.Kind != "tmpfs" && m.Kind != "virtio-blk" {
+		if err := os.MkdirAll(target, 0755); err != nil {
+			return err
+		}
+		return nil
+	}
+	shared := sharedVolPath(m)
+	if err := ensureSharedMounted(shared, m); err != nil {
+		return err
+	}
+	return bindMount(shared, target)
+}
+
+func sharedVolPath(m agentproto.Mount) string {
+	name := m.VolumeName
+	if name == "" {
+		name = sandbox.DiskSerial(m.GuestPath)
+	}
+	return filepath.Join(volRoot, name)
+}
+
+func ensureSharedMounted(shared string, m agentproto.Mount) error {
+	if isMountPoint(shared) {
+		return nil
+	}
+	if err := os.MkdirAll(shared, 0755); err != nil {
 		return err
 	}
 	switch m.Kind {
 	case "tmpfs":
-		err := syscall.Mount("tmpfs", target, "tmpfs", 0, "")
+		err := syscall.Mount("tmpfs", shared, "tmpfs", 0, "")
 		if err == syscall.EBUSY {
 			return nil
 		}
 		return err
 	case "virtio-blk":
-		return mountVirtioBlk(target, m)
+		return mountVirtioBlk(shared, m)
 	default:
 		return nil
 	}
+}
+
+func bindMount(src, dst string) error {
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+	err := syscall.Mount(src, dst, "", syscall.MS_BIND, "")
+	if err == syscall.EBUSY {
+		return nil
+	}
+	return err
 }
 
 var diskWait = 60 * time.Second

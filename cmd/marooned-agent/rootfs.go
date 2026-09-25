@@ -15,7 +15,10 @@ import (
 	"maroonedpods.io/maroonedpods/pkg/sandbox/agentproto"
 )
 
-const ctrRoot = "/run/marooned"
+const (
+	ctrRoot = "/run/marooned/disk"
+	volRoot = "/run/marooned/vols"
+)
 
 type unpackJob struct {
 	w   *io.PipeWriter

@@ -153,8 +153,8 @@ func annotateRootfsBytes(kube *kubernetes.Clientset) func(ns, name string, n int
 	}
 }
 
-func guestMounts(kube *kubernetes.Clientset) func(ns, name string) []agentproto.Mount {
-	return func(ns, name string) []agentproto.Mount {
+func guestMounts(kube *kubernetes.Clientset) func(ns, name, container string) []agentproto.Mount {
+	return func(ns, name, container string) []agentproto.Mount {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		pod, err := kube.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
@@ -163,7 +163,7 @@ func guestMounts(kube *kubernetes.Clientset) func(ns, name string) []agentproto.
 			return nil
 		}
 		var out []agentproto.Mount
-		for _, m := range sandbox.GuestMounts(pod) {
+		for _, m := range sandbox.GuestMountsFor(pod, container) {
 			out = append(out, agentproto.Mount{
 				VolumeName: m.VolumeName,
 				GuestPath:  m.GuestPath,
