@@ -23,7 +23,6 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - Agent MethodStats from guest /proc (workload PID tree RSS + CPU ticks)
 - Shim /v1/ContainerStats and /v1/PodSandboxStats
 - marooned-oci events --stats (runc-shaped JSON)
-- kubectl top / HPA still follow the pause cgroup until CRI-O is taught to call runtime events
 - Query guest stats from the shim pod (hostPath /run/marooned-oci), not virt-handler
 - Guest PID 1 is busybox sh (restarts agent). Go agent must not be init (exit 2 → kernel panic).
 - log-pump HTTP client DisableKeepAlives so vsock sessions do not leak
@@ -47,10 +46,23 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - Multi-container / init: verified (`isolated-multi` Ready; `cat /shared/ready` → init-ok). One VMI; pause stays under conmon so init exit 0 is waitable.
 - Large-image: Pod+image for the engine; weights on a data PVC. `examples/sandbox-model.yaml` verified (`/models/ok` and wget 127.0.0.1 → model-ok). No importer. `rootfs-volume` air-gap only.
 - e2e: tests/e2e_sandbox_test.go already checks guest exec (`/tmp/index.html`, `/scratch/ok`, httpd) + logs, not only Running
-- One cgroup: documented in docs/sandbox-mode.md (two cgroups; do not join qemu to the user Pod). `kubectl top`/HPA still follow pause.
+- One cgroup: documented in docs/sandbox-mode.md (two cgroups; do not join qemu to the user Pod)
 - Python: verified (`python3` 3.12.14, `/scratch/ok` → vol-ok, wget 127.0.0.1:8080 → marooned-python-ok)
 - Kata-shaped nginx: verified (Alpine os-release, Welcome to nginx, Service ClusterIP wget from another sandbox pod)
-- Node-mode (not in this repo)
+
+## Still planned
+
+- **kubectl top / HPA:** teach CRI-O (or kubelet) to use our CRI stats (`events --stats`, guest RSS/CPU) instead of the pause cgroup. Do not put qemu in the user Pod cgroup.
+- **Warm pool:** pre-booted VMIs per node / size class / TEE (code exists; not cluster-verified as the default path).
+- **Guest `status.podIP`:** still the pause CNI address; workload IP is `maroonedpods.io/guest-ip` + EndpointSlice.
+- **Always-restart timestamp:** kubelet may show "272y ago" (cosmetic).
+- **Devices:** hugepages translation; one SR-IOV path (non-TEE); DRA only if the cluster gate is on; reject TEE + SR-IOV/GPU.
+- **TEE:** Pod annotation `maroonedpods.io/tee`; UEFI sandbox-tee; no kernelBoot on that path.
+- **Live migration:** v1 non-goal; RWX block stays virtio-blk so we are not painted into a corner.
+- **e2e on cluster:** `tests/e2e_sandbox_test.go` exists; not run as a gated kubevirtci job.
+- **Node-mode:** other repo (`maroonedpods`); do not install both operators.
+- **Image PVC importer:** not planned (engine image + weights PVC instead).
+- **virtiofs / privileged virt-launcher:** not planned.
 
 ## Build/test contract
 
