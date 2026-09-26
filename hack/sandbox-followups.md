@@ -52,15 +52,19 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 
 ## Still planned
 
-- **kubectl top / HPA:** teach CRI-O (or kubelet) to use our CRI stats (`events --stats`, guest RSS/CPU) instead of the pause cgroup. Do not put qemu in the user Pod cgroup.
-- **Warm pool:** pre-booted VMIs per node / size class / TEE (code exists; not cluster-verified as the default path).
-- **Guest `status.podIP`:** still the pause CNI address; workload IP is `maroonedpods.io/guest-ip` + EndpointSlice.
-- **Always-restart timestamp:** kubelet may show "272y ago" (cosmetic).
-- **Devices:** hugepages translation; one SR-IOV path (non-TEE); DRA only if the cluster gate is on; reject TEE + SR-IOV/GPU.
-- **TEE:** Pod annotation `maroonedpods.io/tee`; UEFI sandbox-tee; no kernelBoot on that path.
-- **Live migration:** v1 non-goal; RWX block stays virtio-blk so we are not painted into a corner.
-- **e2e on cluster:** `tests/e2e_sandbox_test.go` exists; not run as a gated kubevirtci job.
-- **Node-mode:** other repo (`maroonedpods`); do not install both operators.
+GitHub issues track these. Next in order: #3 → #4 → #5 → #6.
+
+- **kubectl top / HPA:** #3 — CRI-O should use our CRI stats, not the pause cgroup.
+- **Guest `status.podIP`:** #4 — still the pause CNI address.
+- **Always-restart timestamp:** #5 — kubelet may show "272y ago".
+- **Dedicated CPUs:** #6 — Guaranteed QoS / annotation → VMI `dedicatedCPUPlacement`.
+- **Rename this repo / product:** #7 — sandbox Pods are not marooned on a VM-node.
+- **Warm pool:** #8
+- **Devices (hugepages / SR-IOV / DRA):** #9
+- **TEE:** #10
+- **Live migration (later):** #11
+- **e2e on cluster:** #12
+- **Node-mode (other repo):** #13
 - **Image PVC importer:** not planned (engine image + weights PVC instead).
 - **virtiofs / privileged virt-launcher:** not planned.
 
