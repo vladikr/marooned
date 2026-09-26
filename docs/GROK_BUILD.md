@@ -329,7 +329,7 @@ a side channel.
 | Pod volume | VMI | Guest agent |
 |---|---|---|
 | PVC Block | virtio-blk disk | bind device or mount if formatted |
-| PVC Filesystem RWO | virtio-blk disk (not virtiofs) | mount filesystem, bind to volumeMount.path |
+| PVC Filesystem RWO | virtio-blk disk (not virtiofs) | mount filesystem, bind to volumeMount.path (model weights, HF cache) |
 | PVC Filesystem RWX | virtio-blk disk (not virtiofs) | same as RWO; shared block is the live-migration path |
 | emptyDir | virtio empty disk **or** guest tmpfs | mount at path |
 | configMap/secret/projected | extra small disk (iso/fs) or agent files | write into the container root |
