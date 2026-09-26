@@ -65,6 +65,7 @@ GitHub issues track these. Next in order: #3 → #4 → #5 → #6.
 - **Live migration (later):** #11
 - **e2e on cluster:** #12
 - **Node-mode (other repo):** #13
+- **containerd:** #14 — v1 is CRI-O (conmon, `/var/run/crio/exits`). Need a RuntimeClass path for containerd.
 - **Image PVC importer:** not planned (engine image + weights PVC instead).
 - **virtiofs / privileged virt-launcher:** not planned.
 
