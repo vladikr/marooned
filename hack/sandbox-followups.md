@@ -54,7 +54,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 
 GitHub issues track these. Next in order: #3 → #4 → #5 → #6.
 
-- **kubectl top / HPA:** #3 — CRI-O should use our CRI stats, not the pause cgroup.
+- **kubectl top / HPA:** #3 — shim writes `maroonedpods.io/guest-stats`; `maroonedpods-server` serves `metrics.k8s.io` (see `examples/sandbox-metrics-apiservice.yaml`). CRI-O cgroup path still pause.
 - **Guest `status.podIP`:** #4 — still the pause CNI address.
 - **Always-restart timestamp:** #5 — kubelet may show "272y ago".
 - **Dedicated CPUs:** #6 — Guaranteed QoS / annotation → VMI `dedicatedCPUPlacement`.

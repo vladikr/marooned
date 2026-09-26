@@ -56,6 +56,7 @@ func (app *MaroonedPodsServer) initHandler(maroonedpodsCli kubernetes.Interface)
 	mux := http.NewServeMux()
 	mux.HandleFunc(healthzPath, app.handleHealthzRequest)
 	mux.Handle(ServePath, NewMaroonedPodsServerHandler(app.maroonedpodsNS, maroonedpodsCli))
+	mux.Handle("/apis/metrics.k8s.io/", &metricsHandler{cli: maroonedpodsCli})
 	app.handler = cors.AllowAll().Handler(mux)
 
 }

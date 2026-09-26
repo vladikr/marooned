@@ -75,9 +75,11 @@ cgroup would fight KubeVirt.
 | User Pod | CRI-O pause + RuntimeClass `podFixed` (`100m` + `256Mi`) + the Pod’s own cpu/memory **requests** | Scheduler, `kubectl top`, HPA, eviction |
 | virt-launcher | QEMU + guest RAM (`requests` + `extraGuestOverhead`) | The real node RAM/CPU for the VM |
 
-`kubectl top` follows the **pause** cgroup, not the guest. CRI stats
-(`marooned-oci events --stats`) report guest RSS; kubelet does not use
-them for HPA until CRI-O calls the runtime stats path.
+`marooned-oci events --stats` and Pod annotation `maroonedpods.io/guest-stats`
+are guest RSS/CPU. Apply `examples/sandbox-metrics-apiservice.yaml` so
+`kubectl top` / HPA use that (not the pause cgroup). Skip if metrics-server
+already owns `metrics.k8s.io`. Node cgroup accounting is unchanged
+(virt-launcher still holds qemu). CRI-O itself still reads the pause cgroup.
 
 Set the serving Pod’s `resources.requests/limits` to what the **guest
 workload** needs (vLLM, Ollama). That is what sizes the VMI. The

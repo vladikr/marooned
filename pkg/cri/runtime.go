@@ -701,6 +701,39 @@ func (r *Runtime) PodSandboxStats(ctx context.Context, id string) (*PodSandboxSt
 	return &PodSandboxStats{ID: id, CPUNano: cpu, RSSBytes: rss, Pids: pids, TimestampUnixNano: ts}, nil
 }
 
+// PodGuestStat is guest usage for one user Pod (not the pause cgroup).
+type PodGuestStat struct {
+	Namespace string
+	Name      string
+	Snap      sandbox.StatsSnapshot
+}
+
+func (r *Runtime) CollectGuestStats(ctx context.Context) []PodGuestStat {
+	var out []PodGuestStat
+	for _, c := range r.store.ListContainers() {
+		sb := r.store.GetSandbox(c.SandboxID)
+		if sb == nil || sb.Namespace == "" || sb.Name == "" {
+			continue
+		}
+		st, err := r.ContainerStats(ctx, c.ID)
+		if err != nil || st == nil {
+			continue
+		}
+		out = append(out, PodGuestStat{
+			Namespace: sb.Namespace,
+			Name:      sb.Name,
+			Snap: sandbox.StatsSnapshot{
+				Container: c.Name,
+				CPUNano:   st.CPUNano,
+				RSSBytes:  st.RSSBytes,
+				Pids:      st.Pids,
+				TS:        st.TimestampUnixNano,
+			},
+		})
+	}
+	return out
+}
+
 func (r *Runtime) WaitContainer(_ context.Context, id string) error {
 	c := r.store.GetContainer(id)
 	if c == nil {

@@ -39,6 +39,10 @@ if [ "$provider" = "external" ]; then
 else
   echo "==> CRI-O marooned handler (kubevirtci ssh fallback)"
   ./hack/kubevirtci-install-crio-handler.sh
+  if ! ./cluster-up/kubectl.sh get apiservice v1beta1.metrics.k8s.io >/dev/null 2>&1; then
+    echo "==> metrics.k8s.io from guest stats (kubectl top)"
+    ./cluster-up/kubectl.sh apply -f examples/sandbox-metrics-apiservice.yaml
+  fi
 fi
 
 echo
