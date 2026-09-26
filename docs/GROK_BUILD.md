@@ -149,7 +149,7 @@ handler: marooned
 overhead:
   podFixed:
     cpu: 100m
-    memory: 128Mi
+    memory: 256Mi
 ```
 
 `handler: marooned` must match containerd/CRI-O config on every worker

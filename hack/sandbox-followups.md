@@ -47,7 +47,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 - Multi-container / init: verified (`isolated-multi` Ready; `cat /shared/ready` → init-ok). One VMI; pause stays under conmon so init exit 0 is waitable.
 - Large-image: Pod+image for the engine; weights on a data PVC. `examples/sandbox-model.yaml` verified (`/models/ok` and wget 127.0.0.1 → model-ok). No importer. `rootfs-volume` air-gap only.
 - e2e: tests/e2e_sandbox_test.go already checks guest exec (`/tmp/index.html`, `/scratch/ok`, httpd) + logs, not only Running
-- One cgroup: document guest+virt-launcher limits; do not join qemu to user pod cgroup yet
+- One cgroup: documented in docs/sandbox-mode.md (two cgroups; do not join qemu to the user Pod). `kubectl top`/HPA still follow pause.
 - Python: verified (`python3` 3.12.14, `/scratch/ok` → vol-ok, wget 127.0.0.1:8080 → marooned-python-ok)
 - Kata-shaped nginx: verified (Alpine os-release, Welcome to nginx, Service ClusterIP wget from another sandbox pod)
 - Node-mode (not in this repo)

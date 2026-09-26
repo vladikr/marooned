@@ -33,7 +33,7 @@ handler: marooned
 overhead:
   podFixed:
     cpu: 100m
-    memory: 128Mi
+    memory: 256Mi
 ```
 
 `handler: marooned` must match the node runtime config:
@@ -64,13 +64,28 @@ Service IP. The functional suite uses masquerade so it can run without OVN-K.
 The adaptor publishes guest IPs on an EndpointSlice owned for the Pod. It does
 not fight kubelet for `status.podIP`.
 
-## CPU / memory double-count
+## CPU / memory and cgroups
 
-v1 leaves cpu/memory **requests** on the user Pod (scheduler fairness) and also
-sizes the hidden VMI from those requests plus `extraGuestOverhead`. Devices,
-hugepages, and PVCs are stripped from the user Pod. The original volume list
-is stored on `maroonedpods.io/volumes` and `maroonedpods.io/placement=user|infra`
-so the adaptor can reconstruct the VMI disks.
+There are **two** cgroups. We do not put qemu in the user Pod’s cgroup
+(Kata’s “one cgroup”). virt-launcher owns QEMU; joining it to the pause
+cgroup would fight KubeVirt.
+
+| Object | What it is | What accounts it |
+|---|---|---|
+| User Pod | CRI-O pause + RuntimeClass `podFixed` (`100m` + `256Mi`) + the Pod’s own cpu/memory **requests** | Scheduler, `kubectl top`, HPA, eviction |
+| virt-launcher | QEMU + guest RAM (`requests` + `extraGuestOverhead`) | The real node RAM/CPU for the VM |
+
+`kubectl top` follows the **pause** cgroup, not the guest. CRI stats
+(`marooned-oci events --stats`) report guest RSS; kubelet does not use
+them for HPA until CRI-O calls the runtime stats path.
+
+Set the serving Pod’s `resources.requests/limits` to what the **guest
+workload** needs (vLLM, Ollama). That is what sizes the VMI. The
+RuntimeClass tax is extra, on purpose, so the node is not surprised by
+qemu.
+
+Do not subtract qemu from the user request to “avoid double-count.”
+The scheduler must see both the guest and the virt-launcher tax.
 
 ## Confidential compute
 
