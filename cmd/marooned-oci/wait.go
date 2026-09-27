@@ -48,45 +48,70 @@ func doGuestWait(root string, args []string) int {
 	_ = shimJSONWait("/v1/WaitContainer", map[string]string{"id": criID})
 	code := guestExitCode(criID)
 	gwlog(dir, fmt.Sprintf("guest exited code=%d", code))
-	_ = os.WriteFile(filepath.Join(dir, "guest-exited"), []byte("1"), 0644)
-	stopHostPause(dir, id)
-	writeCrioExit(id, code)
-	if st, err := readState(dir); err == nil {
-		st.Status = "stopped"
-		writeState(dir, st)
-	}
+	finishOCIContainer(dir, id, code)
 	gwlog(dir, "notified crio exit")
 	return 0
 }
 
-func stopHostPause(dir, id string) {
-	st, err := readState(dir)
-	if err != nil {
-		return
+// finishOCIContainer records the guest exit and SIGTERMs the host pause so
+// it exits with that code. Do not systemctl-stop/SIGKILL: that made conmon
+// report -1 and a zero FinishedAt, so init never went Succeeded.
+func finishOCIContainer(dir, id string, code int) {
+	_ = os.WriteFile(filepath.Join(dir, "guest-exited"), []byte("1"), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "exitcode"), []byte(strconv.Itoa(code)+"\n"), 0644)
+	if err := writeCrioExit(id, code); err != nil {
+		gwlog(dir, "crio exit file: "+err.Error())
 	}
-	_ = exec.Command("systemctl", "stop", pauseUnit(id)).Run()
+	st, err := readState(dir)
+	if err == nil {
+		st.Status = "stopped"
+		st.ExitCode = code
+		if st.Finished == "" {
+			st.Finished = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		writeState(dir, st)
+	}
 	if st.PID > 1 {
 		_ = syscall.Kill(st.PID, syscall.SIGTERM)
-		time.Sleep(200 * time.Millisecond)
-		_ = syscall.Kill(st.PID, syscall.SIGKILL)
-	}
-	if pf := strings.TrimSpace(string(mustRead(filepath.Join(dir, "pidfile")))); pf != "" {
-		if b, err := os.ReadFile(pf); err == nil {
-			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 1 {
-				_ = syscall.Kill(pid, syscall.SIGKILL)
-			}
-		}
 	}
 }
 
-func writeCrioExit(id string, code int) {
+func writeCrioExit(id string, code int) error {
 	body := []byte(strconv.Itoa(code) + "\n")
+	var last error
+	wrote := false
 	for _, dir := range crioExitDirs {
 		if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 			continue
 		}
-		_ = os.WriteFile(filepath.Join(dir, id), body, 0644)
+		if err := os.WriteFile(filepath.Join(dir, id), body, 0644); err != nil {
+			last = err
+			continue
+		}
+		wrote = true
 	}
+	if wrote {
+		return nil
+	}
+	if last != nil {
+		return last
+	}
+	return fmt.Errorf("no crio exit dir")
+}
+
+func pauseExitCode(dir string) int {
+	if dir == "" {
+		return 0
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "exitcode"))
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func guestExitCode(criID string) int {

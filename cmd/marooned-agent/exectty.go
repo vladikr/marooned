@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"syscall"
 
 	"k8s.io/klog/v2"
@@ -44,7 +43,7 @@ func (a *agent) execTTY(conn net.Conn, env agentproto.Envelope) {
 		fail(err)
 		return
 	}
-	root := filepath.Join(ctrRoot, req.ContainerID, "root")
+	root := a.containerDir(req.ContainerID)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdinR, stdoutW, stdoutW
 	if st, err := os.Stat(root); err == nil && st.IsDir() && a.ctrHostPid(req.ContainerID) > 0 {

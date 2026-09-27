@@ -17,20 +17,22 @@ import (
 
 	"k8s.io/klog/v2"
 
+	"maroonedpods.io/maroonedpods/pkg/sandbox"
 	"maroonedpods.io/maroonedpods/pkg/sandbox/agentproto"
 	"maroonedpods.io/maroonedpods/pkg/sandbox/vsock"
 )
 
 type container struct {
-	id       string
-	cmd      *exec.Cmd
-	stdout   bytes.Buffer
-	stderr   bytes.Buffer
-	mu       sync.Mutex
-	exited   bool
-	code     int32
-	restarts uint32
-	done     chan struct{}
+	id         string
+	cmd        *exec.Cmd
+	stdout     bytes.Buffer
+	stderr     bytes.Buffer
+	mu         sync.Mutex
+	exited     bool
+	code       int32
+	restarts   uint32
+	finishedAt int64
+	done       chan struct{}
 }
 
 type agent struct {
@@ -39,6 +41,7 @@ type agent struct {
 	unpackers  map[string]*unpackJob
 	imageBytes map[string]int64
 	diskBytes  map[string]int64
+	roots      map[string]string
 }
 
 func main() {
@@ -57,6 +60,7 @@ func main() {
 		unpackers:  map[string]*unpackJob{},
 		imageBytes: map[string]int64{},
 		diskBytes:  map[string]int64{},
+		roots:      map[string]string{},
 	}
 	var ln net.Listener
 	var err error
@@ -114,7 +118,13 @@ func (a *agent) handle(env agentproto.Envelope) agentproto.Envelope {
 	switch env.Method {
 	case agentproto.MethodPing:
 	case agentproto.MethodPrepareRootfs:
-		err = a.prepareRootfs(env.Payload)
+		var resp agentproto.PrepareRootfsResponse
+		resp, err = a.prepareRootfs(env.Payload)
+		if err == nil {
+			out.Payload, _ = json.Marshal(resp)
+		}
+	case agentproto.MethodPullImage:
+		err = a.pull(env.Payload)
 	case agentproto.MethodRootfs:
 		err = a.rootfs(env.Payload)
 	case agentproto.MethodStart:
@@ -161,17 +171,42 @@ func (a *agent) handle(env agentproto.Envelope) agentproto.Envelope {
 	return out
 }
 
+func (a *agent) pull(payload json.RawMessage) error {
+	var req struct {
+		ContainerID string `json:"containerID"`
+		Image       string `json:"image"`
+	}
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return err
+	}
+	if req.ContainerID == "" || req.Image == "" {
+		return fmt.Errorf("containerID and image required")
+	}
+	dest := a.containerDir(req.ContainerID)
+	if rootfsPopulated(dest) {
+		klog.Infof("guest-pull skip, rootfs populated at %s", dest)
+		return nil
+	}
+	klog.Infof("guest-pull %s -> %s", req.Image, dest)
+	return pullImage(dest, req.Image)
+}
+
 func (a *agent) start(payload json.RawMessage) error {
 	var req agentproto.StartRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return err
 	}
 	for _, m := range req.Mounts {
-		if err := ensureMountIn(ctrRoot, req.ContainerID, m); err != nil {
+		if m.Kind == "block" {
+			// prepareChroot bind-mounts VM /dev over the rootfs /dev.
+			// Bind the raw disk after that, inside startInRoot.
+			continue
+		}
+		if err := ensureMountInRoot(a.containerDir(req.ContainerID), m); err != nil {
 			return err
 		}
 	}
-	root := filepath.Join(ctrRoot, req.ContainerID, "root")
+	root := a.containerDir(req.ContainerID)
 	var cmd *exec.Cmd
 	if st, err := os.Stat(root); err == nil && st.IsDir() {
 		cmd, err = startInRoot(root, req)
@@ -212,6 +247,7 @@ func (a *agent) start(payload json.RawMessage) error {
 		err := cmd.Wait()
 		ctr.mu.Lock()
 		ctr.exited = true
+		ctr.finishedAt = time.Now().UnixNano()
 		if err != nil {
 			if ee, ok := err.(*exec.ExitError); ok {
 				ctr.code = int32(ee.ExitCode())
@@ -252,7 +288,7 @@ func (a *agent) status(payload json.RawMessage) (agentproto.StatusResponse, erro
 	}
 	ctr.mu.Lock()
 	defer ctr.mu.Unlock()
-	out := agentproto.StatusResponse{ExitCode: ctr.code, Restarts: ctr.restarts}
+	out := agentproto.StatusResponse{ExitCode: ctr.code, Restarts: ctr.restarts, FinishedUnixNano: ctr.finishedAt}
 	if ctr.cmd != nil && ctr.cmd.Process != nil {
 		out.Pid = ctr.cmd.Process.Pid
 	}
@@ -322,7 +358,7 @@ func (a *agent) exec(payload json.RawMessage) (agentproto.ExecResponse, error) {
 		}
 	}
 	argv := append([]string{}, req.Command...)
-	root := filepath.Join(ctrRoot, req.ContainerID, "root")
+	root := a.containerDir(req.ContainerID)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	if st, err := os.Stat(root); err == nil && st.IsDir() && a.ctrHostPid(req.ContainerID) > 0 {
 		argv[0] = lookPathInRoot(root, argv[0], nil)
@@ -384,25 +420,179 @@ func ensureMount(m agentproto.Mount) error {
 }
 
 func ensureMountIn(base, containerID string, m agentproto.Mount) error {
+	root := ""
+	if containerID != "" {
+		root = filepath.Join(base, containerID, "root")
+	}
+	return ensureMountInRoot(root, m)
+}
+
+func ensureMountInRoot(root string, m agentproto.Mount) error {
 	if m.GuestPath == "" {
 		return nil
 	}
 	target := m.GuestPath
-	if containerID != "" {
-		root := filepath.Join(base, containerID, "root")
+	if root != "" {
 		target = filepath.Join(root, strings.TrimPrefix(m.GuestPath, "/"))
 	}
-	if err := os.MkdirAll(target, 0755); err != nil {
+	if m.Kind == "block" {
+		return bindBlockDevice(target, m)
+	}
+	if m.Kind != "tmpfs" && m.Kind != "virtio-blk" {
+		if err := os.MkdirAll(target, 0755); err != nil {
+			return err
+		}
+		return nil
+	}
+	shared := sharedVolPath(m)
+	if err := ensureSharedMounted(shared, m); err != nil {
+		return err
+	}
+	return bindMount(shared, target)
+}
+
+func sharedVolPath(m agentproto.Mount) string {
+	name := m.VolumeName
+	if name == "" {
+		name = sandbox.DiskSerial(m.GuestPath)
+	}
+	return filepath.Join(volRoot, name)
+}
+
+func ensureSharedMounted(shared string, m agentproto.Mount) error {
+	if isMountPoint(shared) {
+		return nil
+	}
+	if err := os.MkdirAll(shared, 0755); err != nil {
 		return err
 	}
 	switch m.Kind {
 	case "tmpfs":
-		err := syscall.Mount("tmpfs", target, "tmpfs", 0, "")
+		err := syscall.Mount("tmpfs", shared, "tmpfs", 0, "")
 		if err == syscall.EBUSY {
 			return nil
 		}
 		return err
+	case "virtio-blk":
+		return mountVirtioBlk(shared, m)
 	default:
 		return nil
 	}
+}
+
+func bindMount(src, dst string) error {
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+	err := syscall.Mount(src, dst, "", syscall.MS_BIND, "")
+	if err == syscall.EBUSY {
+		return nil
+	}
+	return err
+}
+
+var diskWait = 60 * time.Second
+
+func waitDiskBySerial(volumeName, serial string) (string, error) {
+	if serial == "" {
+		serial = sandbox.DiskSerial(volumeName)
+	}
+	var dev string
+	var last error
+	deadline := time.Now().Add(diskWait)
+	for {
+		dev, last = findDiskBySerial(serial)
+		if last == nil {
+			return dev, nil
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	return "", fmt.Errorf("virtio-blk serial %q: %v", serial, last)
+}
+
+func mountVirtioBlk(target string, m agentproto.Mount) error {
+	dev, err := waitDiskBySerial(m.VolumeName, m.Serial)
+	if err != nil {
+		return err
+	}
+	if !hasExtSuperblock(dev) {
+		if err := mkfs(dev); err != nil {
+			return fmt.Errorf("mkfs %s: %w", dev, err)
+		}
+	}
+	flags := uintptr(0)
+	if m.ReadOnly {
+		flags = syscall.MS_RDONLY
+	}
+	err = syscall.Mount(dev, target, "ext4", flags, "")
+	if err != nil {
+		err = syscall.Mount(dev, target, "ext2", flags, "")
+	}
+	if err == syscall.EBUSY {
+		return nil
+	}
+	return err
+}
+
+func prepareBlockTarget(target string) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return err
+	}
+	if st, err := os.Lstat(target); err == nil {
+		if st.IsDir() {
+			if err := os.Remove(target); err != nil {
+				return err
+			}
+		} else {
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	f, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+func bindBlockDevice(target string, m agentproto.Mount) error {
+	dev, err := waitDiskBySerial(m.VolumeName, m.Serial)
+	if err != nil {
+		return err
+	}
+	if err := prepareBlockTarget(target); err != nil {
+		return err
+	}
+	st, err := os.Stat(dev)
+	if err != nil {
+		return err
+	}
+	if sys, ok := st.Sys().(*syscall.Stat_t); ok {
+		_ = os.Remove(target)
+		mode := uint32(syscall.S_IFBLK | 0660)
+		if mknodErr := syscall.Mknod(target, mode, int(sys.Rdev)); mknodErr == nil {
+			if m.ReadOnly {
+				_ = os.Chmod(target, 0440)
+			}
+			return nil
+		}
+		if err := prepareBlockTarget(target); err != nil {
+			return err
+		}
+	}
+	err = syscall.Mount(dev, target, "", syscall.MS_BIND, "")
+	if err == syscall.EBUSY {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("bind %s -> %s: %w", dev, target, err)
+	}
+	if m.ReadOnly {
+		_ = syscall.Mount("", target, "", syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY, "")
+	}
+	return nil
 }

@@ -14,6 +14,7 @@ const (
 	MethodPing          = "Ping"
 	MethodRootfs        = "Rootfs"
 	MethodPrepareRootfs = "PrepareRootfs"
+	MethodPullImage     = "PullImage"
 	MethodStart         = "Start"
 	MethodStop          = "Stop"
 	MethodWait          = "Wait"
@@ -55,12 +56,19 @@ type RootfsChunk struct {
 	EOF         bool   `json:"eof"`
 }
 
-// PrepareRootfsRequest asks the agent to mkfs+mount the user-rootfs emptyDisk.
+// PrepareRootfsRequest asks the agent to mkfs+mount the user-rootfs disk.
 type PrepareRootfsRequest struct {
-	ContainerID string `json:"containerID"`
-	Serial      string `json:"serial"`
-	ImageBytes  int64  `json:"imageBytes"`
-	DiskBytes   int64  `json:"diskBytes"`
+	ContainerID   string `json:"containerID"`
+	ContainerName string `json:"containerName,omitempty"`
+	Serial        string `json:"serial"`
+	ImageBytes    int64  `json:"imageBytes"`
+	DiskBytes     int64  `json:"diskBytes"`
+}
+
+// PrepareRootfsResponse reports whether the disk already has a rootfs.
+type PrepareRootfsResponse struct {
+	Populated bool   `json:"populated"`
+	Path      string `json:"path,omitempty"`
 }
 
 // Mount is a guest path already backed by a virtio disk or tmpfs.
@@ -68,6 +76,7 @@ type Mount struct {
 	VolumeName string `json:"volumeName"`
 	GuestPath  string `json:"guestPath"`
 	Kind       string `json:"kind"`
+	Serial     string `json:"serial,omitempty"`
 	ReadOnly   bool   `json:"readOnly"`
 }
 
@@ -104,10 +113,11 @@ type StatusRequest struct {
 
 // StatusResponse is whether the guest workload is still running.
 type StatusResponse struct {
-	Running  bool   `json:"running"`
-	Pid      int    `json:"pid"`
-	ExitCode int32  `json:"exitCode"`
-	Restarts uint32 `json:"restarts"`
+	Running          bool   `json:"running"`
+	Pid              int    `json:"pid"`
+	ExitCode         int32  `json:"exitCode"`
+	Restarts         uint32 `json:"restarts"`
+	FinishedUnixNano int64  `json:"FinishedUnixNano,omitempty"`
 }
 
 // StatsRequest asks for guest process cgroup-ish usage.

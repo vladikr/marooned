@@ -16,6 +16,29 @@ func TestIsMountPointTempDir(t *testing.T) {
 	}
 }
 
+func TestRootfsPopulated(t *testing.T) {
+	dir := t.TempDir()
+	if rootfsPopulated(dir) {
+		t.Fatal("empty")
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "bin"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bin", "sh"), []byte("x"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if !rootfsPopulated(dir) {
+		t.Fatal("want populated")
+	}
+}
+
+func TestRootfsDestPrefersContainerName(t *testing.T) {
+	got := rootfsDest("box", "uid-box")
+	if got != filepath.Join(ctrRoot, "box", "root") {
+		t.Fatalf("%s", got)
+	}
+}
+
 func TestHasExtSuperblock(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "dev")
 	buf := make([]byte, 1100)

@@ -100,6 +100,8 @@ extract_apk util-linux-libs || extract_apk libblkid || true
 extract_apk util-linux-misc || extract_apk util-linux || true
 extract_apk libcom_err || true
 extract_apk libuuid || true
+extract_apk ca-certificates || true
+extract_apk ca-certificates-bundle || true
 # musl loads from /lib; alpine apks often put .so files in /usr/lib
 mkdir -p "${out}/rootfs/lib"
 if [ -d "${out}/rootfs/usr/lib" ]; then
@@ -141,6 +143,9 @@ if [ -n "$dev" ]; then
     ip addr add 10.0.2.2/24 dev "$dev" 2>/dev/null || true
     ip route add default via 10.0.2.1 2>/dev/null || true
   fi
+  if [ ! -s /etc/resolv.conf ]; then
+    printf 'nameserver 10.0.2.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
+  fi
 fi
 # Agent must not be PID 1: a Go process that exits (panic, deadlock
 # abort) is exit_group(2) and the kernel panics. busybox sh reaps and
@@ -175,7 +180,7 @@ copy_mod() {
   gzip -dc "$f" > "$ird/lib/modules/${n}.ko"
 }
 for m in virtio virtio_ring virtio_pci virtio_pci_legacy_dev virtio_pci_modern_dev virtio_blk \
-         failover net_failover virtio_net af_packet \
+         failover net_failover virtio_net af_packet ipv6 \
          crc16 libcrc32c crc32c_generic crc32c-intel mbcache jbd2 ext4 \
          vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
   copy_mod "$m"
@@ -192,7 +197,7 @@ $BB mount -t sysfs sys /sys
 $BB mount -t devtmpfs dev /dev || $BB mount -t tmpfs tmpfs /dev
 mkdir -p /newroot
 for m in virtio virtio_ring virtio_pci_legacy_dev virtio_pci_modern_dev virtio_pci virtio_blk \
-         failover net_failover virtio_net af_packet \
+         failover net_failover virtio_net af_packet ipv6 \
          crc16 libcrc32c crc32c_generic crc32c-intel mbcache jbd2 ext4 \
          vsock vmw_vsock_virtio_transport_common vmw_vsock_virtio_transport; do
   [ -f /lib/modules/${m}.ko ] && $BB insmod /lib/modules/${m}.ko && echo "insmod $m"

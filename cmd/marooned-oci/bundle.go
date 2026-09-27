@@ -1,20 +1,19 @@
 package main
 
 import (
-	"archive/tar"
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
-	"strings"
-	"syscall"
+
+	"maroonedpods.io/maroonedpods/pkg/sandbox"
 )
 
 type processSpec struct {
-	Args []string
-	Env  []string
-	Cwd  string
-	Root string
+	Args  []string
+	Env   []string
+	Cwd   string
+	Root  string
+	Image string
 }
 
 func readProcessSpec(bundle string) processSpec {
@@ -31,6 +30,7 @@ func readProcessSpec(bundle string) processSpec {
 			Env  []string `json:"env"`
 			Cwd  string   `json:"cwd"`
 		} `json:"process"`
+		Annotations map[string]string `json:"annotations"`
 	}
 	_ = json.Unmarshal(b, &cfg)
 	root := cfg.Root.Path
@@ -40,64 +40,15 @@ func readProcessSpec(bundle string) processSpec {
 	if !filepath.IsAbs(root) {
 		root = filepath.Join(bundle, root)
 	}
-	return processSpec{Args: cfg.Process.Args, Env: cfg.Process.Env, Cwd: cfg.Process.Cwd, Root: root}
-}
-
-func skipRootfsPath(rel string) bool {
-	first, _, _ := strings.Cut(rel, string(os.PathSeparator))
-	switch first {
-	case "proc", "sys", "dev", "run", "tmp":
-		return true
+	img := cfg.Annotations["io.kubernetes.cri-o.ImageName"]
+	if img == "" {
+		img = cfg.Annotations["io.kubernetes.cri-o.Image"]
 	}
-	return false
-}
-
-func fileDev(info os.FileInfo) uint64 {
-	if st, ok := info.Sys().(*syscall.Stat_t); ok {
-		return st.Dev
-	}
-	return 0
+	return processSpec{Args: cfg.Process.Args, Env: cfg.Process.Env, Cwd: cfg.Process.Cwd, Root: root, Image: img}
 }
 
 func dirSize(root string) int64 {
-	root = filepath.Clean(root)
-	st, err := os.Stat(root)
-	if err != nil {
-		return 0
-	}
-	rootDev := fileDev(st)
-	seen := map[uint64]struct{}{}
-	var n int64
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info == nil {
-			return nil
-		}
-		rel, _ := filepath.Rel(root, path)
-		if rel != "." && skipRootfsPath(rel) {
-			if info.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if rootDev != 0 && fileDev(info) != 0 && fileDev(info) != rootDev {
-			if info.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
-			if _, dup := seen[st.Ino]; dup {
-				return nil
-			}
-			seen[st.Ino] = struct{}{}
-		}
-		n += info.Size()
-		return nil
-	})
-	return n
+	return sandbox.DirSize(root)
 }
 
 func tarDirectory(src, dst string) error {
@@ -109,71 +60,5 @@ func tarDirectory(src, dst string) error {
 		return err
 	}
 	defer f.Close()
-	tw := tar.NewWriter(f)
-	defer tw.Close()
-	src = filepath.Clean(src)
-	st, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-	srcDev := fileDev(st)
-	hardlinks := map[uint64]string{}
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		if skipRootfsPath(rel) {
-			if info.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if srcDev != 0 && fileDev(info) != 0 && fileDev(info) != srcDev {
-			if info.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		hdr, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		hdr.Name = rel
-		if st, ok := info.Sys().(*syscall.Stat_t); ok && info.Mode().IsRegular() && st.Nlink > 1 {
-			if first, ok := hardlinks[st.Ino]; ok {
-				hdr.Typeflag = tar.TypeLink
-				hdr.Linkname = first
-				hdr.Size = 0
-				return tw.WriteHeader(hdr)
-			}
-			hardlinks[st.Ino] = rel
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			link, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			hdr.Linkname = link
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		in, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		_, copyErr := io.Copy(tw, in)
-		_ = in.Close()
-		return copyErr
-	})
+	return sandbox.TarTree(f, src)
 }

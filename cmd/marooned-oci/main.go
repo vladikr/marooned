@@ -29,6 +29,10 @@ type state struct {
 	Status     string `json:"status"`
 	PID        int    `json:"pid"`
 	Bundle     string `json:"bundle"`
+	Created    string `json:"created,omitempty"`
+	Started    string `json:"started,omitempty"`
+	Finished   string `json:"finished,omitempty"`
+	ExitCode   int    `json:"exitCode,omitempty"`
 }
 
 func main() {
@@ -62,16 +66,25 @@ func main() {
 	rest := filtered[1:]
 	switch cmd {
 	case "pause-daemon":
-		os.Exit(runPauseDaemon())
+		os.Exit(runPauseDaemon(rest))
 	case "pause":
 		// Do not use select{}: the runtime treats "all goroutines asleep"
 		// as a deadlock and exits 2. Block on SIGTERM so CRI-O kill works.
+		// Optional dir: on SIGTERM, exit with that dir's exitcode file
+		// (guest wait writes it) so conmon sees the real status.
+		pauseDir := ""
+		if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+			pauseDir = rest[0]
+		}
 		signal.Ignore(syscall.SIGHUP, syscall.SIGPIPE)
 		detachFromRuntimeCgroup(os.Getpid())
+		if pauseDir != "" {
+			go runPauseForwards(pauseDir)
+		}
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
 		<-ch
-		os.Exit(0)
+		os.Exit(pauseExitCode(pauseDir))
 	case "create":
 		os.Exit(doCreate(root, rest))
 	case "start":
@@ -120,8 +133,8 @@ func doCreate(root string, args []string) int {
 	}
 	dir := filepath.Join(root, id)
 	_ = os.MkdirAll(dir, 0755)
-	pid := startPause(id)
-	st := state{OCIVersion: "1.0.2", ID: id, Status: "created", PID: pid, Bundle: bundle}
+	pid := startPause(id, dir)
+	st := state{OCIVersion: "1.0.2", ID: id, Status: "created", PID: pid, Bundle: bundle, Created: time.Now().UTC().Format(time.RFC3339Nano)}
 	writeState(dir, st)
 	if pidFile != "" {
 		_ = os.WriteFile(pidFile, []byte(strconv.Itoa(st.PID)), 0644)
@@ -151,12 +164,13 @@ func doStart(root string, args []string) int {
 		fatal("start: %v", err)
 	}
 	if st.PID <= 1 || !pidAlive(st.PID) {
-		st.PID = startPause(id)
+		st.PID = startPause(id, dir)
 		if pf := strings.TrimSpace(string(mustRead(filepath.Join(dir, "pidfile")))); pf != "" {
 			_ = os.WriteFile(pf, []byte(strconv.Itoa(st.PID)), 0644)
 		}
 	}
 	st.Status = "running"
+	st.Started = time.Now().UTC().Format(time.RFC3339Nano)
 	writeState(dir, st)
 	if strings.TrimSpace(string(mustRead(filepath.Join(dir, "sandbox")))) == "1" {
 		return 0
@@ -172,15 +186,28 @@ func doState(root string, args []string) int {
 	if err != nil {
 		fatal("state: %v", err)
 	}
-	if st.PID > 1 && !pidAlive(st.PID) {
-		st.Status = "stopped"
-	}
-	if st.Status == "running" && guestHasExited(dir) {
-		st.Status = "stopped"
-	}
+	out := applyStoppedState(dir, st)
 	enc := json.NewEncoder(os.Stdout)
-	_ = enc.Encode(st)
+	_ = enc.Encode(out)
 	return 0
+}
+
+func applyStoppedState(dir string, st state) state {
+	dead := st.PID > 1 && !pidAlive(st.PID)
+	if dead || (st.Status == "running" && guestHasExited(dir)) {
+		st.Status = "stopped"
+		if st.Finished == "" {
+			st.Finished = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		if dead {
+			st.PID = 0
+		}
+		writeState(dir, st)
+	}
+	if st.Status == "stopped" {
+		st.PID = 0
+	}
+	return st
 }
 
 func guestHasExited(dir string) bool {
@@ -405,48 +432,28 @@ func pidAlive(pid int) bool {
 	return syscall.Kill(pid, 0) == nil
 }
 
-func startPause(id string) int {
-	if pid := startPauseSystemd(id); pid > 1 && pidAlive(pid) {
-		return pid
-	}
-	return startPauseFork()
-}
-
 func pauseUnit(id string) string {
 	return "marooned-oci-" + id + ".service"
 }
 
-func startPauseSystemd(id string) int {
-	self, err := os.Executable()
-	if err != nil {
-		self = os.Args[0]
-	}
-	unit := pauseUnit(id)
-	_ = exec.Command("systemctl", "stop", unit).Run()
-	cmd := exec.Command("systemd-run", "--unit="+unit, "--collect", self, "pause")
-	if err := cmd.Run(); err != nil {
-		return 0
-	}
-	for i := 0; i < 20; i++ {
-		out, err := exec.Command("systemctl", "show", "-p", "MainPID", "--value", unit).Output()
-		if err == nil {
-			pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
-			if pid > 1 && pidAlive(pid) {
-				return pid
-			}
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return 0
+// startPause forks the dummy as a descendant of this process (conmon's
+// child). systemd-run must not be used: that process is not waitable by
+// conmon, which then reports exit -1 and a zero FinishedAt.
+func startPause(id, dir string) int {
+	_ = exec.Command("systemctl", "stop", pauseUnit(id)).Run()
+	return startPauseFork(dir)
 }
 
-func startPauseFork() int {
+func startPauseFork(dir string) int {
 	self, err := os.Executable()
 	if err != nil {
 		self = os.Args[0]
 	}
-	cmd := exec.Command(self, "pause-daemon")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	args := []string{"pause-daemon"}
+	if dir != "" {
+		args = append(args, dir)
+	}
+	cmd := exec.Command(self, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		fatal("pause-daemon: %v", err)
@@ -462,13 +469,13 @@ func startPauseFork() int {
 	return pid
 }
 
-func runPauseDaemon() int {
+func runPauseDaemon(rest []string) int {
 	self, err := os.Executable()
 	if err != nil {
 		self = os.Args[0]
 	}
-	inner := exec.Command(self, "pause")
-	inner.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	args := append([]string{"pause"}, rest...)
+	inner := exec.Command(self, args...)
 	inner.Stdin = nil
 	inner.Stdout = nil
 	inner.Stderr = nil

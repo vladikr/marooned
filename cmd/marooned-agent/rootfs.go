@@ -15,7 +15,10 @@ import (
 	"maroonedpods.io/maroonedpods/pkg/sandbox/agentproto"
 )
 
-const ctrRoot = "/run/marooned"
+const (
+	ctrRoot = "/run/marooned/disk"
+	volRoot = "/run/marooned/vols"
+)
 
 type unpackJob struct {
 	w   *io.PipeWriter
@@ -30,8 +33,7 @@ func (a *agent) rootfs(payload []byte) error {
 	if req.ContainerID == "" {
 		return fmt.Errorf("containerID required")
 	}
-	dir := filepath.Join(ctrRoot, req.ContainerID)
-	dest := filepath.Join(dir, "root")
+	dest := a.containerDir(req.ContainerID)
 	a.mu.Lock()
 	job := a.unpackers[req.ContainerID]
 	a.mu.Unlock()
@@ -88,6 +90,14 @@ func unpackTar(r io.Reader, dest string) error {
 		target := filepath.Join(dest, hdr.Name)
 		if !strings.HasPrefix(filepath.Clean(target)+string(os.PathSeparator), dest+string(os.PathSeparator)) && filepath.Clean(target) != dest {
 			return fmt.Errorf("tar path escapes root: %s", hdr.Name)
+		}
+		base := filepath.Base(hdr.Name)
+		if base == ".wh..wh..opq" {
+			continue
+		}
+		if strings.HasPrefix(base, ".wh.") {
+			_ = os.RemoveAll(filepath.Join(filepath.Dir(target), strings.TrimPrefix(base, ".wh.")))
+			continue
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
@@ -154,6 +164,8 @@ func prepareChroot(root string) error {
 	_ = syscall.Mount("sysfs", filepath.Join(root, "sys"), "sysfs", 0, "")
 	_ = syscall.Mount("/dev", filepath.Join(root, "dev"), "", syscall.MS_BIND, "")
 	_ = syscall.Mount("tmpfs", filepath.Join(root, "tmp"), "tmpfs", 0, "")
+	_ = os.MkdirAll(filepath.Join(root, "run"), 0755)
+	_ = syscall.Mount("tmpfs", filepath.Join(root, "run"), "tmpfs", 0, "")
 	return nil
 }
 
@@ -176,6 +188,15 @@ func startInRoot(root string, req agentproto.StartRequest) (*exec.Cmd, error) {
 	}
 	if err := prepareChroot(root); err != nil {
 		return nil, err
+	}
+	for _, m := range req.Mounts {
+		if m.Kind != "block" {
+			continue
+		}
+		target := filepath.Join(root, strings.TrimPrefix(m.GuestPath, "/"))
+		if err := bindBlockDevice(target, m); err != nil {
+			return nil, err
+		}
 	}
 	env := cmd.Env
 	if cwd != "" && cwd != "/" {

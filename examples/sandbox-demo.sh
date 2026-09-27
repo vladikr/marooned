@@ -1,47 +1,85 @@
 #!/usr/bin/env bash
 # Recordable walkthrough of RuntimeClass=marooned on kubevirtci.
+#
 #   export K=./cluster-up/kubectl.sh
-#   bash examples/sandbox-demo.sh
+#   asciinema record -c "bash examples/sandbox-demo.sh" demo.cast
 set -euo pipefail
 cd "$(dirname "$0")/.."
 K="${K:-./cluster-up/kubectl.sh}"
+pause() { sleep "${DEMO_PAUSE:-1}"; }
+say() { printf '\n\n======== %s ========\n' "$*"; pause; }
 
-say() { printf '\n==== %s ====\n' "$*"; }
+$K delete -f examples/sandbox-pod.yaml --ignore-not-found --wait=false >/dev/null 2>&1 || true
+pause
 
-say "1. RuntimeClass and shim (node CRI helper)"
+say "1. RuntimeClass marooned — the only extra field on a normal Pod"
 $K get runtimeclass marooned
-$K -n marooned-system get ds,pods -o wide
+$K -n marooned-system get pods -o wide
 
-say "2. Apply user Pod (busybox httpd in the guest, not on the host)"
+say "2. kubectl apply the Pod (that is the user API)"
 $K apply -f examples/sandbox-pod.yaml
-$K wait --for=condition=Ready pod/isolated-busybox1 --timeout=120s || true
+echo
+echo "kubectl get pods --watch  (until isolated-busybox1 is Ready)"
+watch_pid=""
+$K get pods --watch &
+watch_pid=$!
+trap 'kill "$watch_pid" 2>/dev/null || true' EXIT
+$K wait --for=condition=Ready pod/isolated-busybox1 --timeout=180s
+sleep 3
+kill "$watch_pid" 2>/dev/null || true
+wait "$watch_pid" 2>/dev/null || true
+trap - EXIT
+echo
+
+say "3. Same kubectl get: user Pod + the VMI/virt-launcher marooned created for it"
 $K get pod isolated-busybox1 -o wide
-$K get vmi,pod -l maroonedpods.io/sandbox=true 2>/dev/null || $K get vmi
-
-say "3. Hidden VMI + virt-launcher (compute, disks, vsockfwd sidecar)"
+$K get vmi
 $K get pod -l kubevirt.io=virt-launcher -o wide
-$K get pod -l kubevirt.io=virt-launcher -o jsonpath='{range .spec.containers[*]}{.name}{" "}{.image}{"\n"}{end}'
+echo "virt-launcher containers:"
+$K get pod -l kubevirt.io=virt-launcher -o jsonpath='{range .spec.containers[*]}  {.name}: {.image}{"\n"}{end}'
+echo
+echo "You still only exec/logs/delete the Pod. The VMI is the isolation backend."
 
-say "4. Guest is the user image (httpd), not the pause process"
+say "4. kubectl exec talks to the guest image (busybox httpd), not the host pause"
 $K exec isolated-busybox1 -- ps
 $K exec isolated-busybox1 -- cat /scratch/ok
-$K exec isolated-busybox1 -- cat /etc/os-release | head -5
+$K exec isolated-busybox1 -- cat /tmp/marooned-ok
+$K exec isolated-busybox1 -- ls /bin/httpd
 
-say "5. Service hits masquerade (virt-launcher IP), not status.podIP"
-echo "podIP=$($K get pod isolated-busybox1 -o jsonpath='{.status.podIP}')"
-echo "guest-ip=$($K get pod isolated-busybox1 -o jsonpath='{.metadata.annotations.maroonedpods\.io/guest-ip}')"
-$K get svc isolated-busybox1 endpointslice marooned-isolated-busybox1
-$K run --rm -i --image=quay.io/prometheus/busybox:latest --restart=Never demo-wget -- wget -qO- http://isolated-busybox1:8080/
+say "5. Service reaches guest httpd (masquerade). status.podIP is the pause."
+echo "  podIP    = $($K get pod isolated-busybox1 -o jsonpath='{.status.podIP}')"
+echo "  guest-ip = $($K get pod isolated-busybox1 -o jsonpath='{.metadata.annotations.maroonedpods\.io/guest-ip}')"
+$K get svc isolated-busybox1
+$K run --rm -i --image=quay.io/prometheus/busybox:latest --restart=Never --image-pull-policy=Never demo-wget -- wget -qO- http://isolated-busybox1:8080/ || true
 
-say "6. Guest death is visible to kubelet (restartPolicy Always)"
+say "6. Killing the guest process is a real container exit (watch for Error / RESTARTS)"
+echo "kubectl get pods --watch"
+watch_pid=""
+$K get pods --watch &
+watch_pid=$!
+trap 'kill "$watch_pid" 2>/dev/null || true' EXIT
 $K exec isolated-busybox1 -- killall httpd || true
-sleep 3
+# Always restart can be a brief Error then Running again; wait for a restart bump.
+for _ in $(seq 1 20); do
+  rs="$($K get pod isolated-busybox1 -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || echo 0)"
+  phase="$($K get pod isolated-busybox1 -o jsonpath='{.status.containerStatuses[0].state}' 2>/dev/null || true)"
+  if [ "${rs:-0}" != "0" ] || echo "$phase" | grep -q terminated; then
+    sleep 3
+    break
+  fi
+  sleep 2
+done
+kill "$watch_pid" 2>/dev/null || true
+wait "$watch_pid" 2>/dev/null || true
+trap - EXIT
 $K get pod isolated-busybox1
 
-say "7. Optional Kata-shaped workload (stock nginx, only runtimeClassName differs)"
-echo "  $K apply -f examples/sandbox-nginx.yaml"
-echo "  # then wget http://isolated-nginx:80/  (welcome to nginx)"
-
-say "done. Components: RuntimeClass marooned → CRI-O marooned-oci → marooned-shim"
-echo "  → adaptor VMI marooned-<pod-uid> → virt-launcher + vsockfwd → guest marooned-agent"
-echo "  → user rootfs on emptyDisk, vsock CRI, masquerade 10.0.2.2"
+say "7. kubectl delete the Pod — VMI and virt-launcher go with it"
+$K delete -f examples/sandbox-pod.yaml --wait=true
+echo
+$K get pods
+$K get vmi
+echo
+echo "Nothing left to manage except the RuntimeClass."
+echo "  Pod → CRI-O marooned-oci → marooned-shim → VMI + vsockfwd → guest agent"
+echo "  Kata-shaped nginx:  kubectl apply -f examples/sandbox-nginx.yaml"

@@ -33,7 +33,7 @@ handler: marooned
 overhead:
   podFixed:
     cpu: 100m
-    memory: 128Mi
+    memory: 256Mi
 ```
 
 `handler: marooned` must match the node runtime config:
@@ -62,15 +62,34 @@ Dev fallback: `sandbox.network.binding: masquerade`. Guest IP is not the
 Service IP. The functional suite uses masquerade so it can run without OVN-K.
 
 The adaptor publishes guest IPs on an EndpointSlice owned for the Pod. It does
-not fight kubelet for `status.podIP`.
+not fight kubelet for `status.podIP` (pause CNI). The host pause process
+forwards container ports to `maroonedpods.io/guest-ip` (virt-launcher), so
+`kubectl get pod -o wide` / curl to that IP:port reaches the guest.
 
-## CPU / memory double-count
+## CPU / memory and cgroups
 
-v1 leaves cpu/memory **requests** on the user Pod (scheduler fairness) and also
-sizes the hidden VMI from those requests plus `extraGuestOverhead`. Devices,
-hugepages, and PVCs are stripped from the user Pod. The original volume list
-is stored on `maroonedpods.io/volumes` and `maroonedpods.io/placement=user|infra`
-so the adaptor can reconstruct the VMI disks.
+There are **two** cgroups. We do not put qemu in the user Pod’s cgroup
+(Kata’s “one cgroup”). virt-launcher owns QEMU; joining it to the pause
+cgroup would fight KubeVirt.
+
+| Object | What it is | What accounts it |
+|---|---|---|
+| User Pod | CRI-O pause + RuntimeClass `podFixed` (`100m` + `256Mi`) + the Pod’s own cpu/memory **requests** | Scheduler, `kubectl top`, HPA, eviction |
+| virt-launcher | QEMU + guest RAM (`requests` + `extraGuestOverhead`) | The real node RAM/CPU for the VM |
+
+`marooned-oci events --stats` and Pod annotation `maroonedpods.io/guest-stats`
+are guest RSS/CPU. Apply `examples/sandbox-metrics-apiservice.yaml` so
+`kubectl top` / HPA use that (not the pause cgroup). Skip if metrics-server
+already owns `metrics.k8s.io`. Node cgroup accounting is unchanged
+(virt-launcher still holds qemu). CRI-O itself still reads the pause cgroup.
+
+Set the serving Pod’s `resources.requests/limits` to what the **guest
+workload** needs (vLLM, Ollama). That is what sizes the VMI. The
+RuntimeClass tax is extra, on purpose, so the node is not surprised by
+qemu.
+
+Do not subtract qemu from the user request to “avoid double-count.”
+The scheduler must see both the guest and the virt-launcher tax.
 
 ## Confidential compute
 
@@ -88,7 +107,7 @@ TEE guests boot UEFI (no kernelBoot), `secureBoot: false`. TDX also sets
 `features.smm.enabled: false`. Evidence is produced in the guest and verified
 off the hypervisor. Maroonedpods is not a verifier.
 
-SNP + SR-IOV / GPU / virtiofs RWX is rejected. Hugepages + TEE is allowed.
+SNP + SR-IOV / GPU is rejected. Hugepages + TEE is allowed. RWX PVCs attach as virtio-blk; we do not use virtiofs (virt-launcher stays non-root).
 
 Do not install a second KubeVirt CR. Enable `WorkloadEncryptionSEV` /
 `WorkloadEncryptionTDX` on the existing KubeVirt/HCO object.

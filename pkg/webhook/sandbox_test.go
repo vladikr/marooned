@@ -367,6 +367,63 @@ func TestMutateSandboxPodVolumesAnnotationRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMutateSandboxPodVolumeDevicesRoundTrip(t *testing.T) {
+	pod := sandboxPod(func(p *corev1.Pod) {
+		p.Spec.Volumes = []corev1.Volume{{
+			Name: "data",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "blk"},
+			},
+		}}
+		p.Spec.Containers[0].VolumeDevices = []corev1.VolumeDevice{{Name: "data", DevicePath: "/dev/xvda"}}
+	})
+	if err := MutateSandboxPod(pod); err != nil {
+		t.Fatal(err)
+	}
+	if hasVolume(pod, "data") {
+		t.Fatal("block PVC must still be stripped")
+	}
+	if len(pod.Spec.Containers[0].VolumeDevices) != 0 {
+		t.Fatalf("volumeDevices must be stripped: %+v", pod.Spec.Containers[0].VolumeDevices)
+	}
+	restored := sandbox.RestoreVolumes(pod)
+	if !hasVolume(restored, "data") {
+		t.Fatal("block PVC did not round-trip")
+	}
+	devs := restored.Spec.Containers[0].VolumeDevices
+	if len(devs) != 1 || devs[0].Name != "data" || devs[0].DevicePath != "/dev/xvda" {
+		t.Fatalf("volumeDevices did not round-trip: %+v", devs)
+	}
+}
+
+func TestMutateSandboxPodAllowsEphemeralRWX(t *testing.T) {
+	pod := sandboxPod(func(p *corev1.Pod) {
+		p.Spec.Volumes = []corev1.Volume{{
+			Name: "share",
+			VolumeSource: corev1.VolumeSource{
+				Ephemeral: &corev1.EphemeralVolumeSource{
+					VolumeClaimTemplate: &corev1.PersistentVolumeClaimTemplate{
+						Spec: corev1.PersistentVolumeClaimSpec{
+							AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
+						},
+					},
+				},
+			},
+		}}
+		p.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{Name: "share", MountPath: "/share"}}
+	})
+	if err := MutateSandboxPod(pod); err != nil {
+		t.Fatal(err)
+	}
+	if hasVolume(pod, "share") {
+		t.Fatal("RWX claim must still be stripped from the user Pod")
+	}
+	restored := sandbox.RestoreVolumes(pod)
+	if !hasVolume(restored, "share") {
+		t.Fatal("RWX claim did not round-trip")
+	}
+}
+
 func TestMutateSandboxPodDisklessPlacementUser(t *testing.T) {
 	pod := sandboxPod(nil)
 	if err := MutateSandboxPod(pod); err != nil {

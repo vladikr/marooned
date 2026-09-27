@@ -18,6 +18,10 @@ spec:
   - name: nginx
     image: public.ecr.aws/docker/library/nginx:alpine
     imagePullPolicy: IfNotPresent
+    # Guest has no IPv6. Image default.conf listens on [::]:80 and nginx
+    # exits 1 (Address family not supported). Strip that listen; still the
+    # stock welcome page. (Kata guests usually have IPv6.)
+    command: ["/bin/sh", "-c", "mkdir -p /run /var/log/nginx; sed -i '/\\[::\\]/d' /etc/nginx/conf.d/default.conf; exec nginx -g 'daemon off;'"]
     ports:
     - name: http
       containerPort: 80

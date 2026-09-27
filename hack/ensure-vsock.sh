@@ -25,23 +25,31 @@ if [ "$provider" != "external" ]; then
   done
 fi
 
-echo "==> KubeVirt VSOCK feature gate"
+echo "==> KubeVirt feature gates (VSOCK, ImageVolume)"
 if ! $K get kubevirt kubevirt -n kubevirt >/dev/null 2>&1; then
   echo "KubeVirt CR not found; skip gate" >&2
   exit 0
 fi
 gates="$($K get kubevirt kubevirt -n kubevirt -o jsonpath='{.spec.configuration.developerConfiguration.featureGates[*]}' 2>/dev/null || true)"
-if echo " $gates " | grep -qw VSOCK; then
-  echo "VSOCK already enabled"
-else
+ensure_gate() {
+  local g="$1"
+  if echo " $gates " | grep -qw "$g"; then
+    echo "$g already enabled"
+    return 0
+  fi
   if $K get kubevirt kubevirt -n kubevirt -o jsonpath='{.spec.configuration.developerConfiguration.featureGates}' | grep -q '\[' 2>/dev/null; then
     $K patch kubevirt kubevirt -n kubevirt --type json \
-      -p '[{"op":"add","path":"/spec/configuration/developerConfiguration/featureGates/-","value":"VSOCK"}]'
+      -p "[{\"op\":\"add\",\"path\":\"/spec/configuration/developerConfiguration/featureGates/-\",\"value\":\"$g\"}]"
   else
     $K patch kubevirt kubevirt -n kubevirt --type merge \
-      -p '{"spec":{"configuration":{"developerConfiguration":{"featureGates":["VSOCK"]}}}}'
+      -p "{\"spec\":{\"configuration\":{\"developerConfiguration\":{\"featureGates\":[\"$g\"]}}}}"
   fi
-fi
+  gates="$gates $g"
+}
+ensure_gate VSOCK
+# ImageVolume: virt-launcher mounts containerDisk/kernelBoot via the k8s
+# Image volume (no extra disk init containers).
+ensure_gate ImageVolume
 
 echo "==> wait for devices.kubevirt.io/vhost-vsock allocatable"
 ok=0

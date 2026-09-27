@@ -1,3 +1,9 @@
+# PVC is stripped from the user Pod and attached on the VMI as virtio-blk.
+# The agent mkfs (if empty) and mounts it at /data in the guest rootfs.
+#
+#   $K apply -f examples/sandbox-pod-pvc.yaml
+#   $K exec isolated-pvc -- cat /data/ok
+# Expect: pvc-ok
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -5,6 +11,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: local
   resources:
     requests:
       storage: 1Gi
@@ -17,9 +24,9 @@ spec:
   runtimeClassName: marooned
   containers:
   - name: box
-    image: docker.io/library/busybox:latest
-    imagePullPolicy: IfNotPresent
-    command: ["sleep", "3600"]
+    image: quay.io/prometheus/busybox:latest
+    imagePullPolicy: Never
+    command: ["/bin/sh", "-c", "echo pvc-ok > /data/ok; exec httpd -f -p 8080 -h /data"]
     volumeMounts:
     - name: data
       mountPath: /data

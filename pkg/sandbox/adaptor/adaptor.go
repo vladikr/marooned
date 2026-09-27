@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -219,6 +220,16 @@ func (a *Adaptor) ensureVMI(pod *corev1.Pod, cfg mpv1.SandboxConfig, rootfsBytes
 	if vmi, err := a.lookupExisting(pod, plan); err != nil {
 		return nil, err
 	} else if vmi != nil {
+		if vmi.Status.Phase == virtv1.Failed || vmi.Status.Phase == virtv1.Succeeded {
+			klog.Infof("sandbox VMI %s/%s is %s; deleting to recreate", vmi.Namespace, vmi.Name, vmi.Status.Phase)
+			_ = a.maroonedpodsCli.KubevirtClient().KubevirtV1().VirtualMachineInstances(vmi.Namespace).Delete(context.Background(), vmi.Name, metav1.DeleteOptions{})
+			return nil, fmt.Errorf("recreating VMI after phase %s", vmi.Status.Phase)
+		}
+		if emptyDiskTooSmall(vmi, pod, rootfsBytes) {
+			klog.Infof("sandbox VMI %s/%s user-rootfs emptyDisk too small for %d bytes; recreating", vmi.Namespace, vmi.Name, rootfsBytes)
+			_ = a.maroonedpodsCli.KubevirtClient().KubevirtV1().VirtualMachineInstances(vmi.Namespace).Delete(context.Background(), vmi.Name, metav1.DeleteOptions{})
+			return nil, fmt.Errorf("resizing user-rootfs emptyDisk for %d byte image", rootfsBytes)
+		}
 		return vmi, nil
 	}
 
@@ -406,6 +417,28 @@ func (a *Adaptor) deleteSandboxVMI(pod *corev1.Pod, cfg mpv1.SandboxConfig) {
 	if err := a.maroonedpodsCli.KubevirtClient().KubevirtV1().VirtualMachineInstances(pod.Namespace).Delete(context.Background(), name, metav1.DeleteOptions{}); err != nil {
 		klog.V(3).Infof("delete implied VMI %s/%s: %v", pod.Namespace, name, err)
 	}
+}
+
+func emptyDiskTooSmall(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod, imageBytes int64) bool {
+	if vmi == nil || imageBytes <= 0 {
+		return false
+	}
+	if sandbox.RootfsPVC(pod) != nil {
+		return false
+	}
+	var have *resource.Quantity
+	for _, vol := range vmi.Spec.Volumes {
+		if vol.Name == sandbox.UserRootfsVolume && vol.EmptyDisk != nil {
+			q := vol.EmptyDisk.Capacity
+			have = &q
+			break
+		}
+	}
+	if have == nil {
+		return false
+	}
+	need := sandbox.UserRootfsCapacityN(imageBytes, sandbox.WorkloadCount(pod))
+	return have.Cmp(need) < 0
 }
 
 func rootfsBytesFromPod(pod *corev1.Pod) int64 {

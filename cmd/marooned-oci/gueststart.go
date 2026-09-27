@@ -30,13 +30,7 @@ func doGuestStart(root string, args []string) int {
 	dir := filepath.Join(root, id)
 	if err := runGuestStart(root, id, dir); err != nil {
 		gslog(dir, err.Error())
-		_ = os.WriteFile(filepath.Join(dir, "guest-exited"), []byte("1"), 0644)
-		stopHostPause(dir, id)
-		writeCrioExit(id, 1)
-		if st, err := readState(dir); err == nil {
-			st.Status = "stopped"
-			writeState(dir, st)
-		}
+		finishOCIContainer(dir, id, 1)
 		return 1
 	}
 	return 0
@@ -69,14 +63,12 @@ func runGuestStart(root, id, dir string) error {
 	}
 	criID := podUID + "-" + ctrName
 	_ = os.WriteFile(filepath.Join(dir, "criid"), []byte(criID), 0644)
-	ctr := map[string]interface{}{"name": ctrName, "command": spec.Args, "env": spec.Env, "workDir": spec.Cwd}
+	ctr := map[string]interface{}{"name": ctrName, "command": spec.Args, "env": spec.Env, "workDir": spec.Cwd, "image": spec.Image}
 	if spec.Root != "" {
+		// CRI-O already unpacked this tree for runc. Send that, do not Hub-pull again.
+		ctr["rootfsPath"] = spec.Root
 		ctr["rootfsBytes"] = dirSize(spec.Root)
-		tarPath := filepath.Join("/var/run/marooned", podUID, "rootfs-"+ctrName+".tar")
-		if err := tarDirectory(spec.Root, tarPath); err != nil {
-			return fmt.Errorf("tar rootfs: %w", err)
-		}
-		ctr["rootfsPath"] = tarPath
+		gslog(dir, fmt.Sprintf("host rootfs %s (%d bytes)", spec.Root, ctr["rootfsBytes"]))
 	}
 	if _, err := shimJSON("POST", "/v1/CreateContainer", map[string]interface{}{
 		"sandboxID": podUID,

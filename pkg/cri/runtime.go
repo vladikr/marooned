@@ -84,6 +84,9 @@ type Container struct {
 	RestartCount uint32
 	Pid          int
 	ExitCode     int32
+	CreatedAt    int64 `json:"CreatedAt,omitempty"`
+	StartedAt    int64 `json:"StartedAt,omitempty"`
+	FinishedAt   int64 `json:"FinishedAt,omitempty"`
 }
 
 // ContainerStats is guest workload usage, not the host pause cgroup.
@@ -96,7 +99,7 @@ type ContainerStats struct {
 	TimestampUnixNano int64
 }
 
-// PodSandboxStats is the sandbox aggregate (one container today).
+// PodSandboxStats is the sandbox aggregate (sum of guest containers).
 type PodSandboxStats struct {
 	ID                string
 	CPUNano           uint64
@@ -259,7 +262,7 @@ type Runtime struct {
 	dial      AgentDialer
 	waitVM    func(ctx context.Context, podNamespace, podName string) (vmiRef, agentAddr string, err error)
 	noteSize  func(ns, name string, n int64)
-	mountsFor func(ns, name string) []agentproto.Mount
+	mountsFor func(ns, name, container string) []agentproto.Mount
 }
 
 func NewRuntime(store *Store, waitVM func(context.Context, string, string) (string, string, error), dial AgentDialer) *Runtime {
@@ -270,7 +273,7 @@ func (r *Runtime) SetNoteSize(fn func(ns, name string, n int64)) {
 	r.noteSize = fn
 }
 
-func (r *Runtime) SetMountsFor(fn func(ns, name string) []agentproto.Mount) {
+func (r *Runtime) SetMountsFor(fn func(ns, name, container string) []agentproto.Mount) {
 	r.mountsFor = fn
 }
 
@@ -349,7 +352,7 @@ func (r *Runtime) PodSandboxStatus(_ context.Context, id string) (*PodSandbox, e
 
 func (r *Runtime) CreateContainer(_ context.Context, sandboxID string, req *CreateContainerRequest) (*Container, error) {
 	id := sandboxID + "-" + req.Name
-	c := &Container{ID: id, SandboxID: sandboxID, Name: req.Name, Image: req.Image, Command: req.Command, Args: req.Args, Env: req.Env, WorkDir: req.WorkDir, RootfsPath: req.RootfsPath, RootfsBytes: req.RootfsBytes, State: "CONTAINER_CREATED"}
+	c := &Container{ID: id, SandboxID: sandboxID, Name: req.Name, Image: req.Image, Command: req.Command, Args: req.Args, Env: req.Env, WorkDir: req.WorkDir, RootfsPath: req.RootfsPath, RootfsBytes: req.RootfsBytes, State: "CONTAINER_CREATED", CreatedAt: time.Now().UnixNano()}
 	r.store.PutContainer(c)
 	return c, nil
 }
@@ -361,6 +364,7 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 	}
 	if r.dial == nil {
 		c.State = "CONTAINER_RUNNING"
+		c.StartedAt = time.Now().UnixNano()
 		r.store.PutContainer(c)
 		return nil
 	}
@@ -377,29 +381,60 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 	}
 	qty := sandbox.UserRootfsCapacity(imageBytes)
 	disk := qty.Value()
-	if _, err := cli.Call(agentproto.MethodPrepareRootfs, agentproto.PrepareRootfsRequest{
-		ContainerID: id,
-		Serial:      sandbox.UserRootfsSerial,
-		ImageBytes:  imageBytes,
-		DiskBytes:   disk,
-	}, 90*time.Second); err != nil {
+	prep, err := cli.Call(agentproto.MethodPrepareRootfs, agentproto.PrepareRootfsRequest{
+		ContainerID:   id,
+		ContainerName: c.Name,
+		Serial:        sandbox.UserRootfsSerial,
+		ImageBytes:    imageBytes,
+		DiskBytes:     disk,
+	}, 90*time.Second)
+	if err != nil {
 		return fmt.Errorf("prepare user-rootfs (image %d bytes, disk %d bytes): %w", imageBytes, disk, err)
 	}
-	if c.RootfsPath != "" {
-		f, err := os.Open(c.RootfsPath)
-		if err != nil {
-			return fmt.Errorf("rootfs %s: %w", c.RootfsPath, err)
+	var prepResp agentproto.PrepareRootfsResponse
+	if len(prep.Payload) > 0 {
+		_ = json.Unmarshal(prep.Payload, &prepResp)
+	}
+	filled := false
+	var fillErr error
+	if prepResp.Populated {
+		klog.Infof("user-rootfs populated at %s, skip copy", prepResp.Path)
+		filled = true
+	}
+	if !filled && c.RootfsPath != "" {
+		klog.Infof("host rootfs %s (runc tree, %d bytes)", c.RootfsPath, imageBytes)
+		if err := putHostRootfs(cli, id, c.RootfsPath, imageBytes); err != nil {
+			fillErr = err
+			klog.Infof("host rootfs copy failed, will try guest-pull: %v", err)
+		} else {
+			filled = true
+			klog.Infof("host rootfs copy ok")
 		}
-		putErr := cli.PutRootfs(id, f, 3*time.Minute)
-		_ = f.Close()
-		if putErr != nil {
-			return fmt.Errorf("rootfs upload: %w", putErr)
+	}
+	if !filled && c.Image != "" {
+		klog.Infof("guest-pull %s", c.Image)
+		_, err = cli.Call(agentproto.MethodPullImage, map[string]string{
+			"containerID": id,
+			"image":       c.Image,
+		}, 3*time.Minute)
+		if err == nil {
+			filled = true
+			klog.Infof("guest-pull %s ok", c.Image)
+		} else {
+			fillErr = err
+			klog.Infof("guest-pull %s failed: %v", c.Image, err)
 		}
+	}
+	if !filled {
+		if fillErr != nil {
+			return fmt.Errorf("fill user-rootfs: %w", fillErr)
+		}
+		return fmt.Errorf("no image ref and no host rootfs")
 	}
 	var mounts []agentproto.Mount
 	if r.mountsFor != nil {
 		if sb := r.store.GetSandbox(c.SandboxID); sb != nil {
-			mounts = r.mountsFor(sb.Namespace, sb.Name)
+			mounts = r.mountsFor(sb.Namespace, sb.Name, c.Name)
 		}
 	}
 	_, err = cli.Call(agentproto.MethodStart, agentproto.StartRequest{
@@ -415,8 +450,42 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 		return err
 	}
 	c.State = "CONTAINER_RUNNING"
+	c.StartedAt = time.Now().UnixNano()
 	r.store.PutContainer(c)
 	return nil
+}
+
+func putRootfsTimeout(n int64) time.Duration {
+	d := 3 * time.Minute
+	if n > 0 {
+		d += time.Duration(n/(50*1024*1024)) * time.Second
+	}
+	if d > 60*time.Minute {
+		d = 60 * time.Minute
+	}
+	return d
+}
+
+func putHostRootfs(cli *agentproto.Client, id, path string, bytes int64) error {
+	st, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	timeout := putRootfsTimeout(bytes)
+	if !st.IsDir() {
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		return cli.PutRootfs(id, f, timeout)
+	}
+	pr, pw := io.Pipe()
+	go func() {
+		err := sandbox.TarTree(pw, path)
+		_ = pw.CloseWithError(err)
+	}()
+	return cli.PutRootfs(id, pr, timeout)
 }
 
 func (r *Runtime) StopContainer(_ context.Context, id string, _ time.Duration) error {
@@ -453,6 +522,9 @@ func (r *Runtime) ContainerStatus(_ context.Context, id string) (*Container, err
 		c.Ready = false
 		if c.State == "CONTAINER_RUNNING" {
 			c.State = "CONTAINER_EXITED"
+			if c.FinishedAt == 0 {
+				c.FinishedAt = time.Now().UnixNano()
+			}
 		}
 		r.store.PutContainer(c)
 		return c, nil
@@ -463,6 +535,9 @@ func (r *Runtime) ContainerStatus(_ context.Context, id string) (*Container, err
 		c.Ready = false
 		if c.State == "CONTAINER_RUNNING" {
 			c.State = "CONTAINER_EXITED"
+			if c.FinishedAt == 0 {
+				c.FinishedAt = time.Now().UnixNano()
+			}
 		}
 		r.store.PutContainer(c)
 		return c, nil
@@ -475,10 +550,16 @@ func (r *Runtime) ContainerStatus(_ context.Context, id string) (*Container, err
 	c.ExitCode = st.ExitCode
 	c.RestartCount = st.Restarts
 	c.Ready = st.Running
+	if st.FinishedUnixNano != 0 {
+		c.FinishedAt = st.FinishedUnixNano
+	}
 	if st.Running {
 		c.State = "CONTAINER_RUNNING"
-	} else if c.State == "CONTAINER_RUNNING" {
+	} else if c.State == "CONTAINER_RUNNING" || c.State == "CONTAINER_EXITED" {
 		c.State = "CONTAINER_EXITED"
+		if c.FinishedAt == 0 {
+			c.FinishedAt = time.Now().UnixNano()
+		}
 	}
 	r.store.PutContainer(c)
 	return c, nil
@@ -635,6 +716,39 @@ func (r *Runtime) PodSandboxStats(ctx context.Context, id string) (*PodSandboxSt
 		}
 	}
 	return &PodSandboxStats{ID: id, CPUNano: cpu, RSSBytes: rss, Pids: pids, TimestampUnixNano: ts}, nil
+}
+
+// PodGuestStat is guest usage for one user Pod (not the pause cgroup).
+type PodGuestStat struct {
+	Namespace string
+	Name      string
+	Snap      sandbox.StatsSnapshot
+}
+
+func (r *Runtime) CollectGuestStats(ctx context.Context) []PodGuestStat {
+	var out []PodGuestStat
+	for _, c := range r.store.ListContainers() {
+		sb := r.store.GetSandbox(c.SandboxID)
+		if sb == nil || sb.Namespace == "" || sb.Name == "" {
+			continue
+		}
+		st, err := r.ContainerStats(ctx, c.ID)
+		if err != nil || st == nil {
+			continue
+		}
+		out = append(out, PodGuestStat{
+			Namespace: sb.Namespace,
+			Name:      sb.Name,
+			Snap: sandbox.StatsSnapshot{
+				Container: c.Name,
+				CPUNano:   st.CPUNano,
+				RSSBytes:  st.RSSBytes,
+				Pids:      st.Pids,
+				TS:        st.TimestampUnixNano,
+			},
+		})
+	}
+	return out
 }
 
 func (r *Runtime) WaitContainer(_ context.Context, id string) error {

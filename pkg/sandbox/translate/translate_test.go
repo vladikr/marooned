@@ -139,6 +139,71 @@ func TestTranslateUserRootfsEmptyDisk(t *testing.T) {
 	}
 }
 
+func TestTranslateRootfsPVCReplacesEmptyDisk(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	p.Annotations = map[string]string{util.RootfsVolumeAnnotation: "root"}
+	p.Spec.Volumes = []corev1.Volume{{
+		Name: "root",
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "img"},
+		},
+	}}
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})
+	if len(res.Errors) != 0 {
+		t.Fatalf("%v", res.Errors)
+	}
+	foundPVC, foundEmpty := false, false
+	for _, vol := range res.VMI.Spec.Volumes {
+		if vol.Name == sandbox.UserRootfsVolume {
+			if vol.PersistentVolumeClaim != nil && vol.PersistentVolumeClaim.ClaimName == "img" {
+				foundPVC = true
+			}
+			if vol.EmptyDisk != nil {
+				foundEmpty = true
+			}
+		}
+		if vol.Name == "vol-root" {
+			t.Fatal("rootfs PVC must not also attach as a data disk")
+		}
+	}
+	if !foundPVC || foundEmpty {
+		t.Fatalf("pvc=%v empty=%v", foundPVC, foundEmpty)
+	}
+	serial := false
+	for _, d := range res.VMI.Spec.Domain.Devices.Disks {
+		if d.Name == sandbox.UserRootfsVolume && d.Serial == sandbox.UserRootfsSerial {
+			serial = true
+		}
+	}
+	if !serial {
+		t.Fatal("userrootfs serial")
+	}
+}
+
+func TestTranslateRootfsAnnotationNotPVC(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	p.Annotations = map[string]string{util.RootfsVolumeAnnotation: "missing"}
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})
+	if len(res.Errors) == 0 {
+		t.Fatal("expected error")
+	}
+}
+
+func TestTranslateUserRootfsGrowsWithWorkloads(t *testing.T) {
+	p := podWithResources("1", "512Mi")
+	p.Spec.InitContainers = []corev1.Container{{Name: "init", Image: "busybox"}}
+	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})
+	for _, vol := range res.VMI.Spec.Volumes {
+		if vol.Name == sandbox.UserRootfsVolume && vol.EmptyDisk != nil {
+			if vol.EmptyDisk.Capacity.Value() != 2*256*1024*1024 {
+				t.Fatalf("capacity %d want 512Mi", vol.EmptyDisk.Capacity.Value())
+			}
+			return
+		}
+	}
+	t.Fatal("missing user-rootfs")
+}
+
 func TestTranslateAutoattachVSOCK(t *testing.T) {
 	p := podWithResources("1", "512Mi")
 	res := Translate(Input{Pod: p, Config: testConfig(), Node: "worker-1"})
@@ -325,9 +390,42 @@ func TestTranslatePVCAsVirtioBlk(t *testing.T) {
 			if d.Disk == nil || d.Disk.Bus != virtv1.DiskBusVirtio {
 				t.Fatalf("expected virtio bus, got %+v", d.Disk)
 			}
+			if d.Serial != sandbox.DiskSerial("data") {
+				t.Fatalf("serial %q", d.Serial)
+			}
 		}
 	}
 	if len(res.MountTable) != 1 || res.MountTable[0].Kind != "virtio-blk" || res.MountTable[0].GuestPath != "/data" {
+		t.Fatalf("mount table: %+v", res.MountTable)
+	}
+}
+
+func TestTranslatePVCVolumeDeviceAsBlock(t *testing.T) {
+	p := podWithResources("1", "1Gi")
+	p.Spec.Volumes = []corev1.Volume{{
+		Name: "data",
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "blk"},
+		},
+	}}
+	p.Spec.Containers[0].VolumeDevices = []corev1.VolumeDevice{{Name: "data", DevicePath: "/dev/xvda"}}
+	res := Translate(Input{Pod: p, Config: testConfig()})
+	if len(res.Errors) != 0 {
+		t.Fatalf("%v", res.Errors)
+	}
+	foundDisk := false
+	for _, d := range res.VMI.Spec.Domain.Devices.Disks {
+		if d.Name == "vol-data" {
+			foundDisk = true
+			if d.Serial != sandbox.DiskSerial("data") {
+				t.Fatalf("serial %q", d.Serial)
+			}
+		}
+	}
+	if !foundDisk {
+		t.Fatal("expected virtio-blk disk for block PVC")
+	}
+	if len(res.MountTable) != 1 || res.MountTable[0].Kind != "block" || res.MountTable[0].GuestPath != "/dev/xvda" {
 		t.Fatalf("mount table: %+v", res.MountTable)
 	}
 }
@@ -482,7 +580,7 @@ func TestTranslateNilPod(t *testing.T) {
 	}
 }
 
-func TestApplyRWXFilesystem(t *testing.T) {
+func TestTranslateRWXPVCAsVirtioBlk(t *testing.T) {
 	p := podWithResources("1", "1Gi")
 	p.Spec.Volumes = []corev1.Volume{{
 		Name: "share",
@@ -490,17 +588,28 @@ func TestApplyRWXFilesystem(t *testing.T) {
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "rwx"},
 		},
 	}}
+	p.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{Name: "share", MountPath: "/share"}}
 	res := Translate(Input{Pod: p, Config: testConfig()})
-	if err := ApplyRWXFilesystem(res.VMI, "share"); err != nil {
-		t.Fatal(err)
+	if len(res.Errors) != 0 {
+		t.Fatalf("%v", res.Errors)
 	}
+	foundDisk, foundFS := false, false
 	for _, d := range res.VMI.Spec.Domain.Devices.Disks {
 		if d.Name == "vol-share" {
-			t.Fatal("disk should be removed for virtiofs")
+			foundDisk = true
 		}
 	}
-	if len(res.VMI.Spec.Domain.Devices.Filesystems) != 1 {
-		t.Fatal("expected virtiofs filesystem")
+	if len(res.VMI.Spec.Domain.Devices.Filesystems) > 0 {
+		foundFS = true
+	}
+	if !foundDisk {
+		t.Fatal("RWX PVC must attach as virtio-blk")
+	}
+	if foundFS {
+		t.Fatal("do not use virtiofs")
+	}
+	if len(res.MountTable) != 1 || res.MountTable[0].Kind != "virtio-blk" {
+		t.Fatalf("mount table: %+v", res.MountTable)
 	}
 }
 

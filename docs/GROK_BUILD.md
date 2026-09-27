@@ -38,8 +38,7 @@ Confidential compute is the same object model with
 - Running virt-launcher as root to make virtiofs RW
 - Second KubeVirt CR or second virt-controller
 - Merging virt-controller’s generated pod spec back onto the user Pod
-- Per-container RuntimeClass (it does not exist)
-- Multi-container pods beyond one pause + one workload in v1
+- Per-container RuntimeClass (it does not exist; the whole Pod is marooned)
 - Live migration of the hidden VMI in v1 (design so it is not painted into a corner)
 - SNP/TDX + SR-IOV/PCI passthrough in the same VMI (KubeVirt CC PoC does not support it)
 - In-cluster evidence verification by KubeVirt or by maroonedpods on the hypervisor node
@@ -150,7 +149,7 @@ handler: marooned
 overhead:
   podFixed:
     cpu: 100m
-    memory: 128Mi
+    memory: 256Mi
 ```
 
 `handler: marooned` must match containerd/CRI-O config on every worker
@@ -330,20 +329,22 @@ a side channel.
 | Pod volume | VMI | Guest agent |
 |---|---|---|
 | PVC Block | virtio-blk disk | bind device or mount if formatted |
-| PVC Filesystem RWO | virtio-blk disk (not virtiofs) | mount filesystem, bind to volumeMount.path |
-| PVC Filesystem RWX | virtiofs **only this case** | mount -t virtiofs |
+| PVC Filesystem RWO | virtio-blk disk (not virtiofs) | mount filesystem, bind to volumeMount.path (model weights, HF cache) |
+| PVC Filesystem RWX | virtio-blk disk (not virtiofs) | same as RWO; shared block is the live-migration path |
 | emptyDir | virtio empty disk **or** guest tmpfs | mount at path |
 | configMap/secret/projected | extra small disk (iso/fs) or agent files | write into the container root |
 | container image | **not a disk of layers via virtiofs** | see images |
+| image on PVC (`maroonedpods.io/rootfs-volume`) | virtio-blk serial `userrootfs` | skip guest-pull if `/bin/sh` is already there |
 
 Image start policy for v1 (pick **ImageVolume / containerDisk** first;
 it is KubeVirt-native and needs no virtiofs):
 
 1. Adaptor attaches the workload image as a KubeVirt ImageVolume or
    containerDisk if the image can be used that way.
-2. Else agent pulls the image **inside the guest** (needs guest network
-   on CUDN and a pull secret projected as a disk).
-3. Never unpack on the host and virtiofs the directory in v1.
+2. Else copy the **node-local CRI-O/runc tree** (already pulled by kubelet)
+   onto a sized emptyDisk. Resize the VMI if 256Mi is too small.
+3. Else a PVC named by `maroonedpods.io/rootfs-volume` (platform/air-gap).
+4. Else agent pulls inside the guest. Never virtiofs the host overlay.
 
 CSI attach happens only on virt-launcher. Webhook already stripped
 PVCs from the user Pod so kubelet does not NodePublish them twice.
@@ -580,7 +581,7 @@ initramfs attests, KBS returns passphrase. VMI YAML does not change.
 |---|---|
 | TEE + kernelBoot | reject; use UEFI sandbox-tee image |
 | TEE + SR-IOV / GPU / hostDevices | reject; PoC has no PCI passthrough |
-| TEE + virtiofs RWX | reject; host-visible tree fights the threat model |
+| TEE + virtiofs | n/a; we never use virtiofs (would need privileged virt-launcher) |
 | TEE + live migration | reject until KubeVirt supports it |
 | TEE + guest-pull from host-untrusted registry | allowed; prefer this over host ImageVolume if the threat model includes a malicious host seeing layers |
 | TEE + hugepages | allow |
@@ -655,7 +656,7 @@ Done when: `kubectl run --runtime-class=marooned` works end to end.
 
 - RWO block + filesystem PVC as virtio-blk
 - volumeMount paths honored in guest
-- No virtiofs except explicit RWX test marked optional
+- No virtiofs; RWX is still virtio-blk (enables later live migration on shared block)
 
 ### Phase 4 — devices
 

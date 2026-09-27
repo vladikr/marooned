@@ -32,6 +32,9 @@ func TestContainerStatusMarksExitedWhenAgentGone(t *testing.T) {
 	if c.State != "CONTAINER_EXITED" || c.Ready {
 		t.Fatalf("state %s ready %v", c.State, c.Ready)
 	}
+	if c.FinishedAt == 0 {
+		t.Fatal("FinishedAt must be set so kubelet does not show 272y ago")
+	}
 }
 
 func TestContainerStatsMissing(t *testing.T) {

@@ -33,16 +33,92 @@ func (a *agent) stats(payload json.RawMessage) (agentproto.StatsResponse, error)
 }
 
 func sampleProcessTree(rootPID int) (agentproto.StatsResponse, error) {
-	st, err := readProcStat(rootPID)
+	// The workload mounts proc inside the chroot (CLONE_NEWPID). That view
+	// is what `ps` in the container sees (sh + python). Host /proc often
+	// only shows the wrapper (4Ki RSS, pids=1) so kubectl top prints 0Mi.
+	if s, err := sampleProcDir(fmt.Sprintf("/proc/%d/root/proc", rootPID)); err == nil && s.Pids > 0 {
+		return s, nil
+	}
+	pids := pidsInPidNamespace(rootPID)
+	return samplePIDSet(pids)
+}
+
+func samplePIDSet(pids map[int]struct{}) (agentproto.StatsResponse, error) {
+	var cpu, rss uint64
+	for pid := range pids {
+		st, err := readProcStat(pid)
+		if err != nil {
+			continue
+		}
+		cpu += st.cpuNano
+		rss += st.rss
+	}
+	if len(pids) == 0 {
+		return agentproto.StatsResponse{}, fmt.Errorf("not found")
+	}
+	return agentproto.StatsResponse{
+		CPUNano:         cpu,
+		RSSBytes:        rss,
+		WorkingSetBytes: rss,
+		Pids:            uint64(len(pids)),
+	}, nil
+}
+
+func sampleProcDir(procDir string) (agentproto.StatsResponse, error) {
+	ents, err := os.ReadDir(procDir)
 	if err != nil {
 		return agentproto.StatsResponse{}, err
 	}
+	var cpu, rss, n uint64
+	for _, e := range ents {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+		st, err := readProcStatIn(procDir, pid)
+		if err != nil {
+			continue
+		}
+		cpu += st.cpuNano
+		rss += st.rss
+		n++
+	}
+	if n == 0 {
+		return agentproto.StatsResponse{}, fmt.Errorf("empty proc")
+	}
 	return agentproto.StatsResponse{
-		CPUNano:         st.cpuNano,
-		RSSBytes:        st.rss,
-		WorkingSetBytes: st.rss,
-		Pids:            1,
+		CPUNano:         cpu,
+		RSSBytes:        rss,
+		WorkingSetBytes: rss,
+		Pids:            n,
 	}, nil
+}
+
+// pidsInPidNamespace lists every process in rootPID's PID namespace.
+// CLONE_NEWPID children are often not PPID-descendants in the agent's
+// /proc view, so a parent-walk misses the workload (4Ki RSS, pids=1).
+func pidsInPidNamespace(rootPID int) map[int]struct{} {
+	want := map[int]struct{}{rootPID: {}}
+	ns, err := os.Readlink(fmt.Sprintf("/proc/%d/ns/pid", rootPID))
+	if err != nil {
+		return want
+	}
+	ents, err := os.ReadDir("/proc")
+	if err != nil {
+		return want
+	}
+	for _, e := range ents {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		n2, err := os.Readlink(fmt.Sprintf("/proc/%d/ns/pid", pid))
+		if err != nil || n2 != ns {
+			continue
+		}
+		want[pid] = struct{}{}
+	}
+	return want
 }
 
 type procSample struct {
@@ -51,7 +127,11 @@ type procSample struct {
 }
 
 func readProcStat(pid int) (procSample, error) {
-	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	return readProcStatIn("/proc", pid)
+}
+
+func readProcStatIn(procDir string, pid int) (procSample, error) {
+	b, err := os.ReadFile(fmt.Sprintf("%s/%d/stat", procDir, pid))
 	if err != nil {
 		return procSample{}, err
 	}
@@ -60,7 +140,7 @@ func readProcStat(pid int) (procSample, error) {
 		return procSample{}, err
 	}
 	rss := rssPages * uint64(os.Getpagesize())
-	if rb, err := rssFromStatus(pid); err == nil && rb > 0 {
+	if rb, err := rssFromStatusFile(fmt.Sprintf("%s/%d/status", procDir, pid)); err == nil && rb > 0 {
 		rss = rb
 	}
 	return procSample{cpuNano: ticksToNano(utime + stime), rss: rss}, nil
@@ -83,7 +163,11 @@ func parseProcStat(data string) (utime, stime, rssPages uint64, err error) {
 }
 
 func rssFromStatus(pid int) (uint64, error) {
-	f, err := os.Open(fmt.Sprintf("/proc/%d/status", pid))
+	return rssFromStatusFile(fmt.Sprintf("/proc/%d/status", pid))
+}
+
+func rssFromStatusFile(path string) (uint64, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		return 0, err
 	}

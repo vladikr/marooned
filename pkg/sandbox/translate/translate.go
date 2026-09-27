@@ -39,7 +39,7 @@ type Result struct {
 type Mount struct {
 	VolumeName string
 	GuestPath  string
-	Kind       string // virtio-blk, virtiofs, tmpfs, files
+	Kind       string // virtio-blk, block, tmpfs, files
 	ReadOnly   bool
 }
 
@@ -136,7 +136,9 @@ func Translate(in Input) Result {
 	applyBoot(vmi, in.Config, res.TEE)
 	applyNetwork(vmi, in.Config, in.Pod)
 	applyRootfs(vmi, in.Config, res.TEE)
-	applyUserRootfs(vmi, in.RootfsBytes)
+	if err := applyUserRootfs(vmi, in.Pod, in.RootfsBytes, sandbox.WorkloadCount(in.Pod)); err != nil {
+		res.Errors = append(res.Errors, err)
+	}
 	hugepage, hugepageErr := applyHugepages(vmi, in.Pod)
 	if hugepageErr != nil {
 		res.Errors = append(res.Errors, hugepageErr)
@@ -154,7 +156,7 @@ func Translate(in Input) Result {
 	if err := applyDRA(vmi, in.Pod); err != nil {
 		res.Errors = append(res.Errors, err)
 	}
-	mounts, volErrs := applyVolumes(vmi, sandbox.RestoreVolumes(in.Pod), res.TEE)
+	mounts, volErrs := applyVolumes(vmi, sandbox.RestoreVolumes(in.Pod))
 	res.MountTable = mounts
 	res.Errors = append(res.Errors, volErrs...)
 
@@ -201,9 +203,6 @@ func checkConflicts(pod *corev1.Pod, tee string) error {
 	if hasSRIOVOrHostDevice(pod) {
 		return fmt.Errorf("TEE + SR-IOV/GPU/hostDevices is not supported")
 	}
-	if hasRWXVirtiofs(pod) {
-		return fmt.Errorf("TEE + virtiofs RWX is not supported")
-	}
 	return nil
 }
 
@@ -218,16 +217,6 @@ func hasSRIOVOrHostDevice(pod *corev1.Pod) bool {
 		}
 	}
 	return len(pod.Spec.ResourceClaims) > 0
-}
-
-func hasRWXVirtiofs(pod *corev1.Pod) bool {
-	for _, vol := range pod.Spec.Volumes {
-		if vol.PersistentVolumeClaim != nil && vol.PersistentVolumeClaim.ReadOnly == false {
-			// Access mode is not on the pod volume; adaptor may still reject RWX+TEE later.
-			_ = vol
-		}
-	}
-	return false
 }
 
 func guestCompute(pod *corev1.Pod, cfg mpv1.SandboxConfig, tee string) (uint32, resource.Quantity) {
@@ -375,21 +364,42 @@ func applyRootfs(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig, tee
 	_ = tee
 }
 
-func applyUserRootfs(vmi *virtv1.VirtualMachineInstance, imageBytes int64) {
-	cap := sandbox.UserRootfsCapacity(imageBytes)
-	vmi.Spec.Domain.Devices.Disks = append(vmi.Spec.Domain.Devices.Disks, virtv1.Disk{
+func applyUserRootfs(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod, imageBytes int64, workloads int) error {
+	want := sandbox.RootfsVolumeName(pod)
+	pvc := sandbox.RootfsPVC(pod)
+	if want != "" && pvc == nil {
+		return fmt.Errorf("annotation %s=%q is not a PVC volume", util.RootfsVolumeAnnotation, want)
+	}
+	disk := virtv1.Disk{
 		Name:   sandbox.UserRootfsVolume,
 		Serial: sandbox.UserRootfsSerial,
 		DiskDevice: virtv1.DiskDevice{
 			Disk: &virtv1.DiskTarget{Bus: virtv1.DiskBusVirtio},
 		},
-	})
+	}
+	vmi.Spec.Domain.Devices.Disks = append(vmi.Spec.Domain.Devices.Disks, disk)
+	if pvc != nil {
+		vmi.Spec.Volumes = append(vmi.Spec.Volumes, virtv1.Volume{
+			Name: sandbox.UserRootfsVolume,
+			VolumeSource: virtv1.VolumeSource{
+				PersistentVolumeClaim: &virtv1.PersistentVolumeClaimVolumeSource{
+					PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: pvc.ClaimName,
+						ReadOnly:  pvc.ReadOnly,
+					},
+				},
+			},
+		})
+		return nil
+	}
+	cap := sandbox.UserRootfsCapacityN(imageBytes, workloads)
 	vmi.Spec.Volumes = append(vmi.Spec.Volumes, virtv1.Volume{
 		Name: sandbox.UserRootfsVolume,
 		VolumeSource: virtv1.VolumeSource{
 			EmptyDisk: &virtv1.EmptyDiskSource{Capacity: cap},
 		},
 	})
+	return nil
 }
 
 func podHugepageRequest(pod *corev1.Pod) (page string, qty resource.Quantity) {
@@ -496,27 +506,37 @@ func applyDRA(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod) error {
 	return fmt.Errorf("DRA resourceClaims require a KubeVirt build with GPUsWithDRA; this cluster API does not expose those fields")
 }
 
-func applyVolumes(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod, tee string) ([]Mount, []error) {
+type volumeUse struct {
+	path     string
+	readOnly bool
+	kind     string
+}
+
+func applyVolumes(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod) ([]Mount, []error) {
 	var mounts []Mount
 	var errs []error
-	mountPaths := map[string][]corev1.VolumeMount{}
+	uses := map[string][]volumeUse{}
 	for _, c := range pod.Spec.Containers {
 		for _, m := range c.VolumeMounts {
-			mountPaths[m.Name] = append(mountPaths[m.Name], m)
+			uses[m.Name] = append(uses[m.Name], volumeUse{path: m.MountPath, readOnly: m.ReadOnly, kind: "virtio-blk"})
 		}
 		for _, d := range c.VolumeDevices {
-			mountPaths[d.Name] = append(mountPaths[d.Name], corev1.VolumeMount{Name: d.Name, MountPath: d.DevicePath})
+			uses[d.Name] = append(uses[d.Name], volumeUse{path: d.DevicePath, kind: "block"})
 		}
 	}
+	rootfsVol := sandbox.RootfsVolumeName(pod)
 	for _, vol := range pod.Spec.Volumes {
+		if rootfsVol != "" && vol.Name == rootfsVol {
+			continue
+		}
 		switch {
 		case vol.PersistentVolumeClaim != nil:
-			if tee != sandbox.TEEOff {
-				// still attach as virtio-blk; RWX+TEE is rejected in checkConflicts when known
-			}
+			// RWO and RWX both virtio-blk. Do not use virtiofs (would need
+			// privileged virt-launcher). RWX block is the live-migration path.
 			diskName := "vol-" + vol.Name
 			vmi.Spec.Domain.Devices.Disks = append(vmi.Spec.Domain.Devices.Disks, virtv1.Disk{
-				Name: diskName,
+				Name:   diskName,
+				Serial: sandbox.DiskSerial(vol.Name),
 				DiskDevice: virtv1.DiskDevice{
 					Disk: &virtv1.DiskTarget{Bus: virtv1.DiskBusVirtio},
 				},
@@ -532,58 +552,41 @@ func applyVolumes(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod, tee strin
 					},
 				},
 			})
-			for _, m := range mountPaths[vol.Name] {
+			for _, u := range uses[vol.Name] {
+				kind := u.kind
+				if kind == "" {
+					kind = "virtio-blk"
+				}
 				mounts = append(mounts, Mount{
 					VolumeName: vol.Name,
-					GuestPath:  m.MountPath,
-					Kind:       "virtio-blk",
-					ReadOnly:   m.ReadOnly || vol.PersistentVolumeClaim.ReadOnly,
+					GuestPath:  u.path,
+					Kind:       kind,
+					ReadOnly:   u.readOnly || vol.PersistentVolumeClaim.ReadOnly,
 				})
 			}
 		case vol.EmptyDir != nil:
-			for _, m := range mountPaths[vol.Name] {
+			for _, u := range uses[vol.Name] {
+				if u.kind == "block" {
+					continue
+				}
 				mounts = append(mounts, Mount{
 					VolumeName: vol.Name,
-					GuestPath:  m.MountPath,
+					GuestPath:  u.path,
 					Kind:       "tmpfs",
 				})
 			}
 		case vol.ConfigMap != nil || vol.Secret != nil || vol.Projected != nil:
-			for _, m := range mountPaths[vol.Name] {
+			for _, u := range uses[vol.Name] {
+				if u.kind == "block" {
+					continue
+				}
 				mounts = append(mounts, Mount{
 					VolumeName: vol.Name,
-					GuestPath:  m.MountPath,
+					GuestPath:  u.path,
 					Kind:       "files",
 				})
 			}
 		}
 	}
 	return mounts, errs
-}
-
-// ApplyRWXFilesystem converts a previously attached virtio-blk PVC disk into virtiofs.
-// Callers must have confirmed the PVC is RWX.
-func ApplyRWXFilesystem(vmi *virtv1.VirtualMachineInstance, volumeName string) error {
-	if vmi == nil {
-		return fmt.Errorf("vmi is nil")
-	}
-	diskName := "vol-" + volumeName
-	found := false
-	disks := vmi.Spec.Domain.Devices.Disks[:0]
-	for _, d := range vmi.Spec.Domain.Devices.Disks {
-		if d.Name == diskName {
-			found = true
-			continue
-		}
-		disks = append(disks, d)
-	}
-	if !found {
-		return fmt.Errorf("volume %s not attached as a disk", volumeName)
-	}
-	vmi.Spec.Domain.Devices.Disks = disks
-	vmi.Spec.Domain.Devices.Filesystems = append(vmi.Spec.Domain.Devices.Filesystems, virtv1.Filesystem{
-		Name:     diskName,
-		Virtiofs: &virtv1.FilesystemVirtiofs{},
-	})
-	return nil
 }

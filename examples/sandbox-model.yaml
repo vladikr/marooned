@@ -1,0 +1,79 @@
+# Engine image + weights PVC. This is how people serve models, not a
+# 70B Hub image. On a GPU node replace the container with vLLM/Ollama:
+#
+#   image: vllm/vllm-openai:latest
+#   args: ["--model", "/models/llama3-70b"]
+#   env: [{name: HF_HOME, value: /models}]
+#   resources.limits: {nvidia.com/gpu: 1}
+#
+# kubevirtci smoke (python stand-in, same volume):
+#   $K apply -f examples/sandbox-model.yaml
+#   $K exec isolated-model -- cat /models/ok
+#   $K exec isolated-model -- wget -qO- http://127.0.0.1:8080/
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-weights
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: isolated-model
+spec:
+  runtimeClassName: marooned
+  containers:
+  - name: engine
+    image: public.ecr.aws/docker/library/python:3.12-alpine
+    imagePullPolicy: IfNotPresent
+    env:
+    - name: HF_HOME
+      value: /models
+    ports:
+    - name: http
+      containerPort: 8080
+    readinessProbe:
+      httpGet:
+        path: /
+        port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 5
+    command:
+    - python3
+    - -c
+    - |
+      import os
+      from http.server import HTTPServer, BaseHTTPRequestHandler
+      os.makedirs("/models", exist_ok=True)
+      open("/models/ok", "w").write("model-ok\n")
+      class H(BaseHTTPRequestHandler):
+          def do_GET(self):
+              self.send_response(200)
+              self.end_headers()
+              self.wfile.write(open("/models/ok", "rb").read())
+          def log_message(self, *args):
+              pass
+      HTTPServer(("0.0.0.0", 8080), H).serve_forever()
+    volumeMounts:
+    - name: weights
+      mountPath: /models
+  volumes:
+  - name: weights
+    persistentVolumeClaim:
+      claimName: model-weights
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: isolated-model
+spec:
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080

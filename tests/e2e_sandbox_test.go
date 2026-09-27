@@ -100,6 +100,28 @@ var _ = Describe("[e2e] Sandbox RuntimeClass", func() {
 			return userPod.Status.Phase
 		}, testutils.DefaultTimeout, 2*time.Second).Should(Equal(corev1.PodRunning))
 
+		By("guest exec is the user image (httpd + emptyDir tmpfs), not alpine os-release")
+		Eventually(func() string {
+			out, _ := f.Exec(podName, "cat", "/tmp/index.html")
+			return out
+		}, testutils.DefaultTimeout, 3*time.Second).Should(ContainSubstring("marooned-guest-ok"))
+		Eventually(func() string {
+			out, _ := f.Exec(podName, "cat", "/scratch/ok")
+			return out
+		}, 2*time.Minute, 3*time.Second).Should(ContainSubstring("vol-ok"))
+		ps, err := f.Exec(podName, "ps")
+		Expect(err).ToNot(HaveOccurred())
+		Expect(ps).To(ContainSubstring("httpd"))
+
+		By("logs include guest output")
+		Eventually(func() string {
+			logs, _ := f.PodLogs(podName, "box")
+			return logs
+		}, 2*time.Minute, 3*time.Second).Should(SatisfyAny(
+			ContainSubstring("marooned-guest-ok"),
+			ContainSubstring("guest container started"),
+		))
+
 		By("deleting the Pod must delete the sandbox VMI")
 		Expect(f.DeletePod(podName)).To(Succeed())
 		Eventually(func() bool {

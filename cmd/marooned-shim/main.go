@@ -4,11 +4,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -43,11 +46,75 @@ func main() {
 		rt.SetNoteSize(annotateRootfsBytes(kube))
 		rt.SetMountsFor(guestMounts(kube))
 		runtime = rt
+		go publishGuestStats(kube, rt)
 	}
 
 	srv := &cri.Server{Runtime: runtime, Socket: *socket}
 	if err := srv.Start(); err != nil {
 		klog.Fatalf("shim server: %v", err)
+	}
+}
+
+func publishGuestStats(kube *kubernetes.Clientset, rt *cri.Runtime) {
+	t := time.NewTicker(15 * time.Second)
+	defer t.Stop()
+	syncPortForwards(kube)
+	for range t.C {
+		for _, g := range rt.CollectGuestStats(context.Background()) {
+			annotateGuestStats(kube, g)
+		}
+		syncPortForwards(kube)
+	}
+}
+
+func syncPortForwards(kube *kubernetes.Clientset) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	list, err := kube.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return
+	}
+	for i := range list.Items {
+		p := &list.Items[i]
+		if p.Spec.RuntimeClassName == nil || *p.Spec.RuntimeClassName != util.RuntimeClassName {
+			continue
+		}
+		dest := ""
+		if p.Annotations != nil {
+			dest = p.Annotations[util.GuestIPAnnotation]
+		}
+		dir := sandbox.FindSandboxDir("/run/marooned-oci", string(p.UID))
+		if dir == "" {
+			continue
+		}
+		path := filepath.Join(dir, sandbox.ForwardFile)
+		ports := sandbox.ContainerListenPorts(p)
+		if dest == "" || len(ports) == 0 {
+			_ = os.Remove(path)
+			continue
+		}
+		spec := sandbox.PortForwardSpec{Dest: dest, Ports: ports}
+		_ = os.WriteFile(path, sandbox.FormatPortForward(spec), 0644)
+	}
+}
+
+func annotateGuestStats(kube *kubernetes.Clientset, g cri.PodGuestStat) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pod, err := kube.CoreV1().Pods(g.Namespace).Get(ctx, g.Name, metav1.GetOptions{})
+	if err != nil {
+		return
+	}
+	var prev *sandbox.StatsSnapshot
+	if pod.Annotations != nil {
+		prev, _ = sandbox.ParseStatsAnnotation(pod.Annotations[sandbox.GuestStatsAnnotation])
+	}
+	snap := sandbox.MergeSample(prev, g.Snap.CPUNano, g.Snap.RSSBytes, g.Snap.Pids, g.Snap.Container)
+	body := sandbox.FormatStatsAnnotation(snap)
+	patch := fmt.Sprintf(`{"metadata":{"annotations":{%q:%s}}}`, sandbox.GuestStatsAnnotation, strconv.Quote(body))
+	_, err = kube.CoreV1().Pods(g.Namespace).Patch(ctx, g.Name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
+	if err != nil {
+		klog.V(2).Infof("guest-stats %s/%s: %v", g.Namespace, g.Name, err)
 	}
 }
 
@@ -153,8 +220,8 @@ func annotateRootfsBytes(kube *kubernetes.Clientset) func(ns, name string, n int
 	}
 }
 
-func guestMounts(kube *kubernetes.Clientset) func(ns, name string) []agentproto.Mount {
-	return func(ns, name string) []agentproto.Mount {
+func guestMounts(kube *kubernetes.Clientset) func(ns, name, container string) []agentproto.Mount {
+	return func(ns, name, container string) []agentproto.Mount {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		pod, err := kube.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
@@ -163,11 +230,12 @@ func guestMounts(kube *kubernetes.Clientset) func(ns, name string) []agentproto.
 			return nil
 		}
 		var out []agentproto.Mount
-		for _, m := range sandbox.GuestMounts(pod) {
+		for _, m := range sandbox.GuestMountsFor(pod, container) {
 			out = append(out, agentproto.Mount{
 				VolumeName: m.VolumeName,
 				GuestPath:  m.GuestPath,
 				Kind:       m.Kind,
+				Serial:     m.Serial,
 				ReadOnly:   m.ReadOnly,
 			})
 		}
