@@ -62,7 +62,9 @@ Dev fallback: `sandbox.network.binding: masquerade`. Guest IP is not the
 Service IP. The functional suite uses masquerade so it can run without OVN-K.
 
 The adaptor publishes guest IPs on an EndpointSlice owned for the Pod. It does
-not fight kubelet for `status.podIP`.
+not fight kubelet for `status.podIP` (pause CNI). The host pause process
+forwards container ports to `maroonedpods.io/guest-ip` (virt-launcher), so
+`kubectl get pod -o wide` / curl to that IP:port reaches the guest.
 
 ## CPU / memory and cgroups
 
