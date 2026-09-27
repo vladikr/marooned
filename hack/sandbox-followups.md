@@ -55,7 +55,7 @@ logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
 GitHub issues track these. Next in order: #3 → #4 → #5 → #6.
 
 - **kubectl top / HPA:** #3 — verified (`isolated-model` → 18Mi guest RSS, not pause). Shim annotation + `metrics.k8s.io`. CRI-O cgroup path still pause (node eviction unchanged). Idle CPU 0m is expected.
-- **Guest `status.podIP`:** #4 — kubelet keeps pause CNI; pause forwards container ports to guest-ip so that address is reachable.
+- **Guest `status.podIP`:** #4 — kubelet keeps pause CNI. Masquerade: pause forwards ports to virt-launcher. l2bridge/CUDN (production): EndpointSlice uses the guest IP; do not use l2bridge on kubevirtci.
 - **Always-restart timestamp:** #5 — kubelet may show "272y ago".
 - **Dedicated CPUs:** #6 — Guaranteed QoS / annotation → VMI `dedicatedCPUPlacement`.
 - **Rename this repo / product:** #7 — sandbox Pods are not marooned on a VM-node.
