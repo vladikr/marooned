@@ -76,7 +76,7 @@ func syncPortForwards(kube *kubernetes.Clientset) {
 	}
 	for i := range list.Items {
 		p := &list.Items[i]
-		if p.Spec.RuntimeClassName != util.RuntimeClassName {
+		if p.Spec.RuntimeClassName == nil || *p.Spec.RuntimeClassName != util.RuntimeClassName {
 			continue
 		}
 		dest := ""
