@@ -359,7 +359,9 @@ func SetupTLS(certManager certificate.Manager) *tls.Config {
 				CipherSuites: ciphers,
 				MinVersion:   minTLSVersion,
 				Certificates: []tls.Certificate{*crt},
-				ClientAuth:   tls.VerifyClientCertIfGiven,
+				// Aggregator presents a client cert; we have no requestheader CA.
+				// VerifyClientCertIfGiven then fails discovery for metrics.k8s.io.
+				ClientAuth: tls.NoClientCert,
 			}
 
 			config.BuildNameToCertificate()

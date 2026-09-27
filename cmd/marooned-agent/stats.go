@@ -33,16 +33,76 @@ func (a *agent) stats(payload json.RawMessage) (agentproto.StatsResponse, error)
 }
 
 func sampleProcessTree(rootPID int) (agentproto.StatsResponse, error) {
-	st, err := readProcStat(rootPID)
-	if err != nil {
-		return agentproto.StatsResponse{}, err
+	pids := descendantPIDs(rootPID)
+	var cpu, rss uint64
+	for pid := range pids {
+		st, err := readProcStat(pid)
+		if err != nil {
+			continue
+		}
+		cpu += st.cpuNano
+		rss += st.rss
+	}
+	if len(pids) == 0 {
+		return agentproto.StatsResponse{}, fmt.Errorf("not found")
 	}
 	return agentproto.StatsResponse{
-		CPUNano:         st.cpuNano,
-		RSSBytes:        st.rss,
-		WorkingSetBytes: st.rss,
-		Pids:            1,
+		CPUNano:         cpu,
+		RSSBytes:        rss,
+		WorkingSetBytes: rss,
+		Pids:            uint64(len(pids)),
 	}, nil
+}
+
+func descendantPIDs(root int) map[int]struct{} {
+	want := map[int]struct{}{root: {}}
+	ents, err := os.ReadDir("/proc")
+	if err != nil {
+		return want
+	}
+	changed := true
+	for changed {
+		changed = false
+		for _, e := range ents {
+			pid, err := strconv.Atoi(e.Name())
+			if err != nil {
+				continue
+			}
+			ppid, err := readPPID(pid)
+			if err != nil {
+				continue
+			}
+			if _, ok := want[ppid]; !ok {
+				continue
+			}
+			if _, seen := want[pid]; seen {
+				continue
+			}
+			want[pid] = struct{}{}
+			changed = true
+		}
+	}
+	return want
+}
+
+func readPPID(pid int) (int, error) {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, err
+	}
+	i := strings.LastIndex(string(b), ")")
+	if i < 0 || i+2 >= len(b) {
+		return 0, fmt.Errorf("bad stat")
+	}
+	fields := strings.Fields(string(b)[i+1:])
+	if len(fields) < 2 {
+		return 0, fmt.Errorf("short stat")
+	}
+	ppid, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return 0, err
+	}
+	return ppid, nil
 }
 
 type procSample struct {

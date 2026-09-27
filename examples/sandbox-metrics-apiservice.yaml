@@ -12,7 +12,7 @@ spec:
   insecureSkipTLSVerify: true
   service:
     name: maroonedpods-server
-    namespace: marooned-system
+    namespace: maroonedpods
     port: 443
   version: v1beta1
   versionPriority: 100
