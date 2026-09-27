@@ -1,71 +1,84 @@
-# MaroonedPods
+# Marooned
 
-VM-level isolation for Kubernetes Pods using KubeVirt. You write a **Pod**.
-The container runs in a hidden guest. QEMU, CSI, SR-IOV, DRA, and hugepages
-stay on virt-launcher.
+VM isolation for Kubernetes Pods, using KubeVirt. You write a **Pod** with
+`runtimeClassName: marooned`. The container runs in a guest. QEMU, CSI, and
+devices stay on virt-launcher. There is no user-authored VMI and no guest
+kubelet.
+
+The Pod is the API. The VMI is isolation.
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: isolated-busybox
+  name: isolated
 spec:
   runtimeClassName: marooned
   containers:
   - name: box
-    image: docker.io/library/busybox:latest
-    imagePullPolicy: IfNotPresent
+    image: quay.io/prometheus/busybox:latest
+    imagePullPolicy: Never
     command: ["sleep", "3600"]
 ```
 
-That is the v1 interface. There is no user-authored VMI and no guest kubelet.
+```bash
+kubectl apply -f examples/sandbox-pod.yaml
+kubectl get pods --watch          # wait until Ready 1/1
+kubectl exec isolated-busybox1 -- cat /scratch/ok   # vol-ok
+kubectl logs isolated-busybox1
+kubectl delete -f examples/sandbox-pod.yaml         # VMI goes with the Pod
+```
+
+Do not `kubectl` the VMI. `kubectl get vmi` in the app namespace showing
+`marooned-<pod-uid>` is expected.
+
+This repo is **sandbox only** (Kata-shaped: one Pod → one VMI). Guest-kubelet /
+VM-is-a-Node is [vladikr/maroonedpods](https://github.com/vladikr/maroonedpods).
+Do **not** install both operators; they share `MaroonedPodsConfig`.
+
+Details: [docs/sandbox-mode.md](docs/sandbox-mode.md). Follow-ups:
+[hack/sandbox-followups.md](hack/sandbox-followups.md).
+
+---
 
 ## How it works
 
 ```
 User Pod  (app ns)     runtimeClassName: marooned
-   │  kubectl logs / exec / probes / Services
+   │  kubectl logs / exec / probes / Services / top
    ▼
-marooned-shim (DaemonSet on the worker, CRI handler)
-   │  vsock or tcp
+CRI-O handler marooned → marooned-oci (pause on the host)
+   │  guest-start
    ▼
-marooned-agent (inside the guest)
+marooned-shim (DaemonSet) ── vsock ── marooned-agent (in the guest)
    ▲
-   │  claim or create
+   │  creates / deletes
 maroonedpods-controller adaptor
    ▼
-VMI + virt-launcher  (same namespace as the Pod, name marooned-<pod-uid>)
+VMI marooned-<pod-uid> + virt-launcher  (same namespace as the Pod)
 ```
 
-The webhook strips devices, hugepages, and PVCs from the **user** Pod so kubelet
-does not publish them twice. CPU and memory requests stay on the Pod for
-scheduling. The original volume list is stored on
-`maroonedpods.io/volumes` and `maroonedpods.io/placement=user|infra`.
+The webhook strips devices, hugepages, and PVCs from the **user** Pod so
+kubelet does not publish them twice. CPU/memory **requests** stay on the Pod
+for scheduling. Volumes are snapshotted on `maroonedpods.io/volumes` and
+attached on the VMI (virtio-blk). emptyDir is a guest tmpfs.
 
-This repository is **sandbox only**. A `maroonedpods.io/maroon` label does
-nothing here. Guest-kubelet / VM-is-a-Node isolation (including group mode)
-is https://github.com/vladikr/maroonedpods.
-
-Do **not** install this operator and maroonedpods in the same cluster. They
-share `MaroonedPodsConfig`.
-
-Sandbox networking, CUDN/l2bridge, PVC placement, and confidential compute:
-[docs/sandbox-mode.md](docs/sandbox-mode.md).
+v1 runtime is **CRI-O** (`marooned-oci` + conmon). containerd is not wired
+([#14](https://github.com/vladikr/marooned/issues/14)).
 
 ---
 
 ## Prerequisites
 
-- Kubernetes 1.26+
+- Kubernetes 1.26+ (kubevirtci pin: `k8s-1.37`)
 - **One** existing KubeVirt install (do not create a second KubeVirt or HCO CR)
 - `kubectl` pointed at that cluster
-- On every worker that should run these pods: a `marooned` runtime handler
-  (see [Runtime handler](#runtime-handler) below)
+- On workers: CRI-O handler `marooned` (see [Runtime handler](#2-runtime-handler))
 
 Optional:
 
-- Primary UDN/CUDN for production `l2bridge` networking
-- Without that, set `sandbox.network.binding: masquerade` (dev / kubevirtci)
+- Primary UDN/CUDN for production `l2bridge`
+- Without that: `sandbox.network.binding: masquerade` (kubevirtci)
 
 ---
 
@@ -73,37 +86,20 @@ Optional:
 
 ### 1. Install the operator
 
-Default: **this repo’s kubevirtci**, independent of `~/devel/kubevirt`.
-`cluster-up` starts the VMs and installs **one** KubeVirt CR from
-`KUBEVIRT_RELEASE` (not your local kubevirt tree).
+Default: **this repo’s kubevirtci**. `cluster-up` starts the VMs and installs
+**one** KubeVirt CR from `KUBEVIRT_RELEASE` (not your local kubevirt tree).
 
 ```bash
 export KUBEVIRT_MEMORY_SIZE=9216M
-export KUBEVIRT_PROVIDER=k8s-1.37    # k8s-1.34 .. k8s-1.37 in this kubevirtci pin
+export KUBEVIRT_PROVIDER=k8s-1.37
 export KUBEVIRT_RELEASE=latest_stable
-# podman-docker: kubevirtci ignores DOCKER_HOST and mounts /var/run/docker.sock
-# (rootful). make cluster-up sets KUBEVIRTCI_PODMAN_SOCKET from
-# $XDG_RUNTIME_DIR/podman/podman.sock when that socket exists.
 make cluster-up
-make cluster-sync                    # operator + MaroonedPodsConfig
-make functest
-make cluster-down
-```
-
-Do not also `make cluster-up` from kubevirt against the same VMs. Two
-projects sharing one kubevirtci instance is how you get a second KubeVirt CR
-and a dirty cluster.
-
-**Compat lane** (optional): test against an unreleased KubeVirt you already
-synced. This is not the default, and it is not auto-detected.
-
-```bash
-# already: cd ~/devel/kubevirt && make cluster-up && make cluster-sync
-export KUBEVIRT_DIR=$HOME/devel/kubevirt
-export KUBEVIRT_PROVIDER=k8s-1.27    # same as that cluster-up
 make cluster-sync
-make functest
+make cluster-push
+./hack/kubevirtci-install-crio-handler.sh
 ```
+
+Do not also `make cluster-up` from kubevirt against the same VMs.
 
 **On an existing cluster**, after building and pushing images:
 
@@ -113,41 +109,28 @@ kubectl apply -f _out/manifests/release/maroonedpods-operator.yaml
 kubectl apply -f _out/manifests/release/maroonedpods-cr.yaml
 ```
 
-The operator then deploys:
-
-- CRDs (`MaroonedPods`, `MaroonedPodsConfig`)
-- RuntimeClass `marooned`
-- namespace `marooned-system`
-- webhook (mutating/validating)
-- `maroonedpods-controller` (includes the sandbox adaptor)
-- `marooned-shim` DaemonSet in `marooned-system`
-
-Do **not** install a second KubeVirt CR.
-
-Node-mode (guest kubelet) install is the maroonedpods project, not this one.
+The operator deploys CRDs, RuntimeClass `marooned`, namespace
+`marooned-system`, webhook, `maroonedpods-controller` (sandbox adaptor),
+`marooned-shim` DaemonSet, and `maroonedpods-server`.
 
 ### 2. Runtime handler
 
-`RuntimeClass.handler: marooned` must exist in containerd or CRI-O on every
-worker. The shim listens on `/var/run/marooned/cri.sock`.
+v1 is CRI-O. After the shim DaemonSet is running:
 
-containerd (`/etc/containerd/config.toml`):
-
-```toml
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.marooned]
-  runtime_type = "io.containerd.marooned.v1"
+```bash
+./hack/kubevirtci-install-crio-handler.sh
 ```
 
-Then restart containerd. Point that runtime at the marooned shim; do not run a
-second kubelet.
+That installs `marooned-oci` and `hack/crio/20-marooned.conf`. Until it runs
+(and after `cluster-push` if CRI-O bounced without reloading), the Pod stays
+**ContainerCreating** even if the VMI is Running:
+`failed to find runtime handler marooned`.
 
 ### 3. Sandbox config
 
 ```bash
 kubectl apply -f examples/maroonedpods-config.yaml
 ```
-
-Minimum:
 
 ```yaml
 apiVersion: maroonedpods.io/v1alpha1
@@ -164,17 +147,13 @@ spec:
       kernelPath: /boot/vmlinuz
       initrdPath: /boot/initrd
       kernelArgs: "root=/dev/vda rootfstype=ext4 rw console=ttyS0"
-    warmPoolSize: 2
     network:
-      binding: masquerade   # use l2bridge when the cluster has primary UDN
+      binding: masquerade   # l2bridge when the cluster has primary UDN
     confidentialCompute:
       default: off
 ```
 
-Confirm the control plane is up:
-
 ```bash
-kubectl get maroonedpods
 kubectl get maroonedpodsconfig
 kubectl get runtimeclass marooned
 kubectl get ds -n marooned-system
@@ -185,97 +164,80 @@ kubectl get pods -n maroonedpods
 
 ## Use
 
-### Diskless pod
+Examples under `examples/` (all `runtimeClassName: marooned`):
+
+| File | What |
+|---|---|
+| `sandbox-pod.yaml` | busybox httpd, emptyDir `/scratch` |
+| `sandbox-pod-pvc.yaml` | filesystem PVC at `/data` |
+| `sandbox-pod-block.yaml` | `volumeDevices` raw disk, no mkfs |
+| `sandbox-pod-multi.yaml` | init + app, shared emptyDir |
+| `sandbox-nginx.yaml` | stock nginx |
+| `sandbox-python.yaml` | CPython + emptyDir |
+| `sandbox-model.yaml` | engine image + **weights PVC** (vLLM/Ollama shape) |
+| `sandbox-metrics-apiservice.yaml` | `kubectl top` from guest RSS |
 
 ```bash
 kubectl apply -f examples/sandbox-pod.yaml
-kubectl get vmi                      # marooned-<pod-uid> Running in this namespace
+kubectl wait --for=condition=Ready pod/isolated-busybox1 --timeout=180s
+kubectl exec isolated-busybox1 -- cat /scratch/ok
 ```
 
-v1 on kubevirtci: the **VMI** becomes Ready. The user Pod stays ContainerCreating until CRI-O has a `marooned` runtime handler (not wired yet). Do not wait on `pod/Ready` or `kubectl exec` for that Pod.
+**Images:** kubelet pulls as usual. We copy that unpacked tree into a sized
+guest disk (not a second Hub pull). Guest-pull is fallback. Do not put 70B
+weights in the image; use a data PVC (`sandbox-model.yaml`).
 
-### Pod with a PVC
+**Network (masquerade / kubevirtci):** `status.podIP` is the pause CNI address.
+The pause forwards container ports to the guest, so `curl $PODIP:8080` works.
+Services use an adaptor-owned EndpointSlice. Production: `l2bridge` + CUDN;
+EndpointSlice uses the guest IP. Do not enable l2bridge without OVN-K.
 
-The VMI is still next to the Pod, so CSI can attach the claim.
+**kubectl top:** apply `examples/sandbox-metrics-apiservice.yaml` if
+metrics-server is not already registered. Guest RSS (not the pause cgroup).
+Idle CPU may be `0m`.
 
-```bash
-kubectl apply -f examples/sandbox-pod-pvc.yaml
-kubectl get vmi                    # marooned-<pod-uid> Running in this namespace
-```
-
-```bash
-kubectl get vmi                    # marooned-<pod-uid> in this namespace
-```
-
-The user Pod still has no PVC (webhook stripped it). virt-launcher in the **app**
-namespace has the claim mounted.
-
-### Confidential compute (SNP / TDX)
-
-Same RuntimeClass. Annotate the Pod; do not add a second handler.
-
-```yaml
-metadata:
-  annotations:
-    maroonedpods.io/tee: snp    # or tdx
-spec:
-  runtimeClassName: marooned
-```
-
-Enable `WorkloadEncryptionSEV` / `WorkloadEncryptionTDX` on the **existing**
-KubeVirt/HCO object. Evidence is produced in the guest and verified off the
-hypervisor. TEE + SR-IOV is rejected. See [docs/sandbox-mode.md](docs/sandbox-mode.md).
+**TEE:** same RuntimeClass; annotate `maroonedpods.io/tee: snp` or `tdx`.
+Enable the matching gate on the **existing** KubeVirt/HCO object. See
+[docs/sandbox-mode.md](docs/sandbox-mode.md).
 
 ---
 
-## Configuration reference
+## Configuration
 
 | Field | Meaning |
 |---|---|
-| `spec.defaultMode` | `Sandbox` (RuntimeClass) or `Node` (legacy guest kubelet) |
-| `spec.sandbox.infraNamespace` | Hidden diskless VMIs (`marooned-system`) |
-| `spec.sandbox.rootfsImage` | Guest agent OS (not the k3s node image) |
-| `spec.sandbox.warmPoolSize` | Diskless pool per `(node, size class, tee)` |
+| `spec.defaultMode` | `Sandbox` in this repo |
+| `spec.sandbox.infraNamespace` | `marooned-system` (shim, RuntimeClass) |
+| `spec.sandbox.rootfsImage` | Guest OS + agent (not the user image) |
 | `spec.sandbox.network.binding` | `l2bridge` (prod) or `masquerade` (dev) |
 | `spec.sandbox.confidentialCompute.default` | `off` / `snp` / `tdx` / `annotation` |
 
-PVC pods never claim the infra pool. They always cold-create in the Pod
-namespace.
+The VMI is always `marooned-<pod-uid>` in the **Pod** namespace.
 
 ---
 
 ## Development
 
 ```bash
-make build          # controller, operator, server, shim, agent
+make build
 make test WHAT='./pkg/webhook ./pkg/sandbox/... ./pkg/maroonedpods-server/handler'
-make cluster-up     # this repo's kubevirtci + one KubeVirt CR
+make cluster-up
 make cluster-sync
-make functest
-make cluster-down
+make cluster-push
+./hack/kubevirtci-install-crio-handler.sh
 ```
 
 Vendored kubevirtci is tag `2609091017-ad4877a9` (`hack/update-kubevirtci.sh`).
-Do not inherit providers from `~/devel/kubevirt` unless you set `KUBEVIRT_DIR`
-on purpose.
-
-Images (against a running kubevirtci cluster):
+Do not inherit providers from `~/devel/kubevirt` unless you set `KUBEVIRT_DIR`.
 
 ```bash
 export KUBEVIRT_PROVIDER=k8s-1.37
 make cluster-push
-# SKIP_GUEST_DISK=1 make cluster-push   # operator/shim only
+# SKIP_GUEST_DISK=1 make cluster-push   # operator/shim only; not for agent changes
+./hack/kubevirtci-install-crio-handler.sh   # after a CRI-O bounce; also refreshes sandbox:latest
 ```
 
-That builds and pushes controller, server, operator, shim, `marooned-sandbox`, and `marooned-kernel` to the in-cluster registry, then restarts controller and shim.
-
-CRI-O handler on kubevirtci nodes (after the shim DaemonSet is running):
-
-```bash
-./hack/kubevirtci-install-crio-handler.sh
-```
-
-That copies `/opt/marooned/marooned-oci` (placed by the shim) to `/usr/local/bin` and installs `hack/crio/20-marooned.conf`. Until that runs, the user Pod stays ContainerCreating even if the VMI is Running.
+Demo (asciinema): `bash examples/sandbox-demo.sh`.
 
 ---
 
