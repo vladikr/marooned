@@ -29,6 +29,10 @@ type state struct {
 	Status     string `json:"status"`
 	PID        int    `json:"pid"`
 	Bundle     string `json:"bundle"`
+	Created    string `json:"created,omitempty"`
+	Started    string `json:"started,omitempty"`
+	Finished   string `json:"finished,omitempty"`
+	ExitCode   int    `json:"exitCode,omitempty"`
 }
 
 func main() {
@@ -130,7 +134,7 @@ func doCreate(root string, args []string) int {
 	dir := filepath.Join(root, id)
 	_ = os.MkdirAll(dir, 0755)
 	pid := startPause(id, dir)
-	st := state{OCIVersion: "1.0.2", ID: id, Status: "created", PID: pid, Bundle: bundle}
+	st := state{OCIVersion: "1.0.2", ID: id, Status: "created", PID: pid, Bundle: bundle, Created: time.Now().UTC().Format(time.RFC3339Nano)}
 	writeState(dir, st)
 	if pidFile != "" {
 		_ = os.WriteFile(pidFile, []byte(strconv.Itoa(st.PID)), 0644)
@@ -166,6 +170,7 @@ func doStart(root string, args []string) int {
 		}
 	}
 	st.Status = "running"
+	st.Started = time.Now().UTC().Format(time.RFC3339Nano)
 	writeState(dir, st)
 	if strings.TrimSpace(string(mustRead(filepath.Join(dir, "sandbox")))) == "1" {
 		return 0
@@ -181,15 +186,28 @@ func doState(root string, args []string) int {
 	if err != nil {
 		fatal("state: %v", err)
 	}
-	if st.PID > 1 && !pidAlive(st.PID) {
-		st.Status = "stopped"
-	}
-	if st.Status == "running" && guestHasExited(dir) {
-		st.Status = "stopped"
-	}
+	out := applyStoppedState(dir, st)
 	enc := json.NewEncoder(os.Stdout)
-	_ = enc.Encode(st)
+	_ = enc.Encode(out)
 	return 0
+}
+
+func applyStoppedState(dir string, st state) state {
+	dead := st.PID > 1 && !pidAlive(st.PID)
+	if dead || (st.Status == "running" && guestHasExited(dir)) {
+		st.Status = "stopped"
+		if st.Finished == "" {
+			st.Finished = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		if dead {
+			st.PID = 0
+		}
+		writeState(dir, st)
+	}
+	if st.Status == "stopped" {
+		st.PID = 0
+	}
+	return st
 }
 
 func guestHasExited(dir string) bool {

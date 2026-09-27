@@ -22,6 +22,19 @@ func TestWriteCrioExit(t *testing.T) {
 	}
 }
 
+func TestApplyStoppedStateSetsFinished(t *testing.T) {
+	dir := t.TempDir()
+	st := state{OCIVersion: "1.0.2", ID: "c", Status: "running", PID: 1 << 30}
+	got := applyStoppedState(dir, st)
+	if got.Status != "stopped" || got.PID != 0 || got.Finished == "" {
+		t.Fatalf("%+v", got)
+	}
+	again, err := readState(dir)
+	if err != nil || again.Finished == "" {
+		t.Fatalf("persist: %v %+v", err, again)
+	}
+}
+
 func TestFinishOCIContainerWritesExitBeforeStop(t *testing.T) {
 	dir := t.TempDir()
 	exits := t.TempDir()

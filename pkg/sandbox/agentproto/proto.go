@@ -113,10 +113,11 @@ type StatusRequest struct {
 
 // StatusResponse is whether the guest workload is still running.
 type StatusResponse struct {
-	Running  bool   `json:"running"`
-	Pid      int    `json:"pid"`
-	ExitCode int32  `json:"exitCode"`
-	Restarts uint32 `json:"restarts"`
+	Running          bool   `json:"running"`
+	Pid              int    `json:"pid"`
+	ExitCode         int32  `json:"exitCode"`
+	Restarts         uint32 `json:"restarts"`
+	FinishedUnixNano int64  `json:"FinishedUnixNano,omitempty"`
 }
 
 // StatsRequest asks for guest process cgroup-ish usage.

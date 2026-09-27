@@ -84,6 +84,9 @@ type Container struct {
 	RestartCount uint32
 	Pid          int
 	ExitCode     int32
+	CreatedAt    int64 `json:"CreatedAt,omitempty"`
+	StartedAt    int64 `json:"StartedAt,omitempty"`
+	FinishedAt   int64 `json:"FinishedAt,omitempty"`
 }
 
 // ContainerStats is guest workload usage, not the host pause cgroup.
@@ -349,7 +352,7 @@ func (r *Runtime) PodSandboxStatus(_ context.Context, id string) (*PodSandbox, e
 
 func (r *Runtime) CreateContainer(_ context.Context, sandboxID string, req *CreateContainerRequest) (*Container, error) {
 	id := sandboxID + "-" + req.Name
-	c := &Container{ID: id, SandboxID: sandboxID, Name: req.Name, Image: req.Image, Command: req.Command, Args: req.Args, Env: req.Env, WorkDir: req.WorkDir, RootfsPath: req.RootfsPath, RootfsBytes: req.RootfsBytes, State: "CONTAINER_CREATED"}
+	c := &Container{ID: id, SandboxID: sandboxID, Name: req.Name, Image: req.Image, Command: req.Command, Args: req.Args, Env: req.Env, WorkDir: req.WorkDir, RootfsPath: req.RootfsPath, RootfsBytes: req.RootfsBytes, State: "CONTAINER_CREATED", CreatedAt: time.Now().UnixNano()}
 	r.store.PutContainer(c)
 	return c, nil
 }
@@ -361,6 +364,7 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 	}
 	if r.dial == nil {
 		c.State = "CONTAINER_RUNNING"
+		c.StartedAt = time.Now().UnixNano()
 		r.store.PutContainer(c)
 		return nil
 	}
@@ -446,6 +450,7 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 		return err
 	}
 	c.State = "CONTAINER_RUNNING"
+	c.StartedAt = time.Now().UnixNano()
 	r.store.PutContainer(c)
 	return nil
 }
@@ -517,6 +522,9 @@ func (r *Runtime) ContainerStatus(_ context.Context, id string) (*Container, err
 		c.Ready = false
 		if c.State == "CONTAINER_RUNNING" {
 			c.State = "CONTAINER_EXITED"
+			if c.FinishedAt == 0 {
+				c.FinishedAt = time.Now().UnixNano()
+			}
 		}
 		r.store.PutContainer(c)
 		return c, nil
@@ -527,6 +535,9 @@ func (r *Runtime) ContainerStatus(_ context.Context, id string) (*Container, err
 		c.Ready = false
 		if c.State == "CONTAINER_RUNNING" {
 			c.State = "CONTAINER_EXITED"
+			if c.FinishedAt == 0 {
+				c.FinishedAt = time.Now().UnixNano()
+			}
 		}
 		r.store.PutContainer(c)
 		return c, nil
@@ -539,10 +550,16 @@ func (r *Runtime) ContainerStatus(_ context.Context, id string) (*Container, err
 	c.ExitCode = st.ExitCode
 	c.RestartCount = st.Restarts
 	c.Ready = st.Running
+	if st.FinishedUnixNano != 0 {
+		c.FinishedAt = st.FinishedUnixNano
+	}
 	if st.Running {
 		c.State = "CONTAINER_RUNNING"
-	} else if c.State == "CONTAINER_RUNNING" {
+	} else if c.State == "CONTAINER_RUNNING" || c.State == "CONTAINER_EXITED" {
 		c.State = "CONTAINER_EXITED"
+		if c.FinishedAt == 0 {
+			c.FinishedAt = time.Now().UnixNano()
+		}
 	}
 	r.store.PutContainer(c)
 	return c, nil

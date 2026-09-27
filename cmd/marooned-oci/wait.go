@@ -65,6 +65,10 @@ func finishOCIContainer(dir, id string, code int) {
 	st, err := readState(dir)
 	if err == nil {
 		st.Status = "stopped"
+		st.ExitCode = code
+		if st.Finished == "" {
+			st.Finished = time.Now().UTC().Format(time.RFC3339Nano)
+		}
 		writeState(dir, st)
 	}
 	if st.PID > 1 {

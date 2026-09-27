@@ -23,15 +23,16 @@ import (
 )
 
 type container struct {
-	id       string
-	cmd      *exec.Cmd
-	stdout   bytes.Buffer
-	stderr   bytes.Buffer
-	mu       sync.Mutex
-	exited   bool
-	code     int32
-	restarts uint32
-	done     chan struct{}
+	id         string
+	cmd        *exec.Cmd
+	stdout     bytes.Buffer
+	stderr     bytes.Buffer
+	mu         sync.Mutex
+	exited     bool
+	code       int32
+	restarts   uint32
+	finishedAt int64
+	done       chan struct{}
 }
 
 type agent struct {
@@ -246,6 +247,7 @@ func (a *agent) start(payload json.RawMessage) error {
 		err := cmd.Wait()
 		ctr.mu.Lock()
 		ctr.exited = true
+		ctr.finishedAt = time.Now().UnixNano()
 		if err != nil {
 			if ee, ok := err.(*exec.ExitError); ok {
 				ctr.code = int32(ee.ExitCode())
@@ -286,7 +288,7 @@ func (a *agent) status(payload json.RawMessage) (agentproto.StatusResponse, erro
 	}
 	ctr.mu.Lock()
 	defer ctr.mu.Unlock()
-	out := agentproto.StatusResponse{ExitCode: ctr.code, Restarts: ctr.restarts}
+	out := agentproto.StatusResponse{ExitCode: ctr.code, Restarts: ctr.restarts, FinishedUnixNano: ctr.finishedAt}
 	if ctr.cmd != nil && ctr.cmd.Process != nil {
 		out.Pid = ctr.cmd.Process.Pid
 	}
