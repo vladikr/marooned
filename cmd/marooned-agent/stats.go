@@ -33,7 +33,7 @@ func (a *agent) stats(payload json.RawMessage) (agentproto.StatsResponse, error)
 }
 
 func sampleProcessTree(rootPID int) (agentproto.StatsResponse, error) {
-	pids := descendantPIDs(rootPID)
+	pids := pidsInPidNamespace(rootPID)
 	var cpu, rss uint64
 	for pid := range pids {
 		st, err := readProcStat(pid)
@@ -54,55 +54,31 @@ func sampleProcessTree(rootPID int) (agentproto.StatsResponse, error) {
 	}, nil
 }
 
-func descendantPIDs(root int) map[int]struct{} {
-	want := map[int]struct{}{root: {}}
+// pidsInPidNamespace lists every process in rootPID's PID namespace.
+// CLONE_NEWPID children are often not PPID-descendants in the agent's
+// /proc view, so a parent-walk misses the workload (4Ki RSS, pids=1).
+func pidsInPidNamespace(rootPID int) map[int]struct{} {
+	want := map[int]struct{}{rootPID: {}}
+	ns, err := os.Readlink(fmt.Sprintf("/proc/%d/ns/pid", rootPID))
+	if err != nil {
+		return want
+	}
 	ents, err := os.ReadDir("/proc")
 	if err != nil {
 		return want
 	}
-	changed := true
-	for changed {
-		changed = false
-		for _, e := range ents {
-			pid, err := strconv.Atoi(e.Name())
-			if err != nil {
-				continue
-			}
-			ppid, err := readPPID(pid)
-			if err != nil {
-				continue
-			}
-			if _, ok := want[ppid]; !ok {
-				continue
-			}
-			if _, seen := want[pid]; seen {
-				continue
-			}
-			want[pid] = struct{}{}
-			changed = true
+	for _, e := range ents {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
 		}
+		n2, err := os.Readlink(fmt.Sprintf("/proc/%d/ns/pid", pid))
+		if err != nil || n2 != ns {
+			continue
+		}
+		want[pid] = struct{}{}
 	}
 	return want
-}
-
-func readPPID(pid int) (int, error) {
-	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return 0, err
-	}
-	i := strings.LastIndex(string(b), ")")
-	if i < 0 || i+2 >= len(b) {
-		return 0, fmt.Errorf("bad stat")
-	}
-	fields := strings.Fields(string(b)[i+1:])
-	if len(fields) < 2 {
-		return 0, fmt.Errorf("short stat")
-	}
-	ppid, err := strconv.Atoi(fields[1])
-	if err != nil {
-		return 0, err
-	}
-	return ppid, nil
 }
 
 type procSample struct {

@@ -38,3 +38,11 @@ func TestSampleProcessTreeSelf(t *testing.T) {
 		t.Fatal("expected rss")
 	}
 }
+
+func TestPidsInPidNamespaceIncludesSelf(t *testing.T) {
+	me := os.Getpid()
+	got := pidsInPidNamespace(me)
+	if _, ok := got[me]; !ok {
+		t.Fatal("missing self")
+	}
+}
