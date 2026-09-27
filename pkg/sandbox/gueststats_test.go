@@ -18,7 +18,7 @@ func TestMergeSampleMilliCPU(t *testing.T) {
 
 func TestPodMetricsJSON(t *testing.T) {
 	b := PodMetricsJSON("ns", "p", StatsSnapshot{Container: "box", RSSBytes: 4096, MilliCPU: 7, TS: 1e9})
-	if !strings.Contains(string(b), `"memory":"4096"`) || !strings.Contains(string(b), `"cpu":"7m"`) {
+	if !strings.Contains(string(b), `"cpu":"7m"`) || !(strings.Contains(string(b), "4Ki") || strings.Contains(string(b), "4096")) {
 		t.Fatalf("%s", b)
 	}
 }

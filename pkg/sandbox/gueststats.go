@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // GuestStatsAnnotation is JSON Snapshot of guest RSS/CPU (not the pause cgroup).
@@ -47,6 +49,14 @@ func MergeSampleAt(prev *StatsSnapshot, cpuNano, rss, pids uint64, container str
 	return s
 }
 
+// StatsStale is true when the shim has not refreshed guest stats recently.
+func StatsStale(s StatsSnapshot) bool {
+	if s.TS <= 0 {
+		return true
+	}
+	return time.Since(time.Unix(0, s.TS)) > 90*time.Second
+}
+
 func ParseStatsAnnotation(s string) (*StatsSnapshot, error) {
 	if s == "" {
 		return nil, nil
@@ -66,10 +76,13 @@ func FormatStatsAnnotation(s StatsSnapshot) string {
 // PodMetricsJSON is a metrics.k8s.io/v1beta1 PodMetrics object.
 func PodMetricsJSON(ns, name string, snap StatsSnapshot) []byte {
 	cpu := fmt.Sprintf("%dm", snap.MilliCPU)
-	if snap.MilliCPU <= 0 {
-		cpu = "0"
+	if snap.MilliCPU < 0 {
+		cpu = "0m"
 	}
-	mem := fmt.Sprintf("%d", snap.RSSBytes)
+	mem := resource.NewQuantity(int64(snap.RSSBytes), resource.BinarySI).String()
+	if snap.RSSBytes == 0 {
+		mem = "0"
+	}
 	ts := time.Unix(0, snap.TS).UTC().Format(time.RFC3339Nano)
 	ctr := snap.Container
 	if ctr == "" {

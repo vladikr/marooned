@@ -68,7 +68,7 @@ func (h *metricsHandler) writePodList(ctx context.Context, w http.ResponseWriter
 			continue
 		}
 		snap, err := sandbox.ParseStatsAnnotation(p.Annotations[sandbox.GuestStatsAnnotation])
-		if err != nil || snap == nil {
+		if err != nil || snap == nil || sandbox.StatsStale(*snap) {
 			continue
 		}
 		items = append(items, sandbox.PodMetricsJSON(p.Namespace, p.Name, *snap))
@@ -92,7 +92,7 @@ func (h *metricsHandler) writePod(ctx context.Context, w http.ResponseWriter, ns
 		return
 	}
 	snap, err := sandbox.ParseStatsAnnotation(p.Annotations[sandbox.GuestStatsAnnotation])
-	if err != nil || snap == nil {
+	if err != nil || snap == nil || sandbox.StatsStale(*snap) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
