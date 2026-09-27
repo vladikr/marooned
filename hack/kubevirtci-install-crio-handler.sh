@@ -36,7 +36,9 @@ for i in $(seq 1 "$nodes"); do
   "$ssh" "$node" "sudo crictl pull quay.io/prometheus/busybox:latest >/dev/null || true"
   "$ssh" "$node" "sudo crictl pull public.ecr.aws/docker/library/python:3.12-alpine >/dev/null || true"
   "$ssh" "$node" "sudo crictl pull public.ecr.aws/docker/library/nginx:alpine >/dev/null || true"
-  # VMI containerDisks are IfNotPresent; refresh :latest after cluster-push.
+  # VMI containerDisks are IfNotPresent; drop the cached :latest so the
+  # new guest agent (stats, etc.) is actually booted.
+  "$ssh" "$node" "sudo crictl rmi registry:5000/marooned-sandbox:latest >/dev/null || true"
   "$ssh" "$node" "sudo crictl pull registry:5000/marooned-sandbox:latest >/dev/null || true"
   "$ssh" "$node" "sudo crictl pull registry:5000/marooned-kernel:latest >/dev/null || true"
   "$ssh" "$node" "sudo crictl pull registry:5000/marooned-vsockfwd:latest >/dev/null || true"

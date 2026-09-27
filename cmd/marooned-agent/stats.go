@@ -33,7 +33,17 @@ func (a *agent) stats(payload json.RawMessage) (agentproto.StatsResponse, error)
 }
 
 func sampleProcessTree(rootPID int) (agentproto.StatsResponse, error) {
+	// The workload mounts proc inside the chroot (CLONE_NEWPID). That view
+	// is what `ps` in the container sees (sh + python). Host /proc often
+	// only shows the wrapper (4Ki RSS, pids=1) so kubectl top prints 0Mi.
+	if s, err := sampleProcDir(fmt.Sprintf("/proc/%d/root/proc", rootPID)); err == nil && s.Pids > 0 {
+		return s, nil
+	}
 	pids := pidsInPidNamespace(rootPID)
+	return samplePIDSet(pids)
+}
+
+func samplePIDSet(pids map[int]struct{}) (agentproto.StatsResponse, error) {
 	var cpu, rss uint64
 	for pid := range pids {
 		st, err := readProcStat(pid)
@@ -51,6 +61,36 @@ func sampleProcessTree(rootPID int) (agentproto.StatsResponse, error) {
 		RSSBytes:        rss,
 		WorkingSetBytes: rss,
 		Pids:            uint64(len(pids)),
+	}, nil
+}
+
+func sampleProcDir(procDir string) (agentproto.StatsResponse, error) {
+	ents, err := os.ReadDir(procDir)
+	if err != nil {
+		return agentproto.StatsResponse{}, err
+	}
+	var cpu, rss, n uint64
+	for _, e := range ents {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+		st, err := readProcStatIn(procDir, pid)
+		if err != nil {
+			continue
+		}
+		cpu += st.cpuNano
+		rss += st.rss
+		n++
+	}
+	if n == 0 {
+		return agentproto.StatsResponse{}, fmt.Errorf("empty proc")
+	}
+	return agentproto.StatsResponse{
+		CPUNano:         cpu,
+		RSSBytes:        rss,
+		WorkingSetBytes: rss,
+		Pids:            n,
 	}, nil
 }
 
@@ -87,7 +127,11 @@ type procSample struct {
 }
 
 func readProcStat(pid int) (procSample, error) {
-	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	return readProcStatIn("/proc", pid)
+}
+
+func readProcStatIn(procDir string, pid int) (procSample, error) {
+	b, err := os.ReadFile(fmt.Sprintf("%s/%d/stat", procDir, pid))
 	if err != nil {
 		return procSample{}, err
 	}
@@ -96,7 +140,7 @@ func readProcStat(pid int) (procSample, error) {
 		return procSample{}, err
 	}
 	rss := rssPages * uint64(os.Getpagesize())
-	if rb, err := rssFromStatus(pid); err == nil && rb > 0 {
+	if rb, err := rssFromStatusFile(fmt.Sprintf("%s/%d/status", procDir, pid)); err == nil && rb > 0 {
 		rss = rb
 	}
 	return procSample{cpuNano: ticksToNano(utime + stime), rss: rss}, nil
@@ -119,7 +163,11 @@ func parseProcStat(data string) (utime, stime, rssPages uint64, err error) {
 }
 
 func rssFromStatus(pid int) (uint64, error) {
-	f, err := os.Open(fmt.Sprintf("/proc/%d/status", pid))
+	return rssFromStatusFile(fmt.Sprintf("/proc/%d/status", pid))
+}
+
+func rssFromStatusFile(path string) (uint64, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		return 0, err
 	}

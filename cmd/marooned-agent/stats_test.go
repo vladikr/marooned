@@ -2,6 +2,8 @@ package main
 
 import (
 	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -36,6 +38,36 @@ func TestSampleProcessTreeSelf(t *testing.T) {
 	}
 	if s.RSSBytes == 0 {
 		t.Fatal("expected rss")
+	}
+}
+
+func TestSampleProcDir(t *testing.T) {
+	dir := t.TempDir()
+	writeFakeProc := func(pid, rssPages int) {
+		p := filepath.Join(dir, strconv.Itoa(pid))
+		if err := os.Mkdir(p, 0755); err != nil {
+			t.Fatal(err)
+		}
+		stat := `1 (x) S 0 1 1 0 -1 0 0 0 0 0 1 2 0 0 20 0 1 0 0 0 ` + strconv.Itoa(rssPages) + ` 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0`
+		if err := os.WriteFile(filepath.Join(p, "stat"), []byte(stat), 0644); err != nil {
+			t.Fatal(err)
+		}
+		st := "Name:\tx\nVmRSS:\t" + strconv.Itoa(rssPages*4) + " kB\n"
+		if err := os.WriteFile(filepath.Join(p, "status"), []byte(st), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFakeProc(1, 1)
+	writeFakeProc(3, 1000)
+	s, err := sampleProcDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Pids != 2 {
+		t.Fatalf("pids %d want 2", s.Pids)
+	}
+	if s.RSSBytes < 1000*1024 {
+		t.Fatalf("rss %d, expected python-sized", s.RSSBytes)
 	}
 }
 
