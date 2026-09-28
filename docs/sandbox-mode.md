@@ -1,10 +1,9 @@
 # Sandbox mode
 
 Users write a Pod with `runtimeClassName: marooned`. The container runs in a
-hidden KubeVirt guest. `kubectl logs` / `exec` / probes / Services target that
-Pod. QEMU, CSI, SR-IOV, DRA, and hugepages stay on virt-launcher.
-
-**Hidden means the user did not author the VMI**, not “other namespace”.
+KubeVirt guest. `kubectl logs` / `exec` / probes / Services target that Pod.
+QEMU, CSI, SR-IOV, DRA, and hugepages stay on virt-launcher. The user did not
+author the VMI; `kubectl get vmi` in the app namespace is expected.
 
 | Kind of sandbox | VMI namespace |
 |---|---|
