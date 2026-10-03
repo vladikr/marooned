@@ -8,11 +8,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/util/certificate"
 	"k8s.io/klog/v2"
-	api "k8s.io/kubernetes/pkg/apis/core"
-	k8sapiv1 "k8s.io/kubernetes/pkg/apis/core/v1"
 	"k8s.io/utils/pointer"
 	v1 "kubevirt.io/api/core/v1"
 	sdkapi "kubevirt.io/controller-lifecycle-operator-sdk/api"
@@ -374,20 +371,4 @@ func SetupTLS(certManager certificate.Manager) *tls.Config {
 	}
 	tlsConfig.BuildNameToCertificate()
 	return tlsConfig
-}
-
-// todo: ask kubernetes to make this funcs global and remove all this code:
-func ToExternalPodOrError(obj k8sruntime.Object) (*corev1.Pod, error) {
-	pod := &corev1.Pod{}
-	switch t := obj.(type) {
-	case *corev1.Pod:
-		pod = t
-	case *api.Pod:
-		if err := k8sapiv1.Convert_core_Pod_To_v1_Pod(t, pod, nil); err != nil {
-			return nil, err
-		}
-	default:
-		return nil, fmt.Errorf("expect *api.Pod or *v1.Pod, got %v", t)
-	}
-	return pod, nil
 }
