@@ -109,8 +109,10 @@ const (
 	DefaultSandboxKernelPath  = "/boot/vmlinuz"
 	DefaultSandboxInitrdPath  = "/boot/initrd"
 	DefaultSandboxKernelArgs  = "root=/dev/vda rootfstype=ext4 rw console=ttyS0"
-	// DefaultVirtLauncherImage is the node rootfs source for one-pod qemu.
-	// cluster-push retags this from the cluster's virt-launcher when present.
+	// DefaultVirtLauncherImage is the fallback extract image when the
+	// operator cannot read virt-handler and MAROONED_VIRT_LAUNCHER_IMAGE
+	// is unset. quay.io/kubevirt/virt-launcher:latest is not published;
+	// cluster-push and the operator replace this with the cluster tag.
 	DefaultVirtLauncherImage       = "quay.io/kubevirt/virt-launcher:latest"
 	VirtLauncherRootfsPath         = "/opt/marooned/virt-launcher-rootfs"
 	ShimDaemonSetName              = "marooned-shim"

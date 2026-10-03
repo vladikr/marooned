@@ -22,9 +22,9 @@ func createSandboxClusterResources(args *FactoryArgs) []client.Object {
 		createShimClusterRoleBinding(),
 	}
 	if args.ShimImage != "" {
-		objs = append(objs, createShimDaemonSet(args.ShimImage, args.PullPolicy))
+		objs = append(objs, createShimDaemonSet(args.ShimImage, args.PullPolicy, args.VirtLauncherImage))
 	} else {
-		objs = append(objs, createShimDaemonSet("quay.io/vladikr/marooned-shim:latest", "IfNotPresent"))
+		objs = append(objs, createShimDaemonSet("quay.io/vladikr/marooned-shim:latest", "IfNotPresent", args.VirtLauncherImage))
 	}
 	return objs
 }
@@ -99,11 +99,14 @@ func createShimClusterRoleBinding() *rbacv1.ClusterRoleBinding {
 	)
 }
 
-func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
+func createShimDaemonSet(image, pullPolicy, virtLauncherImage string) *appsv1.DaemonSet {
 	// Node CRI helper: bind host unix socket, install marooned-oci,
 	// chmod hostPath. Unprivileged container_t cannot bind cri.sock on
 	// container_var_run_t (SELinux EACCES) or overwrite /opt/marooned
 	// (usr_t). Sidecar stays unprivileged; no hostNetwork/hostPID.
+	if virtLauncherImage == "" {
+		virtLauncherImage = utils2.DefaultVirtLauncherImage
+	}
 	priv := true
 	allowEsc := true
 	hostPathDir := corev1.HostPathDirectoryOrCreate
@@ -134,7 +137,7 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 					InitContainers: []corev1.Container{
 						{
 							Name:            "extract-virt-launcher",
-							Image:           utils2.DefaultVirtLauncherImage,
+							Image:           virtLauncherImage,
 							ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 							Command: []string{"/bin/sh", "-c", `
 set -e

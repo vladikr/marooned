@@ -11,11 +11,12 @@ import (
 
 // FactoryArgs contains the required parameters to generate all cluster-scoped resources
 type FactoryArgs struct {
-	Namespace  string
-	Client     client.Client
-	Logger     logr.Logger
-	ShimImage  string
-	PullPolicy string
+	Namespace         string
+	Client            client.Client
+	Logger            logr.Logger
+	ShimImage         string
+	PullPolicy        string
+	VirtLauncherImage string
 }
 
 type factoryFunc func(*FactoryArgs) []client.Object

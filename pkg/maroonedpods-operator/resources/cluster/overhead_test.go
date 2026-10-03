@@ -29,7 +29,7 @@ func TestRuntimeClassOverheadIsLauncherTax(t *testing.T) {
 }
 
 func TestShimDaemonSetExtractsVirtLauncher(t *testing.T) {
-	ds := createShimDaemonSet("shim:test", "IfNotPresent")
+	ds := createShimDaemonSet("shim:test", "IfNotPresent", "")
 	if len(ds.Spec.Template.Spec.InitContainers) != 1 {
 		t.Fatalf("init containers %d", len(ds.Spec.Template.Spec.InitContainers))
 	}
@@ -38,6 +38,10 @@ func TestShimDaemonSetExtractsVirtLauncher(t *testing.T) {
 	}
 	if ds.Spec.Template.Spec.InitContainers[0].Image != util.DefaultVirtLauncherImage {
 		t.Fatalf("init image %s", ds.Spec.Template.Spec.InitContainers[0].Image)
+	}
+	pinned := createShimDaemonSet("shim:test", "IfNotPresent", "quay.io/kubevirt/virt-launcher:v1.9.0")
+	if pinned.Spec.Template.Spec.InitContainers[0].Image != "quay.io/kubevirt/virt-launcher:v1.9.0" {
+		t.Fatalf("pinned image %s", pinned.Spec.Template.Spec.InitContainers[0].Image)
 	}
 	foundRootfs := false
 	for _, v := range ds.Spec.Template.Spec.Volumes {

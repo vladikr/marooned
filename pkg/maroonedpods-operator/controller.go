@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"strings"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	mpcerts "maroonedpods.io/maroonedpods/pkg/maroonedpods-operator/resources/cert"
 	"maroonedpods.io/maroonedpods/staging/src/maroonedpods.io/api/pkg/apis/core/v1alpha1"
@@ -23,8 +25,8 @@ import (
 	mpcluster "maroonedpods.io/maroonedpods/pkg/maroonedpods-operator/resources/cluster"
 	mpnamespaced "maroonedpods.io/maroonedpods/pkg/maroonedpods-operator/resources/namespaced"
 
-	"maroonedpods.io/maroonedpods/pkg/util"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"maroonedpods.io/maroonedpods/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -93,6 +95,9 @@ func newReconciler(mgr manager.Manager) (*ReconcileMaroonedPods, error) {
 	// typed Get leaves TypeMeta empty; the SDK three-way merge then
 	// trips RequireKeyUnchanged(apiVersion/kind). Fill GVK from the scheme.
 	uncachedClient := &gvkClient{Client: rawClient, scheme: scheme}
+
+	namespacedArgs.VirtLauncherImage = resolveVirtLauncherImage(namespacedArgs.VirtLauncherImage, uncachedClient)
+	clusterArgs.VirtLauncherImage = namespacedArgs.VirtLauncherImage
 
 	recorder := mgr.GetEventRecorderFor("operator-controller")
 
@@ -285,4 +290,37 @@ func (r *ReconcileMaroonedPods) getCertificateDefinitions(mp *v1alpha1.MaroonedP
 	}
 
 	return mpcerts.CreateCertificateDefinitions(args)
+}
+
+// resolveVirtLauncherImage picks the extract-virt-launcher image. A versioned
+// MAROONED_VIRT_LAUNCHER_IMAGE wins; otherwise use the cluster virt-handler
+// image with virt-handler→virt-launcher. :latest is treated as unset because
+// quay.io/kubevirt/virt-launcher:latest is not published.
+func resolveVirtLauncherImage(fromEnv string, c client.Client) string {
+	if fromEnv != "" && !strings.HasSuffix(fromEnv, ":latest") {
+		return fromEnv
+	}
+	if img := lookupVirtLauncherImage(c); img != "" {
+		return img
+	}
+	if fromEnv != "" {
+		return fromEnv
+	}
+	return util.DefaultVirtLauncherImage
+}
+
+func lookupVirtLauncherImage(c client.Client) string {
+	if c == nil {
+		return ""
+	}
+	ds := &appsv1.DaemonSet{}
+	err := c.Get(context.Background(), types.NamespacedName{Name: "virt-handler", Namespace: "kubevirt"}, ds)
+	if err != nil || len(ds.Spec.Template.Spec.Containers) == 0 {
+		return ""
+	}
+	img := ds.Spec.Template.Spec.Containers[0].Image
+	if img == "" {
+		return ""
+	}
+	return strings.Replace(img, "virt-handler", "virt-launcher", 1)
 }

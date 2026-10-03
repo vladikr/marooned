@@ -431,6 +431,10 @@ func createOperatorEnvVar(operatorVersion, deployClusterResources, controllerIma
 			Value: vsockfwdImage,
 		},
 		{
+			Name:  "MAROONED_VIRT_LAUNCHER_IMAGE",
+			Value: utils2.DefaultVirtLauncherImage,
+		},
+		{
 			Name:  "VERBOSITY",
 			Value: verbosity,
 		},

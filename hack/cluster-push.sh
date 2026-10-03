@@ -107,8 +107,8 @@ if [ -x "$K" ] || command -v "$K" >/dev/null 2>&1; then
   launcher_img="$($K get ds virt-handler -n kubevirt -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
   if [ -n "$launcher_img" ]; then
     launcher_img="${launcher_img/virt-handler/virt-launcher}"
-    echo "shim extract-virt-launcher image: ${launcher_img}"
-    $K set image ds/marooned-shim extract-virt-launcher="${launcher_img}" -n marooned-system 2>/dev/null || true
+    echo "operator MAROONED_VIRT_LAUNCHER_IMAGE=${launcher_img}"
+    $K set env deploy/maroonedpods-operator MAROONED_VIRT_LAUNCHER_IMAGE="${launcher_img}" -n maroonedpods 2>/dev/null || true
   fi
   echo "guest ImageVolume images: kernel=${guest_pull_kernel} disk=${guest_pull_sandbox}"
 
