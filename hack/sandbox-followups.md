@@ -7,10 +7,11 @@ hostNetwork/hostPID or sidecar spc_t. The shim mounts host `/proc` at
 `/host-proc` so it can nsenter pid 1 without hostPID.
 
 One-pod now renders STANDALONE_VMI via shim Translate (VEP-359
-`pkg/render` is not importable until kubevirt#19233/#19234 merge) and
-starts virt-launcher from a node rootfs overlay as the CRI pause.
-Still unwired: vsock without virt-handler, guest-ip/port-forward from
-standalone net, containerDisk files for kernel/rootfs.
+`pkg/render` is not importable until kubevirt#19233/#19234 merge),
+starts virt-launcher from a node rootfs overlay as the CRI pause,
+plants kernel/qcow2 at container-disk paths, and vsockfwds without a
+VMI object. First boot has no guest NIC (masquerade needs virt-handler).
+Still unwired: guest-ip/Services, PVC host bind.
 
 ## Done (verified on kubevirtci)
 

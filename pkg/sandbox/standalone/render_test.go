@@ -59,6 +59,12 @@ func TestRenderStandaloneVMIJSON(t *testing.T) {
 	if vmi.UID != pod.UID {
 		t.Fatalf("json uid %s", vmi.UID)
 	}
+	if vmi.Status.VSOCKCID == nil || *vmi.Status.VSOCKCID < 3 {
+		t.Fatal("STANDALONE_VMI must stamp VSOCKCID (>=3)")
+	}
+	if len(vmi.Spec.Networks) != 0 || len(vmi.Spec.Domain.Devices.Interfaces) != 0 {
+		t.Fatal("standalone VMI must drop the pod NIC (no virt-handler masquerade)")
+	}
 }
 
 func TestRenderNilPod(t *testing.T) {

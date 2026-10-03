@@ -116,6 +116,7 @@ const (
 	// cluster-push retags this from the cluster's virt-launcher when present.
 	DefaultVirtLauncherImage       = "quay.io/kubevirt/virt-launcher:latest"
 	VirtLauncherRootfsPath         = "/opt/marooned/virt-launcher-rootfs"
+	GuestFilesPath                 = "/opt/marooned/guest"
 	ShimDaemonSetName              = "marooned-shim"
 	ShimServiceAccountName         = "marooned-shim"
 	ShimClusterRoleName            = "marooned-shim"

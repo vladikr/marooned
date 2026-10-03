@@ -9,13 +9,31 @@ import (
 	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	virtv1 "kubevirt.io/api/core/v1"
 
 	"maroonedpods.io/maroonedpods/pkg/sandbox"
 	"maroonedpods.io/maroonedpods/pkg/sandbox/translate"
+	"maroonedpods.io/maroonedpods/pkg/sandbox/vsock"
 	"maroonedpods.io/maroonedpods/pkg/util"
 	mpv1 "maroonedpods.io/maroonedpods/staging/src/maroonedpods.io/api/pkg/apis/core/v1alpha1"
 )
+
+// prepareStandalone stamps identity virt-launcher needs and drops the pod
+// NIC. Masquerade expects virt-handler to create k6t-eth0; without that
+// SyncVMI fails. Agent traffic is vsock. Guest IP / Services come later.
+func prepareStandalone(vmi *virtv1.VirtualMachineInstance, podUID string) {
+	if vmi == nil {
+		return
+	}
+	if podUID != "" && vmi.UID == "" {
+		vmi.UID = k8stypes.UID(podUID)
+	}
+	cid := vsock.CIDForUID(podUID)
+	vmi.Status.VSOCKCID = &cid
+	vmi.Spec.Networks = nil
+	vmi.Spec.Domain.Devices.Interfaces = nil
+}
 
 // Result is the in-memory VMI plus STANDALONE_VMI JSON.
 type Result struct {
@@ -49,11 +67,7 @@ func Render(pod *corev1.Pod, cfg mpv1.SandboxConfig) (Result, error) {
 	if tr.VMI == nil {
 		return out, fmt.Errorf("translate produced no VMI")
 	}
-	// virt-launcher --uid and /var/run/kubevirt-private/<uid> need a stable
-	// id. The VMI is never created in the API, so stamp the Pod UID.
-	if pod.UID != "" && tr.VMI.UID == "" {
-		tr.VMI.UID = pod.UID
-	}
+	prepareStandalone(tr.VMI, string(pod.UID))
 	b, err := json.Marshal(tr.VMI)
 	if err != nil {
 		return out, err

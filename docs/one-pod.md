@@ -64,18 +64,25 @@ Today:
    that rootfs, then `nsenter --net=<pod netns> chroot … virt-launcher`.
 4. `/dev/kvm`, `/dev/net/tun`, `/dev/vhost-net`, and `/dev/vhost-vsock`
    are bind-mounted into that overlay.
+5. Guest kernel (`vmlinuz`/`initrd`) and `disk.qcow2` are extracted to
+   `/opt/marooned/guest` and bind-mounted into the overlay at virt-launcher
+   container-disk paths.
+6. `VMI.Status.VSOCKCID` is hashed from the Pod UID. marooned-oci writes
+   the cid file and runs `vsockfwd` in the pod netns so the shim can dial
+   `unix:/var/run/marooned/<uid>/agent.sock` with no VMI object.
+7. The STANDALONE_VMI has **no pod NIC**. Masquerade needs virt-handler to
+   create `k6t-eth0`; without it `SyncVMI` fails. First working path is
+   vsock + exec (+ kubelet exec probes). Guest IP / Services come next.
 
 When `PodFromVMI` is importable, swap the JSON source (and later the
 containerDisk layout). Keep RuntimeClass + marooned-oci as the user Pod API.
 
 ## Still to wire
 
-- vsock without virt-handler (agent exec/logs).
-- Guest-ip / port-forward from standalone networking (passt or
-  masquerade).
+- Guest-ip / port-forward: Passt or a marooned-owned masquerade bridge
+  (no virt-handler).
+- PVC hostPath bind into the overlay (`/var/lib/kubelet/pods/<uid>/volumes`).
 - dedicatedCPUPlacement from original Guaranteed+integer CPU (issue #6)
   now lands on this same Pod.
-- cluster-push retags `extract-virt-launcher` from the cluster's
-  virt-handler image (`virt-handler` → `virt-launcher`).
 
 `kubectl exec` / logs / probes stay on marooned-oci → agent.

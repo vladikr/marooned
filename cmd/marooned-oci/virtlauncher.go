@@ -10,10 +10,13 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
+
+	"maroonedpods.io/maroonedpods/pkg/sandbox/vsock"
 )
 
 const (
 	virtLauncherRootfs = "/opt/marooned/virt-launcher-rootfs"
+	guestFilesDir      = "/opt/marooned/guest"
 	standaloneVMIFile  = "standalone-vmi.json"
 	vlRootfsDir        = "vl-rootfs"
 	vlUpperDir         = "vl-upper"
@@ -89,6 +92,9 @@ type vmiIdentity struct {
 		Namespace string `json:"namespace"`
 		UID       string `json:"uid"`
 	} `json:"metadata"`
+	Status struct {
+		VSOCKCID *uint32 `json:"VSOCKCID"`
+	} `json:"status"`
 }
 
 func fetchStandaloneVMI(dir string, meta bundleMeta) {
@@ -159,10 +165,50 @@ func bindRuntimeFS(rootfs string, private bool) {
 
 func unmountVirtLauncherRootfs(dir string) {
 	merged := filepath.Join(dir, vlRootfsDir)
-	for _, p := range []string{"dev/kvm", "dev/net/tun", "dev/vhost-net", "dev/vhost-vsock", "dev/null", "dev/zero", "dev/urandom", "dev/random", "dev/pts", "proc", "sys", "run", "tmp"} {
+	for _, p := range []string{
+		"var/run/kubevirt/container-disks/disk_0.img",
+		"var/run/kubevirt/container-disks/kernel-boot/vmlinuz",
+		"var/run/kubevirt/container-disks/kernel-boot/initrd",
+		"dev/kvm", "dev/net/tun", "dev/vhost-net", "dev/vhost-vsock",
+		"dev/null", "dev/zero", "dev/urandom", "dev/random", "dev/pts",
+		"proc", "sys", "run", "tmp",
+	} {
 		_ = unix.Unmount(filepath.Join(merged, p), unix.MNT_DETACH)
 	}
 	_ = unix.Unmount(merged, unix.MNT_DETACH)
+}
+
+func bindFile(src, dst string) {
+	if _, err := os.Stat(src); err != nil {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(dst), 0755)
+	if _, err := os.Stat(dst); err != nil {
+		f, err := os.OpenFile(dst, os.O_CREATE, 0644)
+		if err == nil {
+			_ = f.Close()
+		}
+	}
+	_ = unix.Mount(src, dst, "", unix.MS_BIND, "")
+}
+
+func guestFileBinds(rootfs string) [][2]string {
+	diskDir := filepath.Join(rootfs, "var/run/kubevirt/container-disks")
+	kdir := filepath.Join(diskDir, "kernel-boot")
+	return [][2]string{
+		{filepath.Join(guestFilesDir, "vmlinuz"), filepath.Join(kdir, "vmlinuz")},
+		{filepath.Join(guestFilesDir, "initrd"), filepath.Join(kdir, "initrd")},
+		{filepath.Join(guestFilesDir, "disk.qcow2"), filepath.Join(diskDir, "disk_0.img")},
+	}
+}
+
+func plantGuestDisks(rootfs string) {
+	if rootfs == "" {
+		return
+	}
+	for _, p := range guestFileBinds(rootfs) {
+		bindFile(p[0], p[1])
+	}
 }
 
 func bindKVM(rootfs string) {
@@ -248,11 +294,25 @@ func startVirtLauncherPause(id, dir string) int {
 		args = append(args, "--namespace", ident.Metadata.Namespace)
 	}
 
+	cid := uint32(0)
+	if ident.Status.VSOCKCID != nil {
+		cid = *ident.Status.VSOCKCID
+	}
+	if cid < 3 {
+		cid = vsock.CIDForUID(uid)
+	}
+	if uid != "" {
+		_ = vsock.WriteCIDFile(vsock.DefaultHostDir, uid, strconv.FormatUint(uint64(cid), 10))
+	}
+
 	rootfs, private := prepareVirtLauncherRootfs(dir)
 	if rootfs != "" {
 		bindRuntimeFS(rootfs, private)
+		plantGuestDisks(rootfs)
 	}
-	cmd := virtLauncherCmd(rootfs, bundleNetNS(bundle), args)
+	netns := bundleNetNS(bundle)
+	startVsockFwd(uid, netns)
+	cmd := virtLauncherCmd(rootfs, netns, args)
 	if cmd == nil {
 		unmountVirtLauncherRootfs(dir)
 		return 0

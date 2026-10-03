@@ -357,6 +357,7 @@ func applyRootfs(vmi *virtv1.VirtualMachineInstance, cfg mpv1.SandboxConfig, tee
 		VolumeSource: virtv1.VolumeSource{
 			ContainerDisk: &virtv1.ContainerDiskSource{
 				Image:           image,
+				Path:            "/disk/disk.qcow2",
 				ImagePullPolicy: corev1.PullIfNotPresent,
 			},
 		},

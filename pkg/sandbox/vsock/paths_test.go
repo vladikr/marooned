@@ -6,6 +6,18 @@ import (
 	"testing"
 )
 
+func TestCIDForUIDReservedRange(t *testing.T) {
+	if CIDForUID("") < 3 {
+		t.Fatal("empty uid")
+	}
+	if CIDForUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") < 3 {
+		t.Fatal("hashed cid in reserved range")
+	}
+	if CIDForUID("a") != CIDForUID("a") {
+		t.Fatal("cid must be stable")
+	}
+}
+
 func TestUnixDialAddr(t *testing.T) {
 	got := UnixDialAddr("/var/run/marooned", "abc")
 	want := "unix:/var/run/marooned/abc/agent.sock"

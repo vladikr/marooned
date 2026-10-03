@@ -55,6 +55,19 @@ func TestBundleNetNS(t *testing.T) {
 	}
 }
 
+func TestGuestFileBinds(t *testing.T) {
+	binds := guestFileBinds("/overlay")
+	if len(binds) != 3 {
+		t.Fatalf("binds %d", len(binds))
+	}
+	if binds[2][1] != "/overlay/var/run/kubevirt/container-disks/disk_0.img" {
+		t.Fatalf("root disk %s", binds[2][1])
+	}
+	if binds[0][1] != "/overlay/var/run/kubevirt/container-disks/kernel-boot/vmlinuz" {
+		t.Fatalf("kernel %s", binds[0][1])
+	}
+}
+
 func TestVirtLauncherCmdChrootAndNetNS(t *testing.T) {
 	cmd := virtLauncherCmd("/opt/marooned/virt-launcher-rootfs", "/var/run/netns/cni-x", []string{"--name", "box"})
 	if cmd == nil {

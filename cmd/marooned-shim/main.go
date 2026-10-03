@@ -177,35 +177,24 @@ func waitForVMI(kube *kubernetes.Clientset, timeout time.Duration) func(ctx cont
 						}
 					}
 				}
-			}
-			if pod.Annotations == nil {
-				time.Sleep(time.Second)
-				continue
-			}
-			vmi := pod.Annotations[util.VMIAnnotation]
-			if vmi == "" {
-				time.Sleep(time.Second)
-				continue
-			}
-			if cid := pod.Annotations[util.VsockCIDAnnotation]; cid != "" {
-				uid := string(pod.UID)
-				if err := vsock.WriteCIDFile(vsock.DefaultHostDir, uid, cid); err != nil {
-					klog.Infof("write cid file for %s: %v", uid, err)
+				if _, err := os.Stat(vsock.AgentSockPath(vsock.DefaultHostDir, uid)); err == nil {
+					return "standalone", vsock.UnixDialAddr(vsock.DefaultHostDir, uid), nil
 				}
-				if se := pod.Annotations[util.SelinuxContextAnnotation]; se != "" {
-					dir := vsock.DirFor(vsock.DefaultHostDir, uid)
-					if err := vsock.RelabelTree(dir, se); err != nil {
-						klog.Infof("relabel %s to %s: %v", dir, se, err)
-						time.Sleep(time.Second)
-						continue
+			}
+			if pod.Annotations != nil {
+				vmi := pod.Annotations[util.VMIAnnotation]
+				if cid := pod.Annotations[util.VsockCIDAnnotation]; vmi != "" && cid != "" {
+					uid := string(pod.UID)
+					if err := vsock.WriteCIDFile(vsock.DefaultHostDir, uid, cid); err != nil {
+						klog.Infof("write cid file for %s: %v", uid, err)
 					}
+					return vmi, vsock.UnixDialAddr(vsock.DefaultHostDir, uid), nil
 				}
-				return vmi, vsock.UnixDialAddr(vsock.DefaultHostDir, uid), nil
 			}
-			klog.V(2).Infof("waiting for vsock CID annotation on %s/%s (vmi %s)", ns, name, vmi)
+			klog.V(2).Infof("waiting for sandbox agent socket on %s/%s", ns, name)
 			time.Sleep(time.Second)
 		}
-		return "", "", fmt.Errorf("timed out waiting for sandbox VMI annotation on %s/%s", ns, name)
+		return "", "", fmt.Errorf("timed out waiting for sandbox agent on %s/%s", ns, name)
 	}
 }
 

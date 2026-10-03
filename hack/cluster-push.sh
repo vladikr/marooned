@@ -110,6 +110,8 @@ if [ -x "$K" ] || command -v "$K" >/dev/null 2>&1; then
     echo "shim extract-virt-launcher image: ${launcher_img}"
     $K set image ds/marooned-shim extract-virt-launcher="${launcher_img}" -n marooned-system 2>/dev/null || true
   fi
+  echo "shim guest files: kernel=${guest_pull_kernel} disk=${guest_pull_sandbox}"
+  $K set image ds/marooned-shim extract-guest-kernel="${guest_pull_kernel}" extract-guest-disk="${guest_pull_sandbox}" -n marooned-system 2>/dev/null || true
 
   echo "restarting operator, controller, webhook server, and shim"
   $K rollout restart deploy/maroonedpods-operator -n maroonedpods 2>/dev/null || true

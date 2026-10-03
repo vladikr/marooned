@@ -67,6 +67,12 @@ func main() {
 	switch cmd {
 	case "pause-daemon":
 		os.Exit(runPauseDaemon(rest))
+	case "vsockfwd":
+		uid := ""
+		if len(rest) > 0 {
+			uid = rest[0]
+		}
+		os.Exit(runVsockFwd(uid))
 	case "pause":
 		// Do not use select{}: the runtime treats "all goroutines asleep"
 		// as a deadlock and exits 2. Block on SIGTERM so CRI-O kill works.
