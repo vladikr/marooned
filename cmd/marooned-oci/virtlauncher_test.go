@@ -98,6 +98,36 @@ func TestImageVolumeBinds(t *testing.T) {
 	}
 }
 
+func TestEnsureLibvirtRunDirs(t *testing.T) {
+	rootfs := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(rootfs, "run"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(rootfs, "var"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../run", filepath.Join(rootfs, "var/run")); err != nil {
+		t.Fatal(err)
+	}
+	ensureLibvirtRunDirs(rootfs)
+	for _, p := range []string{
+		"run/libvirt",
+		"run/libvirt/qemu",
+		"run/kubevirt",
+		"run/kubevirt-private",
+		"var/run/libvirt",
+		"var/log/libvirt",
+	} {
+		st, err := os.Stat(filepath.Join(rootfs, p))
+		if err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		if !st.IsDir() {
+			t.Fatalf("%s is not a dir", p)
+		}
+	}
+}
+
 func TestVirtLauncherCmdChrootAndNetNS(t *testing.T) {
 	cmd := virtLauncherCmd("/opt/marooned/virt-launcher-rootfs", "/var/run/netns/cni-x", []string{"--name", "box"})
 	if cmd == nil {

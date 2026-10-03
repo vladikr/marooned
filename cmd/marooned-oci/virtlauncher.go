@@ -161,7 +161,32 @@ func bindRuntimeFS(rootfs string, private bool) {
 		_ = unix.Mount("tmpfs", filepath.Join(rootfs, "tmp"), "tmpfs", 0, "mode=1777")
 		_ = unix.Mount("devpts", filepath.Join(rootfs, "dev/pts"), "devpts", 0, "newinstance,ptmxmode=0666")
 	}
+	ensureLibvirtRunDirs(rootfs)
 	bindKVM(rootfs)
+}
+
+// ensureLibvirtRunDirs plants the dirs SetupLibvirt writes into. The
+// virt-launcher image has /var/run -> ../run, and bindRuntimeFS tmpfs-mounts
+// run, so /var/run/libvirt does not exist until we mkdir it. copyFile in
+// kubevirt SetupLibvirt does not MkdirAll.
+func ensureLibvirtRunDirs(rootfs string) {
+	if rootfs == "" {
+		return
+	}
+	for _, d := range []string{
+		"run/libvirt",
+		"run/libvirt/qemu",
+		"run/kubevirt",
+		"run/kubevirt/container-disks",
+		"run/kubevirt/hotplug-disks",
+		"run/kubevirt-private",
+		"run/kubevirt-private/libvirt",
+		"run/kubevirt-ephemeral-disks",
+		"var/log/libvirt",
+		"var/log/libvirt/qemu",
+	} {
+		_ = os.MkdirAll(filepath.Join(rootfs, d), 0755)
+	}
 }
 
 func unmountVirtLauncherRootfs(dir string) {
