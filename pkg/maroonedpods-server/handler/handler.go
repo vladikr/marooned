@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"maroonedpods.io/maroonedpods/pkg/client"
+	"maroonedpods.io/maroonedpods/pkg/sandbox"
+	"maroonedpods.io/maroonedpods/pkg/util"
 	"maroonedpods.io/maroonedpods/pkg/webhook"
 )
 
@@ -99,6 +103,11 @@ func (v Handler) mutateSandboxPod(pod *v1.Pod) (*admissionv1.AdmissionReview, er
 	if err != nil {
 		return nil, err
 	}
+	disk, kernel := v.sandboxImages()
+	modified, err = sandbox.AppendImageVolumesJSON(modified, disk, kernel)
+	if err != nil {
+		return nil, err
+	}
 	ops, err := jsonpatch.CreatePatch(original, modified)
 	if err != nil {
 		return nil, err
@@ -111,6 +120,28 @@ func (v Handler) mutateSandboxPod(pod *v1.Pod) (*admissionv1.AdmissionReview, er
 		return nil, err
 	}
 	return reviewResponseWithPatch(v.request.UID, true, http.StatusAccepted, "sandbox pod mutated", patch), nil
+}
+
+func (v Handler) sandboxImages() (disk, kernel string) {
+	disk = util.DefaultSandboxRootfsImage
+	kernel = util.DefaultSandboxKernelImage
+	mp, ok := v.maroonedpodsCli.(client.MaroonedPodsClient)
+	if !ok || mp == nil {
+		return
+	}
+	cfg, err := mp.GeneratedMaroonedPodsClient().MaroonedpodsV1alpha1().MaroonedPodsConfigs().Get(
+		context.Background(), "default", metav1.GetOptions{})
+	if err != nil {
+		return
+	}
+	sc := sandbox.EffectiveSandbox(cfg)
+	if sc.RootfsImage != "" {
+		disk = sc.RootfsImage
+	}
+	if sc.KernelBoot != nil && sc.KernelBoot.Image != "" {
+		kernel = sc.KernelBoot.Image
+	}
+	return
 }
 
 func reviewResponseWithPatch(uid types.UID, allowed bool, httpCode int32,

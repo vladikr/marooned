@@ -156,32 +156,6 @@ touch "$dst/.stamp"
 								{Name: "virt-launcher-rootfs", MountPath: "/dst"},
 							},
 						},
-						{
-							Name:            "extract-guest-kernel",
-							Image:           utils2.DefaultSandboxKernelImage,
-							ImagePullPolicy: corev1.PullAlways,
-							Command:         []string{"/bin/sh", "-c", "set -e; mkdir -p /dst; cp -f /boot/vmlinuz /dst/vmlinuz; cp -f /boot/initrd /dst/initrd"},
-							SecurityContext: &corev1.SecurityContext{
-								Privileged:               &priv,
-								AllowPrivilegeEscalation: &allowEsc,
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{Name: "guest-files", MountPath: "/dst"},
-							},
-						},
-						{
-							Name:            "extract-guest-disk",
-							Image:           utils2.DefaultSandboxRootfsImage,
-							ImagePullPolicy: corev1.PullAlways,
-							Command:         []string{"/bin/sh", "-c", "set -e; mkdir -p /dst; cp -f /disk/disk.qcow2 /dst/disk.qcow2"},
-							SecurityContext: &corev1.SecurityContext{
-								Privileged:               &priv,
-								AllowPrivilegeEscalation: &allowEsc,
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{Name: "guest-files", MountPath: "/dst"},
-							},
-						},
 					},
 					Containers: []corev1.Container{
 						{
@@ -202,7 +176,6 @@ touch "$dst/.stamp"
 								{Name: "host-crio-dropin", MountPath: "/host-crio-dropin"},
 								{Name: "host-proc", MountPath: "/host-proc", ReadOnly: true},
 								{Name: "virt-launcher-rootfs", MountPath: "/opt/marooned/virt-launcher-rootfs"},
-								{Name: "guest-files", MountPath: "/opt/marooned/guest"},
 							},
 						},
 					},
@@ -253,12 +226,6 @@ touch "$dst/.stamp"
 							Name: "virt-launcher-rootfs",
 							VolumeSource: corev1.VolumeSource{
 								HostPath: &corev1.HostPathVolumeSource{Path: utils2.VirtLauncherRootfsPath, Type: &hostPathDir},
-							},
-						},
-						{
-							Name: "guest-files",
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{Path: utils2.GuestFilesPath, Type: &hostPathDir},
 							},
 						},
 					},

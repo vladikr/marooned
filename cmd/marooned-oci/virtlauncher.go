@@ -8,15 +8,16 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 
+	"maroonedpods.io/maroonedpods/pkg/sandbox"
 	"maroonedpods.io/maroonedpods/pkg/sandbox/vsock"
 )
 
 const (
 	virtLauncherRootfs = "/opt/marooned/virt-launcher-rootfs"
-	guestFilesDir      = "/opt/marooned/guest"
 	standaloneVMIFile  = "standalone-vmi.json"
 	vlRootfsDir        = "vl-rootfs"
 	vlUpperDir         = "vl-upper"
@@ -166,9 +167,8 @@ func bindRuntimeFS(rootfs string, private bool) {
 func unmountVirtLauncherRootfs(dir string) {
 	merged := filepath.Join(dir, vlRootfsDir)
 	for _, p := range []string{
-		"var/run/kubevirt/container-disks/disk_0.img",
-		"var/run/kubevirt/container-disks/kernel-boot/vmlinuz",
-		"var/run/kubevirt/container-disks/kernel-boot/initrd",
+		"var/run/kubevirt-image-volume/disk_0",
+		"var/run/kubevirt-kernel-boot",
 		"dev/kvm", "dev/net/tun", "dev/vhost-net", "dev/vhost-vsock",
 		"dev/null", "dev/zero", "dev/urandom", "dev/random", "dev/pts",
 		"proc", "sys", "run", "tmp",
@@ -178,36 +178,48 @@ func unmountVirtLauncherRootfs(dir string) {
 	_ = unix.Unmount(merged, unix.MNT_DETACH)
 }
 
-func bindFile(src, dst string) {
-	if _, err := os.Stat(src); err != nil {
+func bindDir(src, dst string) {
+	st, err := os.Stat(src)
+	if err != nil || !st.IsDir() {
 		return
 	}
-	_ = os.MkdirAll(filepath.Dir(dst), 0755)
-	if _, err := os.Stat(dst); err != nil {
-		f, err := os.OpenFile(dst, os.O_CREATE, 0644)
-		if err == nil {
-			_ = f.Close()
-		}
-	}
+	_ = os.MkdirAll(dst, 0755)
 	_ = unix.Mount(src, dst, "", unix.MS_BIND, "")
 }
 
-func guestFileBinds(rootfs string) [][2]string {
-	diskDir := filepath.Join(rootfs, "var/run/kubevirt/container-disks")
-	kdir := filepath.Join(diskDir, "kernel-boot")
+func imageVolumeBinds(rootfs, podUID string) [][2]string {
 	return [][2]string{
-		{filepath.Join(guestFilesDir, "vmlinuz"), filepath.Join(kdir, "vmlinuz")},
-		{filepath.Join(guestFilesDir, "initrd"), filepath.Join(kdir, "initrd")},
-		{filepath.Join(guestFilesDir, "disk.qcow2"), filepath.Join(diskDir, "disk_0.img")},
+		{sandbox.KubeletImageVolumePath(podUID, sandbox.ImageVolumeDiskName), sandbox.ImageVolumeDiskOverlay(rootfs)},
+		{sandbox.KubeletImageVolumePath(podUID, sandbox.ImageVolumeKernelName), sandbox.ImageVolumeKernelOverlay(rootfs)},
 	}
 }
 
-func plantGuestDisks(rootfs string) {
-	if rootfs == "" {
+func plantImageVolumes(rootfs, podUID string) {
+	if rootfs == "" || podUID == "" {
 		return
 	}
-	for _, p := range guestFileBinds(rootfs) {
-		bindFile(p[0], p[1])
+	waitImageVolumeDirs(podUID, 15*time.Second)
+	_ = os.MkdirAll(filepath.Join(rootfs, "var/run/kubevirt/container-disks"), 0755)
+	for _, p := range imageVolumeBinds(rootfs, podUID) {
+		bindDir(p[0], p[1])
+	}
+}
+
+func waitImageVolumeDirs(podUID string, d time.Duration) {
+	deadline := time.Now().Add(d)
+	for {
+		ready := true
+		for _, p := range imageVolumeBinds("", podUID) {
+			st, err := os.Stat(p[0])
+			if err != nil || !st.IsDir() {
+				ready = false
+				break
+			}
+		}
+		if ready || !time.Now().Before(deadline) {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 
@@ -283,6 +295,7 @@ func startVirtLauncherPause(id, dir string) int {
 	args := []string{
 		"--qemu-timeout", "5m",
 		"--allow-emulation",
+		"--image-volume",
 	}
 	if ident.Metadata.Name != "" {
 		args = append(args, "--name", ident.Metadata.Name)
@@ -308,7 +321,7 @@ func startVirtLauncherPause(id, dir string) int {
 	rootfs, private := prepareVirtLauncherRootfs(dir)
 	if rootfs != "" {
 		bindRuntimeFS(rootfs, private)
-		plantGuestDisks(rootfs)
+		plantImageVolumes(rootfs, uid)
 	}
 	netns := bundleNetNS(bundle)
 	startVsockFwd(uid, netns)

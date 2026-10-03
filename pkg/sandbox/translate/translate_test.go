@@ -222,8 +222,8 @@ func TestTranslateDefaultAgentDisk(t *testing.T) {
 	for _, vol := range res.VMI.Spec.Volumes {
 		if vol.ContainerDisk != nil && vol.ContainerDisk.Image == util.DefaultSandboxRootfsImage {
 			found = true
-			if vol.ContainerDisk.Path != "/disk/disk.qcow2" {
-				t.Fatalf("rootfs path %s", vol.ContainerDisk.Path)
+			if vol.ContainerDisk.Path != "" {
+				t.Fatalf("rootfs path %s (ImageVolume finds the disk file)", vol.ContainerDisk.Path)
 			}
 		}
 	}

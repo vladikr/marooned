@@ -64,9 +64,14 @@ Today:
    that rootfs, then `nsenter --net=<pod netns> chroot … virt-launcher`.
 4. `/dev/kvm`, `/dev/net/tun`, `/dev/vhost-net`, and `/dev/vhost-vsock`
    are bind-mounted into that overlay.
-5. Guest kernel (`vmlinuz`/`initrd`) and `disk.qcow2` are extracted to
-   `/opt/marooned/guest` and bind-mounted into the overlay at virt-launcher
-   container-disk paths.
+5. The mutating webhook adds k8s Image volumes for the sandbox disk and
+   kernel images. kubelet unpacks them under
+   `/var/lib/kubelet/pods/<uid>/volumes/kubernetes.io~image/`. marooned-oci
+   bind-mounts those roots into the overlay at virt-launcher ImageVolume
+   paths (`/var/run/kubevirt-image-volume/disk_0`,
+   `/var/run/kubevirt-kernel-boot`) and passes `--image-volume`.
+   `containerDisk.path` stays empty: virt-launcher finds the single file
+   under `/disk` (scratch `COPY disk.qcow2 /disk/disk.qcow2`).
 6. `VMI.Status.VSOCKCID` is hashed from the Pod UID. marooned-oci writes
    the cid file and runs `vsockfwd` in the pod netns so the shim can dial
    `unix:/var/run/marooned/<uid>/agent.sock` with no VMI object.

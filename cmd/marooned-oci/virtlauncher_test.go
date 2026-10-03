@@ -55,16 +55,19 @@ func TestBundleNetNS(t *testing.T) {
 	}
 }
 
-func TestGuestFileBinds(t *testing.T) {
-	binds := guestFileBinds("/overlay")
-	if len(binds) != 3 {
+func TestImageVolumeBinds(t *testing.T) {
+	binds := imageVolumeBinds("/overlay", "uid-1")
+	if len(binds) != 2 {
 		t.Fatalf("binds %d", len(binds))
 	}
-	if binds[2][1] != "/overlay/var/run/kubevirt/container-disks/disk_0.img" {
-		t.Fatalf("root disk %s", binds[2][1])
+	if binds[0][0] != "/var/lib/kubelet/pods/uid-1/volumes/kubernetes.io~image/rootdisk" {
+		t.Fatalf("disk src %s", binds[0][0])
 	}
-	if binds[0][1] != "/overlay/var/run/kubevirt/container-disks/kernel-boot/vmlinuz" {
-		t.Fatalf("kernel %s", binds[0][1])
+	if binds[0][1] != "/overlay/var/run/kubevirt-image-volume/disk_0" {
+		t.Fatalf("disk dst %s", binds[0][1])
+	}
+	if binds[1][1] != "/overlay/var/run/kubevirt-kernel-boot" {
+		t.Fatalf("kernel dst %s", binds[1][1])
 	}
 }
 

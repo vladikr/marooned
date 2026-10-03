@@ -232,7 +232,7 @@ qemu-img convert -f raw -O qcow2 "${out}/disk.raw" "${out}/disk.qcow2"
 cp "${out}/kernel/vmlinuz" "${out}/vmlinuz"
 cp "${out}/kernel/initrd" "${out}/initrd"
 cat > "${out}/Dockerfile.sandbox" << 'DF'
-FROM alpine:3.18
+FROM scratch
 COPY disk.qcow2 /disk/disk.qcow2
 DF
 cat > "${out}/Dockerfile.kernel" << 'DF'

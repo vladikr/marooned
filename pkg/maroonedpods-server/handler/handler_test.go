@@ -70,6 +70,13 @@ func TestHandleSandboxCreate(t *testing.T) {
 	if !strings.Contains(string(out.Response.Patch), util.PlacementAnnotation) {
 		t.Fatal("admit patch must set placement")
 	}
+	patch := string(out.Response.Patch)
+	if !strings.Contains(patch, "rootdisk") || !strings.Contains(patch, "kernel-boot-volume") {
+		t.Fatal("admit patch must add Image volumes for kernel and disk")
+	}
+	if !strings.Contains(patch, `"image"`) && !strings.Contains(patch, `"image":`) {
+		t.Fatal("admit patch must use k8s Image volume source")
+	}
 }
 
 func TestHandleMaroonLabelIsIgnored(t *testing.T) {
@@ -131,9 +138,9 @@ func TestHandleVirtLauncherInjectsVsockfwd(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "virt-launcher-marooned-uid-xyz",
 			Labels: map[string]string{
-				"kubevirt.io":            "virt-launcher",
-				util.SandboxVMILabel:     "true",
-				util.SandboxIDLabel:      "pod-uid-1",
+				"kubevirt.io":        "virt-launcher",
+				util.SandboxVMILabel: "true",
+				util.SandboxIDLabel:  "pod-uid-1",
 			},
 		},
 		Spec: corev1.PodSpec{

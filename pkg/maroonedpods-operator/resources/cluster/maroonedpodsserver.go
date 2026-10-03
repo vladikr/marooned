@@ -63,6 +63,18 @@ func getMaroonedPodsServerClusterPolicyRules() []rbacv1.PolicyRule {
 		},
 		{
 			APIGroups: []string{
+				"maroonedpods.io",
+			},
+			Resources: []string{
+				"maroonedpodsconfigs",
+			},
+			Verbs: []string{
+				"get",
+				"list",
+			},
+		},
+		{
+			APIGroups: []string{
 				"",
 			},
 			Resources: []string{

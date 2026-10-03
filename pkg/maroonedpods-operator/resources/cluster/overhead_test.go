@@ -30,31 +30,25 @@ func TestRuntimeClassOverheadIsLauncherTax(t *testing.T) {
 
 func TestShimDaemonSetExtractsVirtLauncher(t *testing.T) {
 	ds := createShimDaemonSet("shim:test", "IfNotPresent")
-	if len(ds.Spec.Template.Spec.InitContainers) != 3 {
+	if len(ds.Spec.Template.Spec.InitContainers) != 1 {
 		t.Fatalf("init containers %d", len(ds.Spec.Template.Spec.InitContainers))
 	}
-	want := []string{"extract-virt-launcher", "extract-guest-kernel", "extract-guest-disk"}
-	for i, name := range want {
-		if ds.Spec.Template.Spec.InitContainers[i].Name != name {
-			t.Fatalf("init[%d] %s", i, ds.Spec.Template.Spec.InitContainers[i].Name)
-		}
+	if ds.Spec.Template.Spec.InitContainers[0].Name != "extract-virt-launcher" {
+		t.Fatalf("init %s", ds.Spec.Template.Spec.InitContainers[0].Name)
 	}
 	if ds.Spec.Template.Spec.InitContainers[0].Image != util.DefaultVirtLauncherImage {
 		t.Fatalf("init image %s", ds.Spec.Template.Spec.InitContainers[0].Image)
 	}
-	foundRootfs, foundGuest := false, false
+	foundRootfs := false
 	for _, v := range ds.Spec.Template.Spec.Volumes {
 		if v.Name == "virt-launcher-rootfs" && v.HostPath != nil && v.HostPath.Path == util.VirtLauncherRootfsPath {
 			foundRootfs = true
 		}
-		if v.Name == "guest-files" && v.HostPath != nil && v.HostPath.Path == util.GuestFilesPath {
-			foundGuest = true
+		if v.Name == "guest-files" {
+			t.Fatal("guest-files hostPath leftover; ImageVolume unpacks kernel/disk")
 		}
 	}
 	if !foundRootfs {
 		t.Fatal("missing virt-launcher-rootfs hostPath")
-	}
-	if !foundGuest {
-		t.Fatal("missing guest-files hostPath")
 	}
 }
