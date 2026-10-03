@@ -186,28 +186,9 @@ func (a *Adaptor) execute(key string) (error, enqueueState) {
 		return nil, Forget
 	}
 
-	rootfsBytes := rootfsBytesFromPod(pod)
-	// Do not delay VMI create for the CRI size hint. virt-launcher init
-	// is the long pole; default emptyDisk (256Mi) is enough to start.
-
-	vmi, err := a.ensureVMI(pod, cfg, rootfsBytes)
-	if err != nil {
-		a.recorder.Eventf(pod, corev1.EventTypeWarning, "SandboxVMIFailed", "%v", err)
-		return err, BackOff
-	}
-	if vmi.Status.Phase != virtv1.Running {
-		a.recorder.Eventf(pod, corev1.EventTypeNormal, "WaitingForSandboxVMI", "VMI %s/%s phase %s", vmi.Namespace, vmi.Name, vmi.Status.Phase)
-		return fmt.Errorf("waiting for VMI %s", vmi.Name), Immediate
-	}
-
-	if err := a.annotatePod(pod, vmi); err != nil {
-		return err, BackOff
-	}
-	if cfg.PublishGuestIPOnPod != nil && *cfg.PublishGuestIPOnPod {
-		if err := a.publishEndpointSlice(pod, vmi); err != nil {
-			klog.V(3).Infof("endpointslice for %s: %v", key, err)
-		}
-	}
+	// one-pod: qemu is the CRI-O pause (virt-launcher standalone).
+	// Creating a VMI would spawn virt-launcher as a second Pod.
+	klog.Infof("sandbox adaptor %s bound on %s; one-pod skip VMI create", key, pod.Spec.NodeName)
 	return nil, Forget
 }
 

@@ -69,6 +69,25 @@ func isStrippedVolume(vol corev1.Volume) bool {
 	return vol.PersistentVolumeClaim != nil || vol.Ephemeral != nil || vol.EmptyDir != nil
 }
 
+// DiskMountRoot is where kubelet attaches PVC/ephemeral claims on the user
+// Pod so qemu can use them as disks. The user's volumeMount.mountPath is the
+// guest path (kept in the volumes annotation).
+const DiskMountRoot = "/run/marooned/disks"
+
+// DiskMountPath is the host path kubelet bind-mounts a claim into.
+func DiskMountPath(volumeName string) string {
+	if volumeName == "" {
+		return DiskMountRoot
+	}
+	return DiskMountRoot + "/" + volumeName
+}
+
+// DropFromLivePod reports volumes that must not be on the user Pod.
+// emptyDir stays guest tmpfs. PVC/ephemeral stay so kubelet attaches once.
+func DropFromLivePod(vol corev1.Volume) bool {
+	return vol.EmptyDir != nil
+}
+
 // VolumeNeedsUserNamespace is true when the volume is a namespaced claim KubeVirt must attach.
 func VolumeNeedsUserNamespace(vol corev1.Volume) bool {
 	return vol.PersistentVolumeClaim != nil || vol.Ephemeral != nil
@@ -149,23 +168,27 @@ func restoreMounts(containers []corev1.Container, m ContainerMounts) {
 		if containers[i].Name != m.Container {
 			continue
 		}
-		have := map[string]struct{}{}
-		for _, vm := range containers[i].VolumeMounts {
-			have[vm.Name] = struct{}{}
+		byName := map[string]int{}
+		for j, vm := range containers[i].VolumeMounts {
+			byName[vm.Name] = j
 		}
 		for _, vm := range m.VolumeMounts {
-			if _, ok := have[vm.Name]; !ok {
-				containers[i].VolumeMounts = append(containers[i].VolumeMounts, vm)
+			if j, ok := byName[vm.Name]; ok {
+				containers[i].VolumeMounts[j] = vm
+				continue
 			}
+			containers[i].VolumeMounts = append(containers[i].VolumeMounts, vm)
 		}
-		haveDev := map[string]struct{}{}
-		for _, vd := range containers[i].VolumeDevices {
-			haveDev[vd.Name] = struct{}{}
+		byDev := map[string]int{}
+		for j, vd := range containers[i].VolumeDevices {
+			byDev[vd.Name] = j
 		}
 		for _, vd := range m.VolumeDevices {
-			if _, ok := haveDev[vd.Name]; !ok {
-				containers[i].VolumeDevices = append(containers[i].VolumeDevices, vd)
+			if j, ok := byDev[vd.Name]; ok {
+				containers[i].VolumeDevices[j] = vd
+				continue
 			}
+			containers[i].VolumeDevices = append(containers[i].VolumeDevices, vd)
 		}
 	}
 }

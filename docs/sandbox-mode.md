@@ -15,9 +15,11 @@ Cross-namespace PVC attach is out of scope: Kubernetes will not bind a claim
 in `app` onto a VMI in `marooned-system`, and a CDI clone would be a second
 disk, not the user’s.
 
-The webhook still **strips** PVCs from the user Pod so kubelet does not
-NodePublish them into the shim. virt-launcher in the **pod** namespace mounts
-the claim. The user Pod does not.
+The webhook **keeps** PVCs on the user Pod so kubelet NodePublishes once
+into `/run/marooned/disks/<volume>`. The YAML `mountPath` is the guest
+path (annotation `maroonedpods.io/volumes`). emptyDir is still guest
+tmpfs and is dropped from the live spec. There is no second virt-launcher
+Pod and no VMI object on branch `one-pod`.
 
 ## RuntimeClass
 

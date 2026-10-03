@@ -441,6 +441,9 @@ func pauseUnit(id string) string {
 // conmon, which then reports exit -1 and a zero FinishedAt.
 func startPause(id, dir string) int {
 	_ = exec.Command("systemctl", "stop", pauseUnit(id)).Run()
+	if pid := startVirtLauncherPause(id, dir); pid > 1 {
+		return pid
+	}
 	return startPauseFork(dir)
 }
 

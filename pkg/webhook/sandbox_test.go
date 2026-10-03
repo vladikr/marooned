@@ -107,7 +107,7 @@ func TestMutateSandboxPodStripKeepMatrix(t *testing.T) {
 			wantFinalizer: util.SandboxFinalizer,
 		},
 		{
-			name: "strips pvc and emptyDir, keeps projected sa",
+			name: "keeps pvc, strips emptyDir, keeps projected sa",
 			mutate: func(p *corev1.Pod) {
 				p.Spec.Volumes = []corev1.Volume{
 					{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc"}}},
@@ -122,7 +122,7 @@ func TestMutateSandboxPodStripKeepMatrix(t *testing.T) {
 			},
 			wantCPU:       "100m",
 			wantMem:       "128Mi",
-			wantPVC:       false,
+			wantPVC:       true,
 			wantEmptyDir:  false,
 			wantProjected: true,
 			wantFinalizer: util.SandboxFinalizer,
@@ -330,8 +330,23 @@ func TestMutateSandboxPodVolumesAnnotationRoundTrip(t *testing.T) {
 	if err := MutateSandboxPod(pod); err != nil {
 		t.Fatal(err)
 	}
-	if hasVolume(pod, "data") || hasVolume(pod, "tmp") {
-		t.Fatal("workload volumes must still be stripped")
+	if !hasVolume(pod, "data") {
+		t.Fatal("PVC must stay on the user Pod so kubelet attaches it")
+	}
+	if hasVolume(pod, "tmp") {
+		t.Fatal("emptyDir stays guest tmpfs and is dropped from the live Pod")
+	}
+	foundDisk := false
+	for _, m := range pod.Spec.Containers[0].VolumeMounts {
+		if m.Name == "data" && m.MountPath == sandbox.DiskMountPath("data") {
+			foundDisk = true
+		}
+		if m.Name == "data" && m.MountPath == "/data" {
+			t.Fatal("live mountPath must be the host disk dir, not the guest path")
+		}
+	}
+	if !foundDisk {
+		t.Fatalf("PVC mount not rewritten: %+v", pod.Spec.Containers[0].VolumeMounts)
 	}
 	if pod.Annotations[util.PlacementAnnotation] != util.PlacementUser {
 		t.Fatalf("placement %s", pod.Annotations[util.PlacementAnnotation])
@@ -380,11 +395,11 @@ func TestMutateSandboxPodVolumeDevicesRoundTrip(t *testing.T) {
 	if err := MutateSandboxPod(pod); err != nil {
 		t.Fatal(err)
 	}
-	if hasVolume(pod, "data") {
-		t.Fatal("block PVC must still be stripped")
+	if !hasVolume(pod, "data") {
+		t.Fatal("block PVC must stay on the user Pod")
 	}
-	if len(pod.Spec.Containers[0].VolumeDevices) != 0 {
-		t.Fatalf("volumeDevices must be stripped: %+v", pod.Spec.Containers[0].VolumeDevices)
+	if len(pod.Spec.Containers[0].VolumeDevices) != 1 {
+		t.Fatalf("volumeDevices must stay so kubelet attaches the block: %+v", pod.Spec.Containers[0].VolumeDevices)
 	}
 	restored := sandbox.RestoreVolumes(pod)
 	if !hasVolume(restored, "data") {
@@ -415,8 +430,8 @@ func TestMutateSandboxPodAllowsEphemeralRWX(t *testing.T) {
 	if err := MutateSandboxPod(pod); err != nil {
 		t.Fatal(err)
 	}
-	if hasVolume(pod, "share") {
-		t.Fatal("RWX claim must still be stripped from the user Pod")
+	if !hasVolume(pod, "share") {
+		t.Fatal("RWX claim must stay on the user Pod")
 	}
 	restored := sandbox.RestoreVolumes(pod)
 	if !hasVolume(restored, "share") {

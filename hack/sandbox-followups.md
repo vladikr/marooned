@@ -1,7 +1,10 @@
 # Sandbox follow-ups
 
-Working branch: `sandbox-mode`. Isolation core works (VMI + user-rootfs +
-logs + exec). Do not restore shim hostNetwork/hostPID or sidecar spc_t.
+Working branch: `one-pod` (qemu in the user Pod cgroup; no VMI).
+`two-pod` freezes the last adaptor+VMI shape. Isolation core on two-pod
+works (VMI + user-rootfs + logs + exec). Do not restore shim
+hostNetwork/hostPID or sidecar spc_t. The shim mounts host `/proc` at
+`/host-proc` so it can nsenter pid 1 without hostPID.
 
 ## Done (verified on kubevirtci)
 

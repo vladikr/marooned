@@ -26,9 +26,10 @@ func IsSandboxPod(pod *corev1.Pod) bool {
 }
 
 // MutateSandboxPod applies the sandbox admission rules in place:
-// finalizer, mode label, placement, persist volumes that cannot attach
-// twice (PVC/ephemeral/emptyDir). CPU, memory, hugepages, extended
-// devices, and resourceClaims stay so the scheduler/quota/DRA see them.
+// finalizer, mode label, placement, persist the guest volume table.
+// PVC/ephemeral stay on the Pod so kubelet attaches once; emptyDir is
+// guest tmpfs and is dropped. CPU, memory, hugepages, extended devices,
+// and resourceClaims stay so the scheduler/quota/DRA see them.
 func MutateSandboxPod(pod *corev1.Pod) error {
 	// Do not re-add the finalizer on a deleting pod; that traps the object
 	// in Terminating (adaptor strips it, webhook puts it back).
@@ -53,10 +54,12 @@ func MutateSandboxPod(pod *corev1.Pod) error {
 
 	for i := range pod.Spec.Containers {
 		dropVolumeRefs(&pod.Spec.Containers[i], droppedVolumeNames)
+		rewriteClaimMounts(&pod.Spec.Containers[i], keptVolumes)
 		rewriteProbesToExec(&pod.Spec.Containers[i])
 	}
 	for i := range pod.Spec.InitContainers {
 		dropVolumeRefs(&pod.Spec.InitContainers[i], droppedVolumeNames)
+		rewriteClaimMounts(&pod.Spec.InitContainers[i], keptVolumes)
 	}
 	return nil
 }
@@ -152,18 +155,22 @@ func dropVolumeRefs(c *corev1.Container, droppedVolumeNames map[string]struct{})
 	c.VolumeDevices = filterVolumeDevices(c.VolumeDevices, droppedVolumeNames)
 }
 
+func rewriteClaimMounts(c *corev1.Container, volumes []corev1.Volume) {
+	claims := map[string]struct{}{}
+	for _, vol := range volumes {
+		if vol.PersistentVolumeClaim != nil || vol.Ephemeral != nil {
+			claims[vol.Name] = struct{}{}
+		}
+	}
+	for i, m := range c.VolumeMounts {
+		if _, ok := claims[m.Name]; ok {
+			c.VolumeMounts[i].MountPath = sandbox.DiskMountPath(m.Name)
+		}
+	}
+}
+
 func isWorkloadVolume(vol corev1.Volume) bool {
-	src := vol.VolumeSource
-	if src.PersistentVolumeClaim != nil {
-		return true
-	}
-	if src.Ephemeral != nil {
-		return true
-	}
-	if src.EmptyDir != nil {
-		return true
-	}
-	return false
+	return sandbox.DropFromLivePod(vol)
 }
 
 func keepProjectedSA(vol corev1.Volume) bool {
