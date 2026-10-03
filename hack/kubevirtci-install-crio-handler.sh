@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Install the marooned CRI-O runtime handler on kubevirtci nodes.
-# Run from the marooned repo after cluster-up and after the shim DaemonSet is running
-# (it copies marooned-oci to /opt/marooned on the node).
+# Force-repair the marooned CRI-O runtime handler on kubevirtci nodes.
+#
+# The shim DaemonSet is the install path: it writes 20-marooned.conf, copies
+# marooned-oci, reloads CRI-O, and restarts only if the handler is still
+# missing. Use this script when that probe failed (or to refresh guest images).
 #
 #   export KUBEVIRT_PROVIDER=k8s-1.37
 #   ./hack/kubevirtci-install-crio-handler.sh

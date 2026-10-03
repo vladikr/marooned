@@ -152,5 +152,6 @@ fi
 
 echo
 echo "cluster-push finished. Guest pull spec: ${guest_pull_sandbox}"
-echo "CRI-O handler: shim DaemonSet installs it on the node; kubevirtci fallback:"
+echo "CRI-O handler: marooned-shim writes the drop-in and reloads CRI-O."
+echo "Force-repair (only if kubelet still lacks handler marooned):"
 echo "  ./hack/kubevirtci-install-crio-handler.sh"

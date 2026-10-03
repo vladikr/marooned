@@ -115,16 +115,14 @@ The operator deploys CRDs, RuntimeClass `marooned`, namespace
 
 ### 2. Runtime handler
 
-v1 is CRI-O. After the shim DaemonSet is running:
+v1 is CRI-O. The `marooned-shim` DaemonSet installs `marooned-oci` and
+`hack/crio/20-marooned.conf`, then reloads CRI-O (restart only if the
+handler is still missing). `make cluster-dev` / `cluster-push` wait on
+that. Force-repair if kubelet still says `failed to find runtime handler marooned`:
 
 ```bash
 ./hack/kubevirtci-install-crio-handler.sh
 ```
-
-That installs `marooned-oci` and `hack/crio/20-marooned.conf`. Until it runs
-(and after `cluster-push` if CRI-O bounced without reloading), the Pod stays
-**ContainerCreating** even if the VMI is Running:
-`failed to find runtime handler marooned`.
 
 ### 3. Sandbox config
 

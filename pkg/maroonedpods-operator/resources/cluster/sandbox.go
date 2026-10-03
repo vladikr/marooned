@@ -102,6 +102,7 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 	priv := true
 	allowEsc := true
 	hostPathDir := corev1.HostPathDirectoryOrCreate
+	hostPathProc := corev1.HostPathDirectory
 	return &appsv1.DaemonSet{
 		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "DaemonSet"},
 		ObjectMeta: metav1.ObjectMeta{
@@ -142,6 +143,7 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 								{Name: "host-opt", MountPath: "/host-opt"},
 								{Name: "host-usr-local-bin", MountPath: "/host-usr-local-bin"},
 								{Name: "host-crio-dropin", MountPath: "/host-crio-dropin"},
+								{Name: "host-proc", MountPath: "/host-proc", ReadOnly: true},
 							},
 						},
 					},
@@ -180,6 +182,12 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 							Name: "host-crio-dropin",
 							VolumeSource: corev1.VolumeSource{
 								HostPath: &corev1.HostPathVolumeSource{Path: "/etc/crio/crio.conf.d", Type: &hostPathDir},
+							},
+						},
+						{
+							Name: "host-proc",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{Path: "/proc", Type: &hostPathProc},
 							},
 						},
 					},

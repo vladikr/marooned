@@ -33,24 +33,36 @@ make cluster-sync
 echo "==> cluster-push (images + guest disks + config patch)"
 ./hack/cluster-push.sh
 
+echo "==> CRI-O handler marooned (shim DaemonSet is the install path)"
 if [ "$provider" = "external" ]; then
-  echo "==> CRI-O handler: shim DaemonSet writes /etc/crio/crio.conf.d/20-marooned.conf"
-  echo "    Restart crio on workers if the handler is not visible yet."
+  echo "    Wait for marooned-shim to write /etc/crio/crio.conf.d/20-marooned.conf."
+  echo "    Force-repair on a node: restart crio after the drop-in exists."
 else
-  echo "==> CRI-O marooned handler (kubevirtci ssh fallback)"
-  ./hack/kubevirtci-install-crio-handler.sh
-  if ! ./cluster-up/kubectl.sh get apiservice v1beta1.metrics.k8s.io >/dev/null 2>&1; then
+  K="./cluster-up/kubectl.sh"
+  $K rollout status ds/marooned-shim -n marooned-system --timeout=180s 2>/dev/null || true
+  ssh="./cluster-up/ssh.sh"
+  loaded=0
+  if $ssh node01 "sudo grep -q 'crio.runtime.runtimes.marooned' /etc/crio/crio.conf.d/20-marooned.conf 2>/dev/null && sudo crio config 2>/dev/null | grep -q 'crio.runtime.runtimes.marooned'"; then
+    loaded=1
+  fi
+  if [ "$loaded" = 1 ]; then
+    echo "    handler marooned is loaded on node01"
+  else
+    echo "    handler missing after shim rollout; force-repair"
+    ./hack/kubevirtci-install-crio-handler.sh
+  fi
+  if ! $K get apiservice v1beta1.metrics.k8s.io >/dev/null 2>&1; then
     echo "==> metrics.k8s.io from guest stats (kubectl top)"
-    ./cluster-up/kubectl.sh apply -f examples/sandbox-metrics-apiservice.yaml || true
+    $K apply -f examples/sandbox-metrics-apiservice.yaml || true
   fi
 fi
 
 echo
-echo "cluster-dev finished. Sandbox guest is the VMI, not Pod Ready:"
+echo "cluster-dev finished. one-pod: qemu is the pause (no VMI)."
 if [ "$provider" = "external" ]; then
   echo "  kubectl apply -f examples/sandbox-pod.yaml"
-  echo "  kubectl get vmi,pod"
+  echo "  kubectl get pod"
 else
   echo "  ./cluster-up/kubectl.sh apply -f examples/sandbox-pod.yaml"
-  echo "  ./cluster-up/kubectl.sh get vmi,pod"
+  echo "  ./cluster-up/kubectl.sh get pod"
 fi
