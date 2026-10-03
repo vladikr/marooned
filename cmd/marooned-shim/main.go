@@ -18,6 +18,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"maroonedpods.io/maroonedpods/pkg/cri"
+	generatedclient "maroonedpods.io/maroonedpods/pkg/generated/maroonedpods/clientset/versioned"
 	"maroonedpods.io/maroonedpods/pkg/sandbox"
 	"maroonedpods.io/maroonedpods/pkg/sandbox/agentproto"
 	"maroonedpods.io/maroonedpods/pkg/sandbox/vsock"
@@ -32,24 +33,27 @@ func main() {
 	agentTimeout := flag.Duration("agent-timeout", 60*time.Second, "how long RunPodSandbox waits for a VMI annotation and agent ping")
 	flag.Parse()
 
-	var runtime cri.RuntimeService
+	srv := &cri.Server{Socket: *socket}
 	if *unimplemented {
 		klog.Info("marooned-shim starting in unimplemented mode")
-		runtime = cri.UnimplementedRuntime{}
+		srv.Runtime = cri.UnimplementedRuntime{}
 	} else {
 		kube, err := kubeClient(*kubeconfig)
 		if err != nil {
 			klog.Fatalf("kube client: %v", err)
 		}
+		mp, err := maroonedPodsClient(*kubeconfig)
+		if err != nil {
+			klog.Fatalf("maroonedpods client: %v", err)
+		}
 		store := cri.NewStore()
 		rt := cri.NewRuntime(store, waitForVMI(kube, *agentTimeout), dialAgent(store))
 		rt.SetNoteSize(annotateRootfsBytes(kube))
 		rt.SetMountsFor(guestMounts(kube))
-		runtime = rt
+		srv.Runtime = rt
+		srv.RenderStandaloneVMI = renderStandaloneVMI(kube, mp)
 		go publishGuestStats(kube, rt)
 	}
-
-	srv := &cri.Server{Runtime: runtime, Socket: *socket}
 	if err := srv.Start(); err != nil {
 		klog.Fatalf("shim server: %v", err)
 	}
@@ -118,18 +122,27 @@ func annotateGuestStats(kube *kubernetes.Clientset, g cri.PodGuestStat) {
 	}
 }
 
-func kubeClient(kubeconfig string) (*kubernetes.Clientset, error) {
-	var cfg *rest.Config
-	var err error
+func restConfig(kubeconfig string) (*rest.Config, error) {
 	if kubeconfig != "" {
-		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
-	} else {
-		cfg, err = rest.InClusterConfig()
+		return clientcmd.BuildConfigFromFlags("", kubeconfig)
 	}
+	return rest.InClusterConfig()
+}
+
+func kubeClient(kubeconfig string) (*kubernetes.Clientset, error) {
+	cfg, err := restConfig(kubeconfig)
 	if err != nil {
 		return nil, err
 	}
 	return kubernetes.NewForConfig(cfg)
+}
+
+func maroonedPodsClient(kubeconfig string) (generatedclient.Interface, error) {
+	cfg, err := restConfig(kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+	return generatedclient.NewForConfig(cfg)
 }
 
 func waitForVMI(kube *kubernetes.Clientset, timeout time.Duration) func(ctx context.Context, ns, name string) (string, string, error) {

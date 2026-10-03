@@ -13,11 +13,29 @@ import (
 	"k8s.io/klog/v2"
 )
 
+// RenderStandaloneVMIRequest is marooned-oci asking the shim to Translate a Pod.
+type RenderStandaloneVMIRequest struct {
+	PodName      string `json:"podName"`
+	PodNamespace string `json:"podNamespace"`
+	PodUID       string `json:"podUID"`
+	Node         string `json:"node"`
+	RootfsBytes  int64  `json:"rootfsBytes"`
+}
+
+// RenderStandaloneVMIResponse is STANDALONE_VMI JSON plus identity flags.
+type RenderStandaloneVMIResponse struct {
+	VMI       json.RawMessage `json:"vmi"`
+	Name      string          `json:"name"`
+	Namespace string          `json:"namespace"`
+	UID       string          `json:"uid"`
+}
+
 // Server serves the CRI subset as JSON over a unix socket.
 type Server struct {
-	Runtime RuntimeService
-	Socket  string
-	httpSrv *http.Server
+	Runtime             RuntimeService
+	Socket              string
+	RenderStandaloneVMI func(ctx context.Context, req *RenderStandaloneVMIRequest) (*RenderStandaloneVMIResponse, error)
+	httpSrv             *http.Server
 }
 
 func (s *Server) Start() error {
@@ -59,6 +77,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/WaitContainer", s.wrap(s.waitContainer))
 	mux.HandleFunc("/v1/ContainerStats", s.wrap(s.containerStats))
 	mux.HandleFunc("/v1/PodSandboxStats", s.wrap(s.podSandboxStats))
+	mux.HandleFunc("/v1/RenderStandaloneVMI", s.wrap(s.renderStandaloneVMI))
 	s.httpSrv = &http.Server{Handler: mux}
 	klog.Infof("marooned CRI shim listening on %s", s.Socket)
 	return s.httpSrv.Serve(ln)
@@ -349,4 +368,22 @@ func (s *Server) podSandboxStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, st)
+}
+
+func (s *Server) renderStandaloneVMI(w http.ResponseWriter, r *http.Request) {
+	if s.RenderStandaloneVMI == nil {
+		writeErr(w, ErrUnimplemented)
+		return
+	}
+	var req RenderStandaloneVMIRequest
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	resp, err := s.RenderStandaloneVMI(r.Context(), &req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, resp)
 }

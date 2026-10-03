@@ -18,8 +18,8 @@ resource field, so the live Pod spec is what kubelet honors.
 ```
 kubelet → CRI-O handler marooned → marooned-oci
                                       │
-                                      ├─ pause PID = virt-launcher --standalone
-                                      │    STANDALONE_VMI=<json>
+                                      ├─ pause PID = virt-launcher
+                                      │    STANDALONE_VMI=<json> (HandleStandaloneMode)
                                       │    qemu in the user Pod cgroup
                                       └─ user containers: dummy + agent exec
 ```
@@ -42,16 +42,40 @@ and restarts CRI-O only if the handler is still missing.
 `./hack/kubevirtci-install-crio-handler.sh` is force-repair (and guest
 image refresh).
 
+## STANDALONE_VMI and VEP-359
+
+KubeVirt VEP-359 is merged (kubevirt/enhancements#360). The in-tree
+implementation is still open: kubevirt/kubevirt#19233 (ClusterConfig
+interfaces) and kubevirt/kubevirt#19234 (`pkg/render` `PodFromVMI`).
+marooned does **not** import `kubevirt.io/kubevirt/pkg/render` until
+those land. The VEP leaves `STANDALONE_VMI` and other edge post-processing
+in the consuming tool.
+
+Today:
+
+1. Shim `POST /v1/RenderStandaloneVMI` runs `pkg/sandbox/standalone.Render`
+   (`translate.Translate` → JSON, Pod UID stamped on the VMI).
+2. `marooned-oci create` writes `standalone-vmi.json` and starts
+   virt-launcher with `STANDALONE_VMI` (no `--standalone` flag;
+   `HandleStandaloneMode` keys off the env, same as kubevirt-vm-to-pod).
+3. The shim init container copies the **virt-launcher image rootfs** to
+   `/opt/marooned/virt-launcher-rootfs` (qemu+libvirt live there; a
+   host binary copy is not enough). Each sandbox gets an overlay on
+   that rootfs, then `nsenter --net=<pod netns> chroot … virt-launcher`.
+4. `/dev/kvm`, `/dev/net/tun`, `/dev/vhost-net`, and `/dev/vhost-vsock`
+   are bind-mounted into that overlay.
+
+When `PodFromVMI` is importable, swap the JSON source (and later the
+containerDisk layout). Keep RuntimeClass + marooned-oci as the user Pod API.
+
 ## Still to wire
 
-- Install `virt-launcher` on the node (copy next to `marooned-oci`).
-- Render `STANDALONE_VMI` at sandbox create (shim `Translate` + write
-  `standalone-vmi.json` for marooned-oci).
-- `/dev/kvm` in the sandbox.
-- vsock without virt-handler.
+- vsock without virt-handler (agent exec/logs).
 - Guest-ip / port-forward from standalone networking (passt or
   masquerade).
 - dedicatedCPUPlacement from original Guaranteed+integer CPU (issue #6)
   now lands on this same Pod.
+- cluster-push retags `extract-virt-launcher` from the cluster's
+  virt-handler image (`virt-handler` → `virt-launcher`).
 
 `kubectl exec` / logs / probes stay on marooned-oci → agent.

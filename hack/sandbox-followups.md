@@ -6,6 +6,12 @@ works (VMI + user-rootfs + logs + exec). Do not restore shim
 hostNetwork/hostPID or sidecar spc_t. The shim mounts host `/proc` at
 `/host-proc` so it can nsenter pid 1 without hostPID.
 
+One-pod now renders STANDALONE_VMI via shim Translate (VEP-359
+`pkg/render` is not importable until kubevirt#19233/#19234 merge) and
+starts virt-launcher from a node rootfs overlay as the CRI pause.
+Still unwired: vsock without virt-handler, guest-ip/port-forward from
+standalone net, containerDisk files for kernel/rootfs.
+
 ## Done (verified on kubevirtci)
 
 - RuntimeClass=marooned Pod → hidden VMI; delete Pod deletes VMI

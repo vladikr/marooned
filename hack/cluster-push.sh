@@ -104,6 +104,13 @@ if [ -x "$K" ] || command -v "$K" >/dev/null 2>&1; then
     exit 1
   fi
 
+  launcher_img="$($K get ds virt-handler -n kubevirt -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
+  if [ -n "$launcher_img" ]; then
+    launcher_img="${launcher_img/virt-handler/virt-launcher}"
+    echo "shim extract-virt-launcher image: ${launcher_img}"
+    $K set image ds/marooned-shim extract-virt-launcher="${launcher_img}" -n marooned-system 2>/dev/null || true
+  fi
+
   echo "restarting operator, controller, webhook server, and shim"
   $K rollout restart deploy/maroonedpods-operator -n maroonedpods 2>/dev/null || true
   $K rollout restart deploy/maroonedpods-controller -n maroonedpods 2>/dev/null || true

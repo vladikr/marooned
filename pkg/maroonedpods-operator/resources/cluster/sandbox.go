@@ -82,6 +82,11 @@ func createShimClusterRole() *rbacv1.ClusterRole {
 			Resources: []string{"events"},
 			Verbs:     []string{"create", "patch"},
 		},
+		{
+			APIGroups: []string{"maroonedpods.io"},
+			Resources: []string{"maroonedpodsconfigs"},
+			Verbs:     []string{"get", "list"},
+		},
 	})
 }
 
@@ -126,6 +131,32 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 					// virt-launcher sidecar dials vsock; the shim must not.
 					HostNetwork: false,
 					HostPID:     false,
+					InitContainers: []corev1.Container{
+						{
+							Name:            "extract-virt-launcher",
+							Image:           utils2.DefaultVirtLauncherImage,
+							ImagePullPolicy: corev1.PullPolicy(pullPolicy),
+							Command: []string{"/bin/sh", "-c", `
+set -e
+dst=/dst
+mkdir -p "$dst" "$dst/dev" "$dst/proc" "$dst/sys" "$dst/run" "$dst/tmp"
+for d in usr lib lib64 bin sbin etc var opt; do
+  if [ -d "/$d" ]; then
+    mkdir -p "$dst/$d"
+    cp -a "/$d/." "$dst/$d/" 2>/dev/null || true
+  fi
+done
+touch "$dst/.stamp"
+`},
+							SecurityContext: &corev1.SecurityContext{
+								Privileged:               &priv,
+								AllowPrivilegeEscalation: &allowEsc,
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{Name: "virt-launcher-rootfs", MountPath: "/dst"},
+							},
+						},
+					},
 					Containers: []corev1.Container{
 						{
 							Name:            "shim",
@@ -144,6 +175,7 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 								{Name: "host-usr-local-bin", MountPath: "/host-usr-local-bin"},
 								{Name: "host-crio-dropin", MountPath: "/host-crio-dropin"},
 								{Name: "host-proc", MountPath: "/host-proc", ReadOnly: true},
+								{Name: "virt-launcher-rootfs", MountPath: "/opt/marooned/virt-launcher-rootfs"},
 							},
 						},
 					},
@@ -188,6 +220,12 @@ func createShimDaemonSet(image, pullPolicy string) *appsv1.DaemonSet {
 							Name: "host-proc",
 							VolumeSource: corev1.VolumeSource{
 								HostPath: &corev1.HostPathVolumeSource{Path: "/proc", Type: &hostPathProc},
+							},
+						},
+						{
+							Name: "virt-launcher-rootfs",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{Path: utils2.VirtLauncherRootfsPath, Type: &hostPathDir},
 							},
 						},
 					},

@@ -7,6 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	"maroonedpods.io/maroonedpods/pkg/sandbox"
+	"maroonedpods.io/maroonedpods/pkg/util"
 )
 
 func TestRuntimeClassOverheadIsLauncherTax(t *testing.T) {
@@ -24,5 +25,28 @@ func TestRuntimeClassOverheadIsLauncherTax(t *testing.T) {
 	}
 	if mem.Cmp(resource.MustParse("32Mi")) <= 0 {
 		t.Fatal("overhead still dummy 32Mi")
+	}
+}
+
+func TestShimDaemonSetExtractsVirtLauncher(t *testing.T) {
+	ds := createShimDaemonSet("shim:test", "IfNotPresent")
+	if len(ds.Spec.Template.Spec.InitContainers) != 1 {
+		t.Fatalf("init containers %d", len(ds.Spec.Template.Spec.InitContainers))
+	}
+	init := ds.Spec.Template.Spec.InitContainers[0]
+	if init.Name != "extract-virt-launcher" {
+		t.Fatalf("init name %s", init.Name)
+	}
+	if init.Image != util.DefaultVirtLauncherImage {
+		t.Fatalf("init image %s", init.Image)
+	}
+	found := false
+	for _, v := range ds.Spec.Template.Spec.Volumes {
+		if v.Name == "virt-launcher-rootfs" && v.HostPath != nil && v.HostPath.Path == util.VirtLauncherRootfsPath {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing virt-launcher-rootfs hostPath")
 	}
 }

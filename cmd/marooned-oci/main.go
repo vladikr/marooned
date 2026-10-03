@@ -133,13 +133,6 @@ func doCreate(root string, args []string) int {
 	}
 	dir := filepath.Join(root, id)
 	_ = os.MkdirAll(dir, 0755)
-	pid := startPause(id, dir)
-	st := state{OCIVersion: "1.0.2", ID: id, Status: "created", PID: pid, Bundle: bundle, Created: time.Now().UTC().Format(time.RFC3339Nano)}
-	writeState(dir, st)
-	if pidFile != "" {
-		_ = os.WriteFile(pidFile, []byte(strconv.Itoa(st.PID)), 0644)
-		_ = os.WriteFile(filepath.Join(dir, "pidfile"), []byte(pidFile), 0644)
-	}
 	_ = os.WriteFile(filepath.Join(dir, "bundle"), []byte(bundle), 0644)
 	meta := podFromBundle(bundle)
 	if meta.Namespace != "" {
@@ -149,10 +142,15 @@ func doCreate(root string, args []string) int {
 	}
 	if meta.Sandbox {
 		_ = os.WriteFile(filepath.Join(dir, "sandbox"), []byte("1"), 0644)
+		fetchStandaloneVMI(dir, meta)
 	}
-	// Do not wait for the VMI/agent here. kubelet runtimeRequestTimeout
-	// is 2m; virt-launcher init is longer. guest-start waits in the
-	// background after start returns.
+	pid := startPause(id, dir)
+	st := state{OCIVersion: "1.0.2", ID: id, Status: "created", PID: pid, Bundle: bundle, Created: time.Now().UTC().Format(time.RFC3339Nano)}
+	writeState(dir, st)
+	if pidFile != "" {
+		_ = os.WriteFile(pidFile, []byte(strconv.Itoa(st.PID)), 0644)
+		_ = os.WriteFile(filepath.Join(dir, "pidfile"), []byte(pidFile), 0644)
+	}
 	return 0
 }
 
@@ -274,6 +272,7 @@ func doDelete(root string, args []string) int {
 		_ = syscall.Kill(-st.PID, syscall.SIGKILL)
 		_ = syscall.Kill(st.PID, syscall.SIGKILL)
 	}
+	unmountVirtLauncherRootfs(dir)
 	_ = os.RemoveAll(dir)
 	return 0
 }
