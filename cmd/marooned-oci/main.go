@@ -148,6 +148,11 @@ func doCreate(root string, args []string) int {
 	}
 	if meta.Sandbox {
 		_ = os.WriteFile(filepath.Join(dir, "sandbox"), []byte("1"), 0644)
+	}
+	// kubevirtci CRI-O sets drop_infra_ctr, so the sandbox is spoofed
+	// (spoofed.crio.io=true) and marooned-oci is first invoked for the
+	// user container. Start virt-launcher there when the pod has none.
+	if !virtLauncherRunning(root, meta.UID) {
 		fetchStandaloneVMI(dir, meta)
 	}
 	pid := startPause(id, dir)

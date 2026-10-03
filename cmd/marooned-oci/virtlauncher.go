@@ -280,11 +280,42 @@ func virtLauncherCmd(rootfs, netns string, args []string) *exec.Cmd {
 // pause PID so qemu lives in the user Pod cgroup. There is no --standalone
 // flag; HandleStandaloneMode keys off the env (kubevirt-vm-to-pod / VEP-359).
 // Returns 0 when the rootfs/binary or spec is missing (dummy pause).
+func skipVirtLauncher(dir, reason string) int {
+	if dir != "" {
+		_ = os.WriteFile(filepath.Join(dir, "virt-launcher.err"), []byte(reason+"\n"), 0644)
+	}
+	return 0
+}
+
+func virtLauncherRunning(root, uid string) bool {
+	if root == "" || uid == "" {
+		return false
+	}
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		return false
+	}
+	for _, e := range ents {
+		if !e.IsDir() {
+			continue
+		}
+		d := filepath.Join(root, e.Name())
+		if strings.TrimSpace(string(mustRead(filepath.Join(d, "poduid")))) != uid {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(mustRead(filepath.Join(d, "virt-launcher.pid")))))
+		if err == nil && pidAlive(pid) {
+			return true
+		}
+	}
+	return false
+}
+
 func startVirtLauncherPause(id, dir string) int {
 	bundle := strings.TrimSpace(string(mustRead(filepath.Join(dir, "bundle"))))
 	spec := standaloneVMISpec(dir, bundle)
 	if spec == "" {
-		return 0
+		return skipVirtLauncher(dir, "no STANDALONE_VMI spec")
 	}
 	var ident vmiIdentity
 	_ = json.Unmarshal([]byte(spec), &ident)
@@ -328,7 +359,7 @@ func startVirtLauncherPause(id, dir string) int {
 	cmd := virtLauncherCmd(rootfs, netns, args)
 	if cmd == nil {
 		unmountVirtLauncherRootfs(dir)
-		return 0
+		return skipVirtLauncher(dir, "virt-launcher binary missing")
 	}
 	logf := filepath.Join(dir, "virt-launcher.log")
 	log, err := os.OpenFile(logf, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -347,7 +378,7 @@ func startVirtLauncherPause(id, dir string) int {
 			_ = log.Close()
 		}
 		unmountVirtLauncherRootfs(dir)
-		return 0
+		return skipVirtLauncher(dir, "start: "+err.Error())
 	}
 	pid := cmd.Process.Pid
 	_ = cmd.Process.Release()
@@ -356,7 +387,7 @@ func startVirtLauncherPause(id, dir string) int {
 	}
 	if pid <= 1 || !pidAlive(pid) {
 		unmountVirtLauncherRootfs(dir)
-		return 0
+		return skipVirtLauncher(dir, "virt-launcher pid died immediately")
 	}
 	detachFromRuntimeCgroup(pid)
 	_ = os.WriteFile(filepath.Join(dir, "virt-launcher.pid"), []byte(strconv.Itoa(pid)), 0644)

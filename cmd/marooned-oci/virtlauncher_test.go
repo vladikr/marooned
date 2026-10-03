@@ -31,6 +31,33 @@ func TestStartVirtLauncherPauseWithoutBinary(t *testing.T) {
 	if pid := startVirtLauncherPause("id", dir); pid != 0 {
 		t.Fatalf("pid %d without binary or spec", pid)
 	}
+	got := strings.TrimSpace(string(mustRead(filepath.Join(dir, "virt-launcher.err"))))
+	if got != "no STANDALONE_VMI spec" {
+		t.Fatalf("err %q", got)
+	}
+}
+
+func TestVirtLauncherRunning(t *testing.T) {
+	root := t.TempDir()
+	if virtLauncherRunning(root, "uid-1") {
+		t.Fatal("empty root")
+	}
+	d := filepath.Join(root, "ctr")
+	if err := os.Mkdir(d, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d, "poduid"), []byte("uid-1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d, "virt-launcher.pid"), []byte("1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if virtLauncherRunning(root, "uid-1") {
+		t.Fatal("pid 1 is not a running virt-launcher")
+	}
+	if virtLauncherRunning(root, "other") {
+		t.Fatal("other uid")
+	}
 }
 
 func TestBundleNetNS(t *testing.T) {
