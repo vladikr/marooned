@@ -215,8 +215,11 @@ func bindDir(src, dst string) {
 
 func overlayLowerDir(options []string) string {
 	for _, o := range options {
-		rest, ok := strings.CutPrefix(o, "lowerdir=")
-		if !ok || rest == "" {
+		if !strings.HasPrefix(o, "lowerdir=") {
+			continue
+		}
+		rest := strings.TrimPrefix(o, "lowerdir=")
+		if rest == "" {
 			continue
 		}
 		var b strings.Builder
