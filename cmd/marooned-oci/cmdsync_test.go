@@ -111,6 +111,17 @@ func TestLauncherSockPath(t *testing.T) {
 	if launcherSockPath("/overlay") != "/overlay/run/kubevirt/sockets/launcher-sock" {
 		t.Fatal(launcherSockPath("/overlay"))
 	}
+	got := launcherSockViaProc(100482)
+	want := "/proc/100482/root/run/kubevirt/sockets/launcher-sock"
+	if got != want {
+		t.Fatal(got)
+	}
+	if len(got) > 107 {
+		t.Fatalf("AF_UNIX path %d", len(got))
+	}
+	if launcherSockViaProc(0) != "" || launcherSockViaProc(1) != "" {
+		t.Fatal("pid <=1")
+	}
 }
 
 func TestWaitForSockTimeout(t *testing.T) {

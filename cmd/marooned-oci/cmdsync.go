@@ -50,11 +50,23 @@ func launcherSockPath(rootfs string) string {
 	return filepath.Join(rootfs, launcherSockRel)
 }
 
+// launcherSockViaProc is short enough for AF_UNIX (sun_path 108).
+// Overlay path /run/marooned-oci/<64-id>/vl-rootfs/run/kubevirt/sockets/launcher-sock is 127 bytes; Dial then retries until context deadline.
+func launcherSockViaProc(pid int) string {
+	if pid <= 1 {
+		return ""
+	}
+	return fmt.Sprintf("/proc/%d/root/%s", pid, launcherSockRel)
+}
+
 // syncStandaloneVMI is virt-handler's SyncVirtualMachine for this Pod:
 // virt-launcher v1.9 HandleStandaloneMode passes nil VirtualMachineOptions,
 // so we start without STANDALONE_VMI and send domainAttachments ourselves.
-func syncStandaloneVMI(rootfs, spec string, attachTap bool) error {
-	sock := launcherSockPath(rootfs)
+func syncStandaloneVMI(rootfs, spec string, attachTap bool, pid int) error {
+	sock := launcherSockViaProc(pid)
+	if sock == "" {
+		sock = launcherSockPath(rootfs)
+	}
 	if err := waitForSock(sock, cmdSyncWait); err != nil {
 		return err
 	}

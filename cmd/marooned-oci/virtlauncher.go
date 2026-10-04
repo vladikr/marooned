@@ -644,7 +644,7 @@ func startVirtLauncherPause(id, dir string) int {
 	}
 	_ = os.WriteFile(filepath.Join(dir, "virt-launcher.pid"), []byte(strconv.Itoa(pid)), 0644)
 	placeOverlayInPodCgroup(dir, pid)
-	if err := syncStandaloneVMI(rootfs, spec, attachTap); err != nil {
+	if err := syncStandaloneVMI(rootfs, spec, attachTap, pid); err != nil {
 		_ = os.WriteFile(filepath.Join(dir, "cmd-sync.err"), []byte(err.Error()+"\n"), 0644)
 	}
 	_ = id
