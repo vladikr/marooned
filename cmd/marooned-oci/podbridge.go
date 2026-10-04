@@ -68,33 +68,40 @@ type podLink struct {
 //	tap0 on the bridge (qemu)
 //	dummy eth0 keeps the original MAC/IP for CNI CHECK
 //
-// DHCP cache is written where virt-launcher reads it
+// DHCP cache is written where virt-launcher would read it
 // (/var/run/kubevirt-private/vif-cache-eth0.json). Returns the original
-// MAC so STANDALONE_VMI can stamp interfaces[0].macAddress.
-func setupPodBridge(netns, rootfs, logf string) (string, error) {
+// link (MAC, CIDR, gateway) so marooned-oci can wrap qemu onto tap0 and
+// serve DHCP; STANDALONE_VMI's NIC is stripped because virt-launcher
+// standalone SyncVMI cannot set domainAttachments.
+func setupPodBridge(netns, rootfs, logf string) (podLink, error) {
+	var empty podLink
 	if netns == "" {
-		return "", fmt.Errorf("no pod netns")
+		return empty, fmt.Errorf("no pod netns")
 	}
 	logBridge(logf, "netns %s", netns)
 	if linkExists(netns, podBridgeName) {
-		mac, _, _ := readLink(netns, podUplink)
-		logBridge(logf, "already bridged mac=%s", mac)
-		if link, err := discoverLink(netns); err == nil {
-			if err := writeDHCPCache(rootfs, link); err != nil {
-				logBridge(logf, "dhcp cache: %v", err)
-			}
+		link, err := discoverLink(netns)
+		if err != nil {
+			mac, _, _ := readLink(netns, podUplink)
+			link.MAC = mac
+			logBridge(logf, "already bridged mac=%s", mac)
+			return link, nil
 		}
-		return mac, nil
+		logBridge(logf, "already bridged mac=%s cidr=%s", link.MAC, link.CIDR)
+		if err := writeDHCPCache(rootfs, link); err != nil {
+			logBridge(logf, "dhcp cache: %v", err)
+		}
+		return link, nil
 	}
 	link, err := discoverLink(netns)
 	if err != nil {
-		return "", err
+		return empty, err
 	}
 	if err := applyPodBridge(netns, rootfs, link); err != nil {
-		return "", err
+		return empty, err
 	}
 	logBridge(logf, "bridged %s mac=%s cidr=%s gw=%s mtu=%d", link.Name, link.MAC, link.CIDR, link.GW, link.MTU)
-	return link.MAC, nil
+	return link, nil
 }
 
 func discoverLink(netns string) (podLink, error) {

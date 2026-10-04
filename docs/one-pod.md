@@ -86,9 +86,14 @@ Today:
    Passt). marooned-oci runs virt-handler phase 1 in the user Pod netns:
    rename `eth0` → `eth0-nic`, bridge `k6t-eth0`, tap `tap0`, dummy
    `eth0` keeps the original MAC/IP for CNI CHECK, DHCP cache at
-   `/var/run/kubevirt-private/vif-cache-eth0.json`. virt-launcher phase 2
-   attaches qemu to `tap0` and serves the pod IP to the guest. If phase 1
-   fails, the NIC is stripped so the guest still boots on vsock.
+   `/var/run/kubevirt-private/vif-cache-eth0.json`. virt-launcher v1.9
+   `HandleStandaloneMode` calls `SyncVMI` with nil
+   `VirtualMachineOptions`, so the converter never sets
+   `domainAttachments[default]=tap` and libvirt rejects
+   `<interface type="">`. After phase 1 succeeds, marooned-oci strips
+   the NIC from STANDALONE_VMI, wraps the qemu emulator to attach
+   `tap0`, and serves DHCP (pod IP, mask, gateway) on `k6t-eth0`.
+   If phase 1 fails, the NIC is stripped so the guest still boots on vsock.
    Machine type is i440fx (`pc`) with `DisableHotplug`: virt-launcher on
    q35 defines the domain twice to reserve pcie-root-ports, and the
    second `DomainDefineXML` omits `<uuid>` so libvirt rejects the name.
