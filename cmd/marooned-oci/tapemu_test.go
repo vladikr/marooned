@@ -19,6 +19,12 @@ func TestTapEmulatorScript(t *testing.T) {
 	if strings.Contains(s, "$0.marooned") {
 		t.Fatal("suffix real path is probed by libvirt")
 	}
+	if strings.Contains(s, "/run/marooned-qemu") {
+		t.Fatal("run path loses bios-256k.bin")
+	}
+	if !strings.Contains(s, "-L") || !strings.Contains(s, "/usr/share/seabios") {
+		t.Fatal("seabios datadir")
+	}
 	if !strings.Contains(s, "vhost=on") {
 		t.Fatal("vhost")
 	}
@@ -73,11 +79,8 @@ func TestIsELF(t *testing.T) {
 	}
 }
 
-func TestFindRealQemuPrefersRunBind(t *testing.T) {
+func TestFindRealQemuPrefersCopiedELF(t *testing.T) {
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "run"), 0755); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.MkdirAll(filepath.Join(root, "usr/libexec"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +133,7 @@ func TestQemuRealBindPath(t *testing.T) {
 	if qemuRealBindPath("") != "" {
 		t.Fatal("empty")
 	}
-	if qemuRealBindPath("/overlay") != "/overlay/run/marooned-qemu" {
+	if qemuRealBindPath("/overlay") != "/overlay/usr/libexec/marooned-qemu-real" {
 		t.Fatal(qemuRealBindPath("/overlay"))
 	}
 }
@@ -146,7 +149,7 @@ func TestTapEmulatorScriptSkipsProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := filepath.Join(dir, "wrap")
-	body := strings.ReplaceAll(tapEmulatorScript(), "/run/marooned-qemu", real)
+	body := strings.ReplaceAll(tapEmulatorScript(), "/usr/libexec/marooned-qemu-real", real)
 	body = strings.ReplaceAll(body, "/run/marooned-tap.mac", mac)
 	if err := os.WriteFile(script, []byte(body), 0755); err != nil {
 		t.Fatal(err)

@@ -11,7 +11,7 @@ import (
 
 const (
 	tapMACFile      = "run/marooned-tap.mac"
-	maroonedQemuRel = "run/marooned-qemu"
+	maroonedQemuRel = "usr/libexec/marooned-qemu-real"
 )
 
 var qemuEmulatorRels = []string{
@@ -24,10 +24,11 @@ var qemuEmulatorRels = []string{
 // plantTapEmulator wraps virt-launcher's qemu so the guest gets tap0.
 // HandleStandaloneMode calls SyncVMI with nil VirtualMachineOptions, so
 // the converter leaves interface type="" and libvirt rejects the domain.
-// The real binary is copied to /run/marooned-qemu (tmpfs, not a libvirt
-// emulator name). Binding it next to qemu-kvm as *.marooned made libvirt
-// probe the wrapper as $0.marooned; bind then WriteFile also truncated
-// the same inode, so both paths became the wrapper.
+// The real binary is copied to usr/libexec/marooned-qemu-real (same
+// prefix as qemu-kvm so firmware resolves; libvirt must not probe a
+// sibling *.marooned). Copying to /run/marooned-qemu made qemu look for
+// bios-256k.bin under /run. Bind then WriteFile also truncated the same
+// inode, so both paths became the wrapper.
 func plantTapEmulator(rootfs, mac string) error {
 	if rootfs == "" || mac == "" {
 		return nil
@@ -150,8 +151,9 @@ func fileExists(path string) bool {
 
 func tapEmulatorScript() string {
 	return `#!/bin/sh
-REAL=/run/marooned-qemu
+REAL=/usr/libexec/marooned-qemu-real
 MACFILE=/run/marooned-tap.mac
+DATADIR=/usr/share/seabios
 if [ ! -x "$REAL" ]; then
   echo "marooned tap emulator missing: $REAL" >&2
   exit 127
@@ -177,9 +179,9 @@ if [ -s "$MACFILE" ]; then
 fi
 if [ -n "$inject" ]; then
   MAC=$(cat "$MACFILE" | tr -d ' \n')
-  exec "$REAL" "$@" -netdev tap,id=maroonednet0,ifname=tap0,script=no,downscript=no,vhost=on -device virtio-net-pci,netdev=maroonednet0,mac="$MAC",id=ua-default
+  exec "$REAL" -L "$DATADIR" "$@" -netdev tap,id=maroonednet0,ifname=tap0,script=no,downscript=no,vhost=on -device virtio-net-pci,netdev=maroonednet0,mac="$MAC",id=ua-default
 fi
-exec "$REAL" "$@"
+exec "$REAL" -L "$DATADIR" "$@"
 `
 }
 
@@ -192,5 +194,5 @@ func qemuRealBindPath(rootfs string) string {
 
 func tapEmulatorWrapped(script string) bool {
 	return bytes.Contains([]byte(script), []byte("maroonednet0")) &&
-		bytes.Contains([]byte(script), []byte("/run/marooned-qemu"))
+		bytes.Contains([]byte(script), []byte("/usr/libexec/marooned-qemu-real"))
 }
