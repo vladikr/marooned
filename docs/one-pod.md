@@ -70,8 +70,11 @@ Today:
    bind-mounts those roots into the overlay at virt-launcher ImageVolume
    paths (`/var/run/kubevirt-image-volume/disk_0`,
    `/var/run/kubevirt-kernel-boot`) and passes `--image-volume`.
-   `containerDisk.path` stays empty: virt-launcher finds the single file
-   under `/disk` (scratch `COPY disk.qcow2 /disk/disk.qcow2`).
+   kubevirtci CRI-O plants Image volumes as OCI overlay mounts (lowerdir
+   of the pulled image), not under `kubernetes.io~image`; marooned-oci
+   reads those from the bundle. `containerDisk.path` stays empty:
+   virt-launcher v1.9 looks under `disk_0/disk/` (scratch
+   `COPY disk.qcow2 /disk/disk.qcow2`).
 6. `VMI.Status.VSOCKCID` is hashed from the Pod UID. marooned-oci writes
    the cid file and runs `vsockfwd` in the pod netns so the shim can dial
    `unix:/var/run/marooned/<uid>/agent.sock` with no VMI object.

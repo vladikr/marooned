@@ -83,7 +83,7 @@ func TestBundleNetNS(t *testing.T) {
 }
 
 func TestImageVolumeBinds(t *testing.T) {
-	binds := imageVolumeBinds("/overlay", "uid-1")
+	binds := imageVolumeBinds("/overlay", "uid-1", "")
 	if len(binds) != 2 {
 		t.Fatalf("binds %d", len(binds))
 	}
@@ -95,6 +95,52 @@ func TestImageVolumeBinds(t *testing.T) {
 	}
 	if binds[1][1] != "/overlay/var/run/kubevirt-kernel-boot" {
 		t.Fatalf("kernel dst %s", binds[1][1])
+	}
+}
+
+func TestOverlayLowerDir(t *testing.T) {
+	got := overlayLowerDir([]string{
+		"rw",
+		"lowerdir=/var/lib/containers/storage/overlay/abc/merged:/var/run/crio/image-volumes",
+	})
+	want := "/var/lib/containers/storage/overlay/abc/merged"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestBundleImageVolumeSources(t *testing.T) {
+	dir := t.TempDir()
+	cfg := []byte(`{
+		"mounts": [
+			{"destination": "/proc", "type": "proc", "source": "proc"},
+			{
+				"destination": "/run/marooned/image-volume/rootdisk",
+				"type": "overlay",
+				"source": "overlay",
+				"options": ["lowerdir=/var/lib/containers/storage/overlay/diskimg/merged:/var/run/crio/image-volumes"]
+			},
+			{
+				"destination": "/run/marooned/image-volume/kernel-boot",
+				"type": "overlay",
+				"source": "overlay",
+				"options": ["lowerdir=/var/lib/containers/storage/overlay/kernimg/merged:/var/run/crio/image-volumes"]
+			}
+		]
+	}`)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), cfg, 0644); err != nil {
+		t.Fatal(err)
+	}
+	disk, kernel := bundleImageVolumeSources(dir)
+	if disk != "/var/lib/containers/storage/overlay/diskimg/merged" {
+		t.Fatalf("disk %s", disk)
+	}
+	if kernel != "/var/lib/containers/storage/overlay/kernimg/merged" {
+		t.Fatalf("kernel %s", kernel)
+	}
+	binds := imageVolumeBinds("/overlay", "uid-1", dir)
+	if binds[0][0] != disk {
+		t.Fatalf("prefer CRI-O overlay, got %s", binds[0][0])
 	}
 }
 

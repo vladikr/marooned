@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -212,29 +213,120 @@ func bindDir(src, dst string) {
 	_ = unix.Mount(src, dst, "", unix.MS_BIND, "")
 }
 
-func imageVolumeBinds(rootfs, podUID string) [][2]string {
+func overlayLowerDir(options []string) string {
+	for _, o := range options {
+		rest, ok := strings.CutPrefix(o, "lowerdir=")
+		if !ok || rest == "" {
+			continue
+		}
+		var b strings.Builder
+		esc := false
+		for i := 0; i < len(rest); i++ {
+			c := rest[i]
+			if esc {
+				b.WriteByte(c)
+				esc = false
+				continue
+			}
+			if c == '\\' {
+				esc = true
+				continue
+			}
+			if c == ':' {
+				break
+			}
+			b.WriteByte(c)
+		}
+		if p := b.String(); p != "" {
+			return p
+		}
+	}
+	return ""
+}
+
+type ociMount struct {
+	Destination string   `json:"destination"`
+	Type        string   `json:"type"`
+	Source      string   `json:"source"`
+	Options     []string `json:"options"`
+}
+
+func bundleImageVolumeSources(bundle string) (disk, kernel string) {
+	if bundle == "" {
+		return "", ""
+	}
+	b, err := os.ReadFile(filepath.Join(bundle, "config.json"))
+	if err != nil {
+		return "", ""
+	}
+	var cfg struct {
+		Mounts []ociMount `json:"mounts"`
+	}
+	if json.Unmarshal(b, &cfg) != nil {
+		return "", ""
+	}
+	for _, m := range cfg.Mounts {
+		src := m.Source
+		if m.Type == "overlay" || src == "" || src == "overlay" {
+			if lower := overlayLowerDir(m.Options); lower != "" {
+				src = lower
+			}
+		}
+		if src == "" {
+			continue
+		}
+		switch m.Destination {
+		case sandbox.ImageVolumeDiskMount:
+			disk = src
+		case sandbox.ImageVolumeKernelMount:
+			kernel = src
+		}
+	}
+	return disk, kernel
+}
+
+func imageVolumeBinds(rootfs, podUID, bundle string) [][2]string {
+	diskSrc, kernelSrc := bundleImageVolumeSources(bundle)
+	if diskSrc == "" && podUID != "" {
+		diskSrc = sandbox.KubeletImageVolumePath(podUID, sandbox.ImageVolumeDiskName)
+	}
+	if kernelSrc == "" && podUID != "" {
+		kernelSrc = sandbox.KubeletImageVolumePath(podUID, sandbox.ImageVolumeKernelName)
+	}
 	return [][2]string{
-		{sandbox.KubeletImageVolumePath(podUID, sandbox.ImageVolumeDiskName), sandbox.ImageVolumeDiskOverlay(rootfs)},
-		{sandbox.KubeletImageVolumePath(podUID, sandbox.ImageVolumeKernelName), sandbox.ImageVolumeKernelOverlay(rootfs)},
+		{diskSrc, sandbox.ImageVolumeDiskOverlay(rootfs)},
+		{kernelSrc, sandbox.ImageVolumeKernelOverlay(rootfs)},
 	}
 }
 
-func plantImageVolumes(rootfs, podUID string) {
-	if rootfs == "" || podUID == "" {
-		return
+func plantImageVolumes(rootfs, podUID, bundle string) error {
+	if rootfs == "" {
+		return nil
 	}
-	waitImageVolumeDirs(podUID, 15*time.Second)
+	binds := imageVolumeBinds(rootfs, podUID, bundle)
+	if binds[0][0] == "" {
+		return fmt.Errorf("sandbox disk ImageVolume source missing")
+	}
+	waitImageVolumeDirs(binds, 15*time.Second)
 	_ = os.MkdirAll(filepath.Join(rootfs, "var/run/kubevirt/container-disks"), 0755)
-	for _, p := range imageVolumeBinds(rootfs, podUID) {
+	for _, p := range binds {
 		bindDir(p[0], p[1])
 	}
+	st, err := os.Stat(binds[0][1])
+	if err != nil || !st.IsDir() {
+		return fmt.Errorf("sandbox disk ImageVolume not mounted at %s from %s", binds[0][1], binds[0][0])
+	}
+	return nil
 }
 
-func waitImageVolumeDirs(podUID string, d time.Duration) {
+func waitImageVolumeDirs(binds [][2]string, d time.Duration) {
 	deadline := time.Now().Add(d)
 	for {
 		ready := true
-		for _, p := range imageVolumeBinds("", podUID) {
+		for _, p := range binds {
+			if p[0] == "" {
+				continue
+			}
 			st, err := os.Stat(p[0])
 			if err != nil || !st.IsDir() {
 				ready = false
@@ -377,7 +469,10 @@ func startVirtLauncherPause(id, dir string) int {
 	rootfs, private := prepareVirtLauncherRootfs(dir)
 	if rootfs != "" {
 		bindRuntimeFS(rootfs, private)
-		plantImageVolumes(rootfs, uid)
+		if err := plantImageVolumes(rootfs, uid, bundle); err != nil {
+			unmountVirtLauncherRootfs(dir)
+			return skipVirtLauncher(dir, err.Error())
+		}
 	}
 	netns := bundleNetNS(bundle)
 	startVsockFwd(uid, netns)

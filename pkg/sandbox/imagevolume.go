@@ -14,8 +14,11 @@ const (
 	// ImageVolumeKernelName matches kubevirt containerdisk.KernelBootVolumeName.
 	ImageVolumeKernelName = "kernel-boot-volume"
 
-	imageVolumeDiskMount   = "/run/marooned/image-volume/rootdisk"
-	imageVolumeKernelMount = "/run/marooned/image-volume/kernel-boot"
+	// ImageVolumeDiskMount is the dummy-container dest CRI-O uses for the
+	// sandbox disk Image volume.
+	ImageVolumeDiskMount = "/run/marooned/image-volume/rootdisk"
+	// ImageVolumeKernelMount is the dummy-container dest for kernel-boot.
+	ImageVolumeKernelMount = "/run/marooned/image-volume/kernel-boot"
 
 	kubeletPodsDir        = "/var/lib/kubelet/pods"
 	kubeletImagePluginDir = "kubernetes.io~image"
@@ -75,8 +78,8 @@ func AppendImageVolumesJSON(podJSON []byte, diskImage, kernelImage string) ([]by
 				continue
 			}
 			mounts, _ := cm["volumeMounts"].([]interface{})
-			mounts = upsertImageVolumeMount(mounts, ImageVolumeDiskName, imageVolumeDiskMount)
-			mounts = upsertImageVolumeMount(mounts, ImageVolumeKernelName, imageVolumeKernelMount)
+			mounts = upsertImageVolumeMount(mounts, ImageVolumeDiskName, ImageVolumeDiskMount)
+			mounts = upsertImageVolumeMount(mounts, ImageVolumeKernelName, ImageVolumeKernelMount)
 			cm["volumeMounts"] = mounts
 			ctrs[i] = cm
 		}
