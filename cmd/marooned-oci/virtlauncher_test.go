@@ -144,6 +144,19 @@ func TestBundleImageVolumeSources(t *testing.T) {
 	}
 }
 
+func TestBindCgroupFSDest(t *testing.T) {
+	rootfs := t.TempDir()
+	want := filepath.Join(rootfs, "sys/fs/cgroup")
+	bindCgroupFS(rootfs)
+	st, err := os.Stat(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.IsDir() {
+		t.Fatalf("%s is not a dir", want)
+	}
+}
+
 func TestEnsureLibvirtRunDirs(t *testing.T) {
 	rootfs := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(rootfs, "run"), 0755); err != nil {

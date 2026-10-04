@@ -158,12 +158,25 @@ func bindRuntimeFS(rootfs string, private bool) {
 	if private {
 		_ = unix.Mount("proc", filepath.Join(rootfs, "proc"), "proc", 0, "")
 		_ = unix.Mount("sysfs", filepath.Join(rootfs, "sys"), "sysfs", 0, "")
+		bindCgroupFS(rootfs)
 		_ = unix.Mount("tmpfs", filepath.Join(rootfs, "run"), "tmpfs", 0, "mode=0755")
 		_ = unix.Mount("tmpfs", filepath.Join(rootfs, "tmp"), "tmpfs", 0, "mode=1777")
 		_ = unix.Mount("devpts", filepath.Join(rootfs, "dev/pts"), "devpts", 0, "newinstance,ptmxmode=0666")
 	}
 	ensureLibvirtRunDirs(rootfs)
 	bindKVM(rootfs)
+}
+
+// bindCgroupFS puts the host cgroup mount in the overlay. A fresh sysfs has
+// no cgroup2, so virt-launcher's GetPodCPUSet takes the v1 path
+// /sys/fs/cgroup/cpuset/cpuset.cpus and panics.
+func bindCgroupFS(rootfs string) {
+	if rootfs == "" {
+		return
+	}
+	dst := filepath.Join(rootfs, "sys/fs/cgroup")
+	_ = os.MkdirAll(dst, 0755)
+	_ = unix.Mount("/sys/fs/cgroup", dst, "", unix.MS_BIND|unix.MS_REC, "")
 }
 
 // ensureLibvirtRunDirs plants the dirs SetupLibvirt writes into. The
@@ -197,6 +210,7 @@ func unmountVirtLauncherRootfs(dir string) {
 		"var/run/kubevirt-kernel-boot",
 		"dev/kvm", "dev/net/tun", "dev/vhost-net", "dev/vhost-vsock",
 		"dev/null", "dev/zero", "dev/urandom", "dev/random", "dev/pts",
+		"sys/fs/cgroup",
 		"proc", "sys", "run", "tmp",
 	} {
 		_ = unix.Unmount(filepath.Join(merged, p), unix.MNT_DETACH)
