@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,8 +16,14 @@ func TestTapEmulatorScript(t *testing.T) {
 	if !strings.Contains(s, "/run/marooned-tap.mac") {
 		t.Fatal("mac file")
 	}
+	if strings.Contains(s, "$0.marooned") {
+		t.Fatal("suffix real path is probed by libvirt")
+	}
 	if !strings.Contains(s, "vhost=on") {
 		t.Fatal("vhost")
+	}
+	if !strings.Contains(s, "none|none,*)") {
+		t.Fatal("skip libvirt -machine none probe")
 	}
 	if !strings.HasPrefix(s, "#!/bin/sh\n") {
 		t.Fatal("shebang")
@@ -46,12 +53,116 @@ func TestPlantTapEmulatorEmpty(t *testing.T) {
 	}
 }
 
-func TestQemuEmulatorHiddenPaths(t *testing.T) {
-	got := qemuEmulatorHiddenPaths("/overlay")
-	if len(got) != len(qemuEmulatorRels) {
-		t.Fatalf("len %d", len(got))
+func TestIsELF(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "qemu")
+	if isELF(p) {
+		t.Fatal("missing")
 	}
-	if !strings.HasSuffix(got[0], "qemu-kvm.marooned") {
-		t.Fatalf("first %s", got[0])
+	if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if isELF(p) {
+		t.Fatal("script")
+	}
+	if err := os.WriteFile(p, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1}, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if !isELF(p) {
+		t.Fatal("want elf")
+	}
+}
+
+func TestFindRealQemuPrefersRunBind(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "run"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "usr/libexec"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "usr/libexec/qemu-kvm"), []byte(tapEmulatorScript()), 0755); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(root, maroonedQemuRel)
+	if err := os.WriteFile(real, []byte{0x7f, 'E', 'L', 'F'}, 0755); err != nil {
+		t.Fatal(err)
+	}
+	got := findRealQemu(root)
+	if got != real {
+		t.Fatalf("got %s want %s", got, real)
+	}
+}
+
+func TestPlantTapEmulatorCopiesELF(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "usr/libexec"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	elf := []byte{0x7f, 'E', 'L', 'F', 2, 1, 1, 9, 9, 9}
+	emu := filepath.Join(root, "usr/libexec/qemu-kvm")
+	if err := os.WriteFile(emu, elf, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := plantTapEmulator(root, "0a:58:0a:f4:00:6d"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, maroonedQemuRel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(elf) {
+		t.Fatalf("real qemu overwritten: %q", got)
+	}
+	wrap, err := os.ReadFile(emu)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tapEmulatorWrapped(string(wrap)) {
+		t.Fatalf("wrapper %s", wrap)
+	}
+	if isELF(emu) {
+		t.Fatal("emulator still elf")
+	}
+}
+
+func TestQemuRealBindPath(t *testing.T) {
+	if qemuRealBindPath("") != "" {
+		t.Fatal("empty")
+	}
+	if qemuRealBindPath("/overlay") != "/overlay/run/marooned-qemu" {
+		t.Fatal(qemuRealBindPath("/overlay"))
+	}
+}
+
+func TestTapEmulatorScriptSkipsProbe(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "qemu")
+	if err := os.WriteFile(real, []byte("#!/bin/sh\nprintf 'ARGS:%s\\n' \"$*\"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	mac := filepath.Join(dir, "mac")
+	if err := os.WriteFile(mac, []byte("aa:bb:cc:dd:ee:ff\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(dir, "wrap")
+	body := strings.ReplaceAll(tapEmulatorScript(), "/run/marooned-qemu", real)
+	body = strings.ReplaceAll(body, "/run/marooned-tap.mac", mac)
+	if err := os.WriteFile(script, []byte(body), 0755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(script, "-S", "-nodefaults", "-machine", "none,accel=kvm:tcg").CombinedOutput()
+	if err != nil {
+		t.Fatal(err, string(out))
+	}
+	if strings.Contains(string(out), "maroonednet0") {
+		t.Fatalf("probe grabbed tap: %s", out)
+	}
+	out, err = exec.Command(script, "-name", "guest=box", "-machine", "pc,accel=kvm").CombinedOutput()
+	if err != nil {
+		t.Fatal(err, string(out))
+	}
+	if !strings.Contains(string(out), "maroonednet0") || !strings.Contains(string(out), "aa:bb:cc:dd:ee:ff") {
+		t.Fatalf("vm missing tap: %s", out)
 	}
 }

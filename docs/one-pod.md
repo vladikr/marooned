@@ -91,8 +91,11 @@ Today:
    `VirtualMachineOptions`, so the converter never sets
    `domainAttachments[default]=tap` and libvirt rejects
    `<interface type="">`. After phase 1 succeeds, marooned-oci strips
-   the NIC from STANDALONE_VMI, wraps the qemu emulator to attach
-   `tap0`, and serves DHCP (pod IP, mask, gateway) on `k6t-eth0`.
+   the NIC from STANDALONE_VMI, copies the real qemu ELF to
+   `/run/marooned-qemu` (tmpfs; libvirt must not probe a sibling
+   `*.marooned`), wraps the emulator to attach `tap0` (skipped on
+   `-machine none` QMP probe), and serves DHCP (pod IP, mask, gateway)
+   on `k6t-eth0`.
    If phase 1 fails, the NIC is stripped so the guest still boots on vsock.
    Machine type is i440fx (`pc`) with `DisableHotplug`: virt-launcher on
    q35 defines the domain twice to reserve pcie-root-ports, and the

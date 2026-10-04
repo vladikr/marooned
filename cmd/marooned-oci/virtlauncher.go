@@ -249,9 +249,6 @@ func unmountVirtLauncherRootfs(dir string) {
 	} {
 		_ = unix.Unmount(filepath.Join(merged, p), unix.MNT_DETACH)
 	}
-	for _, p := range qemuEmulatorHiddenPaths(merged) {
-		_ = unix.Unmount(p, unix.MNT_DETACH)
-	}
 	_ = unix.Unmount(merged, unix.MNT_DETACH)
 }
 
