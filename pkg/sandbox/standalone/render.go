@@ -26,9 +26,11 @@ import (
 // We do not hotplug.
 const standaloneMachineType = "pc"
 
-// prepareStandalone stamps identity virt-launcher needs and drops the pod
-// NIC. Masquerade expects virt-handler to create k6t-eth0; without that
-// SyncVMI fails. Agent traffic is vsock. Guest IP / Services come later.
+// prepareStandalone stamps identity virt-launcher needs and forces the
+// pod NIC to bridge:{} (not masquerade, not l2bridge). Masquerade
+// expects virt-handler to create k6t-eth0; marooned-oci runs that
+// phase-1 bridge in the user Pod netns instead, so the guest DHCP
+// gets status.podIP. Agent traffic stays vsock.
 func prepareStandalone(vmi *virtv1.VirtualMachineInstance, podUID string) {
 	if vmi == nil {
 		return
@@ -46,8 +48,23 @@ func prepareStandalone(vmi *virtv1.VirtualMachineInstance, podUID string) {
 	vmi.Spec.Domain.Devices.DisableHotplug = true
 	cid := vsock.CIDForUID(podUID)
 	vmi.Status.VSOCKCID = &cid
-	vmi.Spec.Networks = nil
-	vmi.Spec.Domain.Devices.Interfaces = nil
+	applyStandalonePodBridge(vmi)
+}
+
+func applyStandalonePodBridge(vmi *virtv1.VirtualMachineInstance) {
+	if vmi == nil {
+		return
+	}
+	vmi.Spec.Networks = []virtv1.Network{{
+		Name:          "default",
+		NetworkSource: virtv1.NetworkSource{Pod: &virtv1.PodNetwork{}},
+	}}
+	vmi.Spec.Domain.Devices.Interfaces = []virtv1.Interface{{
+		Name: "default",
+		InterfaceBindingMethod: virtv1.InterfaceBindingMethod{
+			Bridge: &virtv1.InterfaceBridge{},
+		},
+	}}
 }
 
 // Result is the in-memory VMI plus STANDALONE_VMI JSON.

@@ -598,6 +598,14 @@ func startVirtLauncherPause(id, dir string) int {
 	}
 	netns := bundleNetNS(bundle)
 	startVsockFwd(uid, netns)
+	bridgeLog := filepath.Join(dir, "pod-bridge.log")
+	if mac, err := setupPodBridge(netns, rootfs, bridgeLog); err != nil {
+		_ = os.WriteFile(filepath.Join(dir, "pod-bridge.err"), []byte(err.Error()+"\n"), 0644)
+		spec = stripStandaloneNIC(spec)
+	} else if mac != "" {
+		spec = stampStandaloneMAC(spec, mac)
+	}
+	_ = os.WriteFile(filepath.Join(dir, standaloneVMIFile), []byte(spec), 0644)
 	cmd := virtLauncherCmd(rootfs, netns, args)
 	if cmd == nil {
 		unmountVirtLauncherRootfs(dir)

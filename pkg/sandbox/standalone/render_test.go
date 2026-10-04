@@ -62,8 +62,17 @@ func TestRenderStandaloneVMIJSON(t *testing.T) {
 	if vmi.Status.VSOCKCID == nil || *vmi.Status.VSOCKCID < 3 {
 		t.Fatal("STANDALONE_VMI must stamp VSOCKCID (>=3)")
 	}
-	if len(vmi.Spec.Networks) != 0 || len(vmi.Spec.Domain.Devices.Interfaces) != 0 {
-		t.Fatal("standalone VMI must drop the pod NIC (no virt-handler masquerade)")
+	if len(vmi.Spec.Networks) != 1 || vmi.Spec.Networks[0].Pod == nil {
+		t.Fatalf("pod network %+v", vmi.Spec.Networks)
+	}
+	if len(vmi.Spec.Domain.Devices.Interfaces) != 1 || vmi.Spec.Domain.Devices.Interfaces[0].Bridge == nil {
+		t.Fatalf("bridge iface %+v", vmi.Spec.Domain.Devices.Interfaces)
+	}
+	if vmi.Spec.Domain.Devices.Interfaces[0].Masquerade != nil {
+		t.Fatal("masquerade needs virt-handler")
+	}
+	if vmi.Spec.Domain.Devices.Interfaces[0].Binding != nil {
+		t.Fatal("l2bridge plugin needs OVN-K")
 	}
 	if vmi.Spec.Domain.Machine == nil || vmi.Spec.Domain.Machine.Type != standaloneMachineType {
 		t.Fatalf("machine %v want %s (skip q35 two-pass DomainDefineXML)", vmi.Spec.Domain.Machine, standaloneMachineType)

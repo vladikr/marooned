@@ -82,24 +82,30 @@ Today:
 6. `VMI.Status.VSOCKCID` is hashed from the Pod UID. marooned-oci writes
    the cid file and runs `vsockfwd` in the pod netns so the shim can dial
    `unix:/var/run/marooned/<uid>/agent.sock` with no VMI object.
-7. The STANDALONE_VMI has **no pod NIC**. Masquerade needs virt-handler to
-   create `k6t-eth0`; without it `SyncVMI` fails. First working path is
-   vsock + exec (+ kubelet exec probes). Guest IP / Services come next.
+7. The STANDALONE_VMI pod NIC is `bridge: {}` (not masquerade, not
+   Passt). marooned-oci runs virt-handler phase 1 in the user Pod netns:
+   rename `eth0` → `eth0-nic`, bridge `k6t-eth0`, tap `tap0`, dummy
+   `eth0` keeps the original MAC/IP for CNI CHECK, DHCP cache at
+   `/var/run/kubevirt-private/vif-cache-eth0.json`. virt-launcher phase 2
+   attaches qemu to `tap0` and serves the pod IP to the guest. If phase 1
+   fails, the NIC is stripped so the guest still boots on vsock.
    Machine type is i440fx (`pc`) with `DisableHotplug`: virt-launcher on
    q35 defines the domain twice to reserve pcie-root-ports, and the
    second `DomainDefineXML` omits `<uuid>` so libvirt rejects the name.
 8. User image fill: CRI-O already unpacked the tree on the host
    (`/var/lib/containers/storage/overlay/.../merged`). The shim cannot
    `stat` that path (no hostPID). It tars via
-   `nsenter --mount=/host-proc/1/ns/mnt`. Guest-pull needs a NIC.
+   `nsenter --mount=/host-proc/1/ns/mnt`. Guest-pull can use the NIC
+   once DHCP lands.
 
 When `PodFromVMI` is importable, swap the JSON source (and later the
 containerDisk layout). Keep RuntimeClass + marooned-oci as the user Pod API.
 
 ## Still to wire
 
-- Guest-ip / port-forward: Passt or a marooned-owned masquerade bridge
-  (no virt-handler).
+- Guest-ip / Services on kubevirtci: kernel bridge is in (this tree).
+  Confirm `kubectl exec` wget of `status.podIP:8080` from another pod.
+  Production stays l2bridge/CUDN; do not enable l2bridge on kubevirtci.
 - PVC hostPath bind into the overlay (`/var/lib/kubelet/pods/<uid>/volumes`).
 - dedicatedCPUPlacement from original Guaranteed+integer CPU (issue #6)
   now lands on this same Pod.
