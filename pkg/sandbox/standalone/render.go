@@ -19,6 +19,13 @@ import (
 	mpv1 "maroonedpods.io/maroonedpods/staging/src/maroonedpods.io/api/pkg/apis/core/v1alpha1"
 )
 
+// standaloneMachineType is i440fx. virt-launcher v1.9 allocateHotplugPorts
+// on q35 defines the domain, then DomainDefineXML again with extra
+// pcie-root-port controllers. The second XML omits <uuid>, so libvirt
+// generates a new one and rejects the same name. i440fx skips that path.
+// We do not hotplug.
+const standaloneMachineType = "pc"
+
 // prepareStandalone stamps identity virt-launcher needs and drops the pod
 // NIC. Masquerade expects virt-handler to create k6t-eth0; without that
 // SyncVMI fails. Agent traffic is vsock. Guest IP / Services come later.
@@ -29,6 +36,14 @@ func prepareStandalone(vmi *virtv1.VirtualMachineInstance, podUID string) {
 	if podUID != "" && vmi.UID == "" {
 		vmi.UID = k8stypes.UID(podUID)
 	}
+	if vmi.Spec.Domain.Firmware == nil {
+		vmi.Spec.Domain.Firmware = &virtv1.Firmware{}
+	}
+	if vmi.Spec.Domain.Firmware.UUID == "" && podUID != "" {
+		vmi.Spec.Domain.Firmware.UUID = k8stypes.UID(podUID)
+	}
+	vmi.Spec.Domain.Machine = &virtv1.Machine{Type: standaloneMachineType}
+	vmi.Spec.Domain.Devices.DisableHotplug = true
 	cid := vsock.CIDForUID(podUID)
 	vmi.Status.VSOCKCID = &cid
 	vmi.Spec.Networks = nil

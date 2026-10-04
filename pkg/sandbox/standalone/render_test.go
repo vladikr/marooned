@@ -65,6 +65,18 @@ func TestRenderStandaloneVMIJSON(t *testing.T) {
 	if len(vmi.Spec.Networks) != 0 || len(vmi.Spec.Domain.Devices.Interfaces) != 0 {
 		t.Fatal("standalone VMI must drop the pod NIC (no virt-handler masquerade)")
 	}
+	if vmi.Spec.Domain.Machine == nil || vmi.Spec.Domain.Machine.Type != standaloneMachineType {
+		t.Fatalf("machine %v want %s (skip q35 two-pass DomainDefineXML)", vmi.Spec.Domain.Machine, standaloneMachineType)
+	}
+	if !vmi.Spec.Domain.Devices.DisableHotplug {
+		t.Fatal("DisableHotplug")
+	}
+	if vmi.Spec.Domain.Firmware == nil || vmi.Spec.Domain.Firmware.UUID != pod.UID {
+		t.Fatalf("firmware uuid %v want pod uid", vmi.Spec.Domain.Firmware)
+	}
+	if vmi.Spec.Domain.Firmware.KernelBoot == nil {
+		t.Fatal("kernelBoot must stay when stamping firmware UUID")
+	}
 }
 
 func TestRenderNilPod(t *testing.T) {

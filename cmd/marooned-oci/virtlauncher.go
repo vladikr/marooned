@@ -445,6 +445,76 @@ func virtLauncherRunning(root, uid string) bool {
 	return false
 }
 
+func procRootMatches(procRoot, overlay string) bool {
+	if overlay == "" || procRoot == "" || procRoot == "/" {
+		return false
+	}
+	return procRoot == overlay || strings.HasPrefix(procRoot, overlay+"/")
+}
+
+func killPID(pid int) {
+	if pid <= 1 {
+		return
+	}
+	_ = syscall.Kill(-pid, syscall.SIGKILL)
+	_ = syscall.Kill(pid, syscall.SIGKILL)
+}
+
+func killChrooted(overlay string) {
+	if overlay == "" {
+		return
+	}
+	ents, err := os.ReadDir("/proc")
+	if err != nil {
+		return
+	}
+	for _, e := range ents {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid <= 1 {
+			continue
+		}
+		root, err := os.Readlink(filepath.Join("/proc", e.Name(), "root"))
+		if err != nil || !procRootMatches(root, overlay) {
+			continue
+		}
+		killPID(pid)
+	}
+}
+
+// killLeftoverVirtLauncher sends SIGKILL to a previous virt-launcher and
+// the virtqemud/virtlogd it daemonized (Setsid + Release, PPID 1) for the
+// same pod UID. Those survive HandleStandaloneMode panics and leak.
+func killLeftoverVirtLauncher(dir, uid string) {
+	if uid == "" {
+		return
+	}
+	root := filepath.Dir(dir)
+	if root == "" || root == "." || root == "/" {
+		root = defaultRoot
+	}
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range ents {
+		if !e.IsDir() {
+			continue
+		}
+		d := filepath.Join(root, e.Name())
+		if d == dir {
+			continue
+		}
+		if strings.TrimSpace(string(mustRead(filepath.Join(d, "poduid")))) != uid {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(mustRead(filepath.Join(d, "virt-launcher.pid")))))
+		if err == nil {
+			killPID(pid)
+		}
+		killChrooted(filepath.Join(d, vlRootfsDir))
+	}
+}
+
 func startVirtLauncherPause(id, dir string) int {
 	bundle := strings.TrimSpace(string(mustRead(filepath.Join(dir, "bundle"))))
 	spec := standaloneVMISpec(dir, bundle)
@@ -481,6 +551,7 @@ func startVirtLauncherPause(id, dir string) int {
 	}
 	if uid != "" {
 		_ = vsock.WriteCIDFile(vsock.DefaultHostDir, uid, strconv.FormatUint(uint64(cid), 10))
+		killLeftoverVirtLauncher(dir, uid)
 	}
 
 	rootfs, private := prepareVirtLauncherRootfs(dir)

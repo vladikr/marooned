@@ -81,6 +81,9 @@ Today:
 7. The STANDALONE_VMI has **no pod NIC**. Masquerade needs virt-handler to
    create `k6t-eth0`; without it `SyncVMI` fails. First working path is
    vsock + exec (+ kubelet exec probes). Guest IP / Services come next.
+   Machine type is i440fx (`pc`) with `DisableHotplug`: virt-launcher on
+   q35 defines the domain twice to reserve pcie-root-ports, and the
+   second `DomainDefineXML` omits `<uuid>` so libvirt rejects the name.
 
 When `PodFromVMI` is importable, swap the JSON source (and later the
 containerDisk layout). Keep RuntimeClass + marooned-oci as the user Pod API.

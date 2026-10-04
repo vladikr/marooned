@@ -187,6 +187,31 @@ func TestEnsureLibvirtRunDirs(t *testing.T) {
 	}
 }
 
+func TestProcRootMatches(t *testing.T) {
+	overlay := "/run/marooned-oci/abc/vl-rootfs"
+	if !procRootMatches(overlay, overlay) {
+		t.Fatal("exact overlay")
+	}
+	if !procRootMatches(overlay+"/var/run/libvirt", overlay) {
+		t.Fatal("path under overlay")
+	}
+	if procRootMatches("/", overlay) {
+		t.Fatal("host root")
+	}
+	if procRootMatches("/run/marooned-oci/other/vl-rootfs", overlay) {
+		t.Fatal("other overlay")
+	}
+	if procRootMatches(overlay, "") {
+		t.Fatal("empty overlay")
+	}
+}
+
+func TestKillLeftoverVirtLauncherEmpty(t *testing.T) {
+	dir := t.TempDir()
+	killLeftoverVirtLauncher(dir, "uid-1")
+	killLeftoverVirtLauncher(dir, "")
+}
+
 func TestVirtLauncherCmdChrootAndNetNS(t *testing.T) {
 	cmd := virtLauncherCmd("/opt/marooned/virt-launcher-rootfs", "/var/run/netns/cni-x", []string{"--name", "box"})
 	if cmd == nil {
