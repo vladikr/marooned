@@ -83,8 +83,8 @@ func main() {
 			pauseDir = rest[0]
 		}
 		signal.Ignore(syscall.SIGHUP, syscall.SIGPIPE)
-		detachFromRuntimeCgroup(os.Getpid())
 		if pauseDir != "" {
+			placeInPodCgroup(os.Getpid(), pauseDir)
 			go runPauseForwards(pauseDir)
 		}
 		ch := make(chan os.Signal, 1)
@@ -452,6 +452,7 @@ func pauseUnit(id string) string {
 func startPause(id, dir string) int {
 	_ = exec.Command("systemctl", "stop", pauseUnit(id)).Run()
 	if pid := startVirtLauncherPause(id, dir); pid > 1 {
+		placeOverlayInPodCgroup(dir, pid)
 		return pid
 	}
 	return startPauseFork(dir)
@@ -475,7 +476,7 @@ func startPauseFork(dir string) int {
 	if err != nil || pid <= 1 {
 		fatal("pause-daemon pid %q", strings.TrimSpace(string(out)))
 	}
-	detachFromRuntimeCgroup(pid)
+	placeInPodCgroup(pid, dir)
 	if !pidAlive(pid) {
 		fatal("pause pid %d not alive after start", pid)
 	}
@@ -497,23 +498,11 @@ func runPauseDaemon(rest []string) int {
 	}
 	pid := inner.Process.Pid
 	_ = inner.Process.Release()
-	detachFromRuntimeCgroup(pid)
+	if len(rest) > 0 {
+		placeInPodCgroup(pid, rest[0])
+	}
 	fmt.Println(pid)
 	return 0
-}
-
-// Move the dummy out of the runtime's transient systemd cgroup so it
-// survives marooned-oci create exiting.
-func detachFromRuntimeCgroup(pid int) {
-	if pid <= 1 {
-		return
-	}
-	b := []byte(strconv.Itoa(pid))
-	for _, p := range []string{"/sys/fs/cgroup/cgroup.procs", "/sys/fs/cgroup/unified/cgroup.procs"} {
-		if err := os.WriteFile(p, b, 0644); err == nil {
-			return
-		}
-	}
 }
 
 func writeState(dir string, st state) {

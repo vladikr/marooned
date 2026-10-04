@@ -81,6 +81,7 @@ func runGuestStart(root, id, dir string) error {
 		return fmt.Errorf("StartContainer: %w", err)
 	}
 	_ = os.WriteFile(filepath.Join(dir, "guest-started"), []byte("1"), 0644)
+	placeOverlayInPodCgroup(dir, 0)
 	ns, pname, _ := strings.Cut(pod, "/")
 	appendK8sLog(currentPodLog(ns, pname, podUID, ctrName), "marooned: guest container started")
 	startLogPump(root, id)

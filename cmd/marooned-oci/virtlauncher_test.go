@@ -157,6 +157,38 @@ func TestBindCgroupFSDest(t *testing.T) {
 	}
 }
 
+func TestDisableLibvirtCgroups(t *testing.T) {
+	rootfs := t.TempDir()
+	p := filepath.Join(rootfs, "etc/libvirt/qemu.conf")
+	disableLibvirtCgroups(rootfs)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "cgroup_controllers = [ ]") {
+		t.Fatalf("missing controllers: %q", b)
+	}
+	if err := os.WriteFile(p, []byte("stdio_handler = \"logd\"\ncgroup_controllers = [ \"cpu\", \"memory\" ]\nuser = \"qemu\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	disableLibvirtCgroups(rootfs)
+	b, err = os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	if strings.Count(got, "cgroup_controllers") != 1 {
+		t.Fatalf("duplicate controllers: %q", got)
+	}
+	if !strings.Contains(got, "cgroup_controllers = [ ]") {
+		t.Fatalf("not cleared: %q", got)
+	}
+	if !strings.Contains(got, "stdio_handler") || !strings.Contains(got, "user = \"qemu\"") {
+		t.Fatalf("lost other keys: %q", got)
+	}
+	disableLibvirtCgroups("")
+}
+
 func TestEnsureLibvirtRunDirs(t *testing.T) {
 	rootfs := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(rootfs, "run"), 0755); err != nil {

@@ -164,6 +164,7 @@ func bindRuntimeFS(rootfs string, private bool) {
 		_ = unix.Mount("devpts", filepath.Join(rootfs, "dev/pts"), "devpts", 0, "newinstance,ptmxmode=0666")
 	}
 	ensureLibvirtRunDirs(rootfs)
+	disableLibvirtCgroups(rootfs)
 	bindKVM(rootfs)
 }
 
@@ -201,6 +202,39 @@ func ensureLibvirtRunDirs(rootfs string) {
 	} {
 		_ = os.MkdirAll(filepath.Join(rootfs, d), 0755)
 	}
+}
+
+// disableLibvirtCgroups keeps qemu in the user Pod cgroup. With host
+// cgroupfs bind-mounted into the overlay, virtqemud would otherwise
+// move qemu into machine.slice.
+func disableLibvirtCgroups(rootfs string) {
+	if rootfs == "" {
+		return
+	}
+	p := filepath.Join(rootfs, "etc/libvirt/qemu.conf")
+	_ = os.MkdirAll(filepath.Dir(p), 0755)
+	body, err := os.ReadFile(p)
+	if err != nil && !os.IsNotExist(err) {
+		return
+	}
+	const line = "cgroup_controllers = [ ]"
+	var keep []string
+	for _, l := range strings.Split(string(body), "\n") {
+		trim := strings.TrimSpace(l)
+		if strings.HasPrefix(trim, "cgroup_controllers") {
+			continue
+		}
+		keep = append(keep, l)
+	}
+	for len(keep) > 0 && keep[len(keep)-1] == "" {
+		keep = keep[:len(keep)-1]
+	}
+	text := strings.Join(keep, "\n")
+	if text != "" {
+		text += "\n"
+	}
+	text += line + "\n"
+	_ = os.WriteFile(p, []byte(text), 0644)
 }
 
 func unmountVirtLauncherRootfs(dir string) {
@@ -597,8 +631,8 @@ func startVirtLauncherPause(id, dir string) int {
 		unmountVirtLauncherRootfs(dir)
 		return skipVirtLauncher(dir, "virt-launcher pid died immediately")
 	}
-	detachFromRuntimeCgroup(pid)
 	_ = os.WriteFile(filepath.Join(dir, "virt-launcher.pid"), []byte(strconv.Itoa(pid)), 0644)
+	placeOverlayInPodCgroup(dir, pid)
 	_ = id
 	return pid
 }

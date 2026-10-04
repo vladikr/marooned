@@ -20,7 +20,7 @@ kubelet → CRI-O handler marooned → marooned-oci
                                       │
                                       ├─ pause PID = virt-launcher
                                       │    STANDALONE_VMI=<json> (HandleStandaloneMode)
-                                      │    qemu in the user Pod cgroup
+                                      │    qemu joined to the OCI cgroupsPath
                                       └─ user containers: dummy + agent exec
 ```
 
@@ -28,6 +28,10 @@ kubelet → CRI-O handler marooned → marooned-oci
 - That spec is passed to virt-launcher as `STANDALONE_VMI` (same as
   kubevirt-vm-to-pod / FlightCtl). It is not `Create()`d in the API.
 - CPU manager / topology manager / requests apply to qemu.
+  `marooned-oci` joins virt-launcher and qemu to the pause container’s
+  `linux.cgroupsPath` (never the root cgroup). libvirt
+  `cgroup_controllers` is cleared so virtqemud does not move qemu into
+  `machine.slice`.
 - PVC/ephemeral stay on the user Pod. kubelet NodePublishes once.
   `volumeMounts.mountPath` in YAML is the **guest** path (annotation
   `maroonedpods.io/volumes`). Live bind-mount is
