@@ -192,6 +192,7 @@ func ensureLibvirtRunDirs(rootfs string) {
 		"run/libvirt",
 		"run/libvirt/qemu",
 		"run/kubevirt",
+		"run/kubevirt/sockets",
 		"run/kubevirt/container-disks",
 		"run/kubevirt/hotplug-disks",
 		"run/kubevirt-private",
@@ -444,9 +445,10 @@ func virtLauncherCmd(rootfs, netns string, args []string) *exec.Cmd {
 	return exec.Command(prefix[0], append(prefix[1:], args...)...)
 }
 
-// startVirtLauncherPause runs virt-launcher with STANDALONE_VMI as the CRI-O
-// pause PID so qemu lives in the user Pod cgroup. There is no --standalone
-// flag; HandleStandaloneMode keys off the env (kubevirt-vm-to-pod / VEP-359).
+// startVirtLauncherPause runs virt-launcher as the CRI-O pause PID so qemu
+// lives in the user Pod cgroup. HandleStandaloneMode keys off STANDALONE_VMI
+// and calls SyncVMI with nil options, so we leave that env unset and send
+// SyncVirtualMachine ourselves (domainAttachments[default]=tap).
 // Returns 0 when the rootfs/binary or spec is missing (dummy pause).
 func skipVirtLauncher(dir, reason string) int {
 	if dir != "" {
@@ -599,21 +601,12 @@ func startVirtLauncherPause(id, dir string) int {
 	netns := bundleNetNS(bundle)
 	startVsockFwd(uid, netns)
 	bridgeLog := filepath.Join(dir, "pod-bridge.log")
+	attachTap := false
 	if link, err := setupPodBridge(netns, rootfs, bridgeLog); err != nil {
 		_ = os.WriteFile(filepath.Join(dir, "pod-bridge.err"), []byte(err.Error()+"\n"), 0644)
 		spec = stripStandaloneNIC(spec)
 	} else if link.MAC != "" {
-		// virt-launcher v1.9 HandleStandaloneMode calls SyncVMI with
-		// nil VirtualMachineOptions, so the converter never sets
-		// domainAttachments[default]=tap and libvirt rejects
-		// <interface type="">. Keep phase-1 k6t-eth0/tap0, attach
-		// tap0 from a qemu wrapper, and serve DHCP ourselves.
-		if err := plantTapEmulator(rootfs, link.MAC); err != nil {
-			logBridge(bridgeLog, "tap emulator: %v", err)
-			_ = os.WriteFile(filepath.Join(dir, "tap-emulator.err"), []byte(err.Error()+"\n"), 0644)
-		}
-		startPodDHCP(netns, link, dir)
-		spec = stripStandaloneNIC(spec)
+		attachTap = true
 	}
 	_ = os.WriteFile(filepath.Join(dir, standaloneVMIFile), []byte(spec), 0644)
 	cmd := virtLauncherCmd(rootfs, netns, args)
@@ -626,7 +619,7 @@ func startVirtLauncherPause(id, dir string) int {
 	if err != nil {
 		log = nil
 	}
-	cmd.Env = append(os.Environ(), "STANDALONE_VMI="+spec)
+	cmd.Env = withoutEnv(os.Environ(), "STANDALONE_VMI")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if log != nil {
 		cmd.Stdout = log
@@ -651,6 +644,21 @@ func startVirtLauncherPause(id, dir string) int {
 	}
 	_ = os.WriteFile(filepath.Join(dir, "virt-launcher.pid"), []byte(strconv.Itoa(pid)), 0644)
 	placeOverlayInPodCgroup(dir, pid)
+	if err := syncStandaloneVMI(rootfs, spec, attachTap); err != nil {
+		_ = os.WriteFile(filepath.Join(dir, "cmd-sync.err"), []byte(err.Error()+"\n"), 0644)
+	}
 	_ = id
 	return pid
+}
+
+func withoutEnv(env []string, key string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }

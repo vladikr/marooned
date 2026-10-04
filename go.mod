@@ -30,11 +30,11 @@ require (
 	golang.org/x/mod v0.10.0 // indirect
 	golang.org/x/tools v0.9.1 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.2.0 // indirect
+	google.golang.org/genproto v0.0.0-20220502173005-c8bf987b8c21 // indirect
 	k8s.io/gengo v0.0.0-20220902162205-c0856e24416d // indirect
 	k8s.io/kube-aggregator v0.27.1 // indirect
 	kubevirt.io/containerized-data-importer-api v1.57.0-alpha1 // indirect
 	sigs.k8s.io/kube-storage-version-migrator v0.0.4 // indirect
-
 )
 
 require (
@@ -49,6 +49,7 @@ require (
 	github.com/openshift/library-go v0.0.0-20230328115725-6ed98e0ed0b9
 	github.com/operator-framework/operator-lifecycle-manager v0.0.0-20190725173916-b56e63a643cc
 	github.com/rs/cors v1.7.0
+	google.golang.org/grpc v1.49.0
 	k8s.io/client-go v12.0.0+incompatible
 	kubevirt.io/client-go v1.1.1
 	sigs.k8s.io/controller-runtime v0.14.6

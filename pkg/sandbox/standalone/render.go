@@ -29,10 +29,9 @@ const standaloneMachineType = "pc"
 // prepareStandalone stamps identity virt-launcher needs and forces the
 // pod NIC to bridge:{} (not masquerade, not l2bridge). Masquerade
 // expects virt-handler to create k6t-eth0; marooned-oci runs that
-// phase-1 bridge in the user Pod netns instead. virt-launcher v1.9
-// standalone SyncVMI cannot attach tap0 (nil VirtualMachineOptions),
-// so marooned-oci strips this NIC after phase 1 and wraps qemu plus
-// DHCP. Agent traffic stays vsock.
+// phase-1 bridge in the user Pod netns, then SyncVirtualMachine with
+// domainAttachments[default]=tap so virt-launcher phase 2 owns tap0
+// and DHCP. Agent traffic stays vsock.
 func prepareStandalone(vmi *virtv1.VirtualMachineInstance, podUID string) {
 	if vmi == nil {
 		return

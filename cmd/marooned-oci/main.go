@@ -73,8 +73,6 @@ func main() {
 			uid = rest[0]
 		}
 		os.Exit(runVsockFwd(uid))
-	case "pod-dhcp":
-		os.Exit(runPodDHCP(rest))
 	case "pause":
 		// Do not use select{}: the runtime treats "all goroutines asleep"
 		// as a deadlock and exits 2. Block on SIGTERM so CRI-O kill works.

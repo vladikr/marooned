@@ -68,11 +68,10 @@ type podLink struct {
 //	tap0 on the bridge (qemu)
 //	dummy eth0 keeps the original MAC/IP for CNI CHECK
 //
-// DHCP cache is written where virt-launcher would read it
+// DHCP cache is written where virt-launcher phase 2 reads it
 // (/var/run/kubevirt-private/vif-cache-eth0.json). Returns the original
-// link (MAC, CIDR, gateway) so marooned-oci can wrap qemu onto tap0 and
-// serve DHCP; STANDALONE_VMI's NIC is stripped because virt-launcher
-// standalone SyncVMI cannot set domainAttachments.
+// link so marooned-oci can SyncVirtualMachine with
+// domainAttachments[default]=tap.
 func setupPodBridge(netns, rootfs, logf string) (podLink, error) {
 	var empty podLink
 	if netns == "" {

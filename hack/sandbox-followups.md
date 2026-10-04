@@ -10,8 +10,10 @@ One-pod now renders STANDALONE_VMI via shim Translate (VEP-359
 `pkg/render` is not importable until kubevirt#19233/#19234 merge),
 starts virt-launcher from a node rootfs overlay as the CRI pause,
 feeds kernel/disk via kubelet Image volumes (`--image-volume`), and
-vsockfwds without a VMI object. First boot has no guest NIC (masquerade
-needs virt-handler). Still unwired: guest-ip/Services, PVC host bind.
+vsockfwds without a VMI object. Guest NIC is pod-network bridge:
+marooned-oci phase 1, then cmd SyncVMI with domainAttachments tap so
+virt-launcher phase 2 owns DHCP. Still unwired: confirm guest-ip
+equals status.podIP from another pod; PVC host bind.
 
 ## Done (verified on kubevirtci)
 

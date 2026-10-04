@@ -19,14 +19,16 @@ resource field, so the live Pod spec is what kubelet honors.
 kubelet → CRI-O handler marooned → marooned-oci
                                       │
                                       ├─ pause PID = virt-launcher
-                                      │    STANDALONE_VMI=<json> (HandleStandaloneMode)
+                                      │    cmd SyncVirtualMachine
+                                      │      domainAttachments[default]=tap
                                       │    qemu joined to the OCI cgroupsPath
                                       └─ user containers: dummy + agent exec
 ```
 
 - Translate still builds a VMI **spec** (disks, guest RAM, kernelBoot).
-- That spec is passed to virt-launcher as `STANDALONE_VMI` (same as
-  kubevirt-vm-to-pod / FlightCtl). It is not `Create()`d in the API.
+- That spec is sent to virt-launcher over cmd `SyncVirtualMachine`
+  (same JSON as `STANDALONE_VMI`, plus `VirtualMachineOptions`).
+  It is not `Create()`d in the API.
 - CPU manager / topology manager / requests apply to qemu.
   `marooned-oci` joins virt-launcher and qemu to the pause container’s
   `linux.cgroupsPath` (never the root cgroup). libvirt
@@ -60,8 +62,12 @@ Today:
 1. Shim `POST /v1/RenderStandaloneVMI` runs `pkg/sandbox/standalone.Render`
    (`translate.Translate` → JSON, Pod UID stamped on the VMI).
 2. `marooned-oci create` writes `standalone-vmi.json` and starts
-   virt-launcher with `STANDALONE_VMI` (no `--standalone` flag;
-   `HandleStandaloneMode` keys off the env, same as kubevirt-vm-to-pod).
+   virt-launcher **without** `STANDALONE_VMI`. v1.9
+   `HandleStandaloneMode` would `SyncVMI` with nil
+   `VirtualMachineOptions`, so the converter leaves
+   `<interface type="">`. After `markReady` (launcher-sock),
+   marooned-oci calls cmd `SyncVirtualMachine` with
+   `interfaceDomainAttachment[default]=tap`.
 3. The shim init container copies the **virt-launcher image rootfs** to
    `/opt/marooned/virt-launcher-rootfs` (qemu+libvirt live there; a
    host binary copy is not enough). Each sandbox gets an overlay on
@@ -86,18 +92,11 @@ Today:
    Passt). marooned-oci runs virt-handler phase 1 in the user Pod netns:
    rename `eth0` → `eth0-nic`, bridge `k6t-eth0`, tap `tap0`, dummy
    `eth0` keeps the original MAC/IP for CNI CHECK, DHCP cache at
-   `/var/run/kubevirt-private/vif-cache-eth0.json`. virt-launcher v1.9
-   `HandleStandaloneMode` calls `SyncVMI` with nil
-   `VirtualMachineOptions`, so the converter never sets
-   `domainAttachments[default]=tap` and libvirt rejects
-   `<interface type="">`. After phase 1 succeeds, marooned-oci strips
-   the NIC from STANDALONE_VMI, copies the real qemu ELF to
-   `/usr/libexec/marooned-qemu-real` (same prefix as qemu-kvm so
-   `bios-256k.bin` resolves; libvirt must not probe a sibling
-   `*.marooned`), wraps the emulator to attach `tap0` (skipped on
-   `-machine none` QMP probe, `-L /usr/share/seabios`), and serves
-   DHCP (pod IP, mask, gateway) on `k6t-eth0`.
-   If phase 1 fails, the NIC is stripped so the guest still boots on vsock.
+   `/var/run/kubevirt-private/vif-cache-eth0.json`. Then
+   `SyncVirtualMachine` with `domainAttachments[default]=tap` so the
+   converter emits `<interface type="ethernet">` and virt-launcher
+   phase 2 owns tap0 and DHCP. If phase 1 fails, the NIC is stripped
+   so the guest still boots on vsock.
    Machine type is i440fx (`pc`) with `DisableHotplug`: virt-launcher on
    q35 defines the domain twice to reserve pcie-root-ports, and the
    second `DomainDefineXML` omits `<uuid>` so libvirt rejects the name.

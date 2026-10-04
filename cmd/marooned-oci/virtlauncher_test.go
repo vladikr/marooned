@@ -205,8 +205,10 @@ func TestEnsureLibvirtRunDirs(t *testing.T) {
 		"run/libvirt",
 		"run/libvirt/qemu",
 		"run/kubevirt",
+		"run/kubevirt/sockets",
 		"run/kubevirt-private",
 		"var/run/libvirt",
+		"var/run/kubevirt/sockets",
 		"var/log/libvirt",
 	} {
 		st, err := os.Stat(filepath.Join(rootfs, p))
@@ -235,6 +237,13 @@ func TestProcRootMatches(t *testing.T) {
 	}
 	if procRootMatches(overlay, "") {
 		t.Fatal("empty overlay")
+	}
+}
+
+func TestWithoutEnv(t *testing.T) {
+	got := withoutEnv([]string{"PATH=/bin", "STANDALONE_VMI={}", "HOME=/root"}, "STANDALONE_VMI")
+	if strings.Join(got, ",") != "PATH=/bin,HOME=/root" {
+		t.Fatalf("got %q", got)
 	}
 }
 
