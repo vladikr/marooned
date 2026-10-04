@@ -84,6 +84,10 @@ Today:
    Machine type is i440fx (`pc`) with `DisableHotplug`: virt-launcher on
    q35 defines the domain twice to reserve pcie-root-ports, and the
    second `DomainDefineXML` omits `<uuid>` so libvirt rejects the name.
+8. User image fill: CRI-O already unpacked the tree on the host
+   (`/var/lib/containers/storage/overlay/.../merged`). The shim cannot
+   `stat` that path (no hostPID). It tars via
+   `nsenter --mount=/host-proc/1/ns/mnt`. Guest-pull needs a NIC.
 
 When `PodFromVMI` is importable, swap the JSON source (and later the
 containerDisk layout). Keep RuntimeClass + marooned-oci as the user Pod API.

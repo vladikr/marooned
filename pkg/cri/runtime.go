@@ -1,12 +1,15 @@
 package cri
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +18,8 @@ import (
 	"maroonedpods.io/maroonedpods/pkg/sandbox"
 	"maroonedpods.io/maroonedpods/pkg/sandbox/agentproto"
 )
+
+const hostProcMountNS = "/host-proc/1/ns/mnt"
 
 // ErrUnimplemented is returned by the Phase 0 empty shim.
 var ErrUnimplemented = fmt.Errorf("unimplemented")
@@ -468,11 +473,8 @@ func putRootfsTimeout(n int64) time.Duration {
 
 func putHostRootfs(cli *agentproto.Client, id, path string, bytes int64) error {
 	st, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
 	timeout := putRootfsTimeout(bytes)
-	if !st.IsDir() {
+	if err == nil && !st.IsDir() {
 		f, err := os.Open(path)
 		if err != nil {
 			return err
@@ -482,10 +484,42 @@ func putHostRootfs(cli *agentproto.Client, id, path string, bytes int64) error {
 	}
 	pr, pw := io.Pipe()
 	go func() {
-		err := sandbox.TarTree(pw, path)
+		err := tarTreeTo(pw, path)
 		_ = pw.CloseWithError(err)
 	}()
 	return cli.PutRootfs(id, pr, timeout)
+}
+
+func tarTreeTo(w io.Writer, path string) error {
+	if st, err := os.Stat(path); err == nil {
+		if !st.IsDir() {
+			return fmt.Errorf("%s is not a directory", path)
+		}
+		return sandbox.TarTree(w, path)
+	}
+	return tarTreeViaHostMount(w, path)
+}
+
+func hostTarArgs(path string) []string {
+	return []string{"--mount=" + hostProcMountNS, "--", "tar", "-C", path, "-cf", "-", "."}
+}
+
+func tarTreeViaHostMount(w io.Writer, path string) error {
+	if _, err := os.Stat(hostProcMountNS); err != nil {
+		return fmt.Errorf("stat %s: %w (shim has no host mount ns)", path, err)
+	}
+	cmd := exec.Command("nsenter", hostTarArgs(path)...)
+	cmd.Stdout = w
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			return fmt.Errorf("host tar %s: %s: %w", path, msg, err)
+		}
+		return fmt.Errorf("host tar %s: %w", path, err)
+	}
+	return nil
 }
 
 func (r *Runtime) StopContainer(_ context.Context, id string, _ time.Duration) error {

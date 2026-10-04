@@ -1,15 +1,60 @@
 package cri
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"maroonedpods.io/maroonedpods/pkg/sandbox/agentproto"
 )
+
+func TestHostTarArgs(t *testing.T) {
+	got := strings.Join(hostTarArgs("/var/lib/containers/storage/overlay/abc/merged"), " ")
+	want := "--mount=/host-proc/1/ns/mnt -- tar -C /var/lib/containers/storage/overlay/abc/merged -cf - ."
+	if got != want {
+		t.Fatalf("args %q want %q", got, want)
+	}
+}
+
+func TestTarTreeToLocalDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ok"), []byte("busybox\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := tarTreeTo(&buf, dir); err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(&buf)
+	found := false
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hdr.Name == "ok" || strings.HasSuffix(hdr.Name, "/ok") {
+			b, _ := io.ReadAll(tr)
+			if string(b) != "busybox\n" {
+				t.Fatalf("payload %q", b)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("ok missing from tar")
+	}
+}
 
 func TestUnimplemented(t *testing.T) {
 	r := UnimplementedRuntime{}
