@@ -269,6 +269,7 @@ func disableLibvirtCgroups(rootfs string) {
 
 func unmountVirtLauncherRootfs(dir string) {
 	merged := filepath.Join(dir, vlRootfsDir)
+	unmountPVCDisks(merged)
 	for _, p := range []string{
 		"var/run/kubevirt-image-volume/disk_0",
 		"var/run/kubevirt-kernel-boot",
@@ -623,6 +624,10 @@ func startVirtLauncherPause(id, dir string) int {
 	if rootfs != "" {
 		bindRuntimeFS(rootfs, private)
 		if err := plantImageVolumes(rootfs, uid, bundle); err != nil {
+			unmountVirtLauncherRootfs(dir)
+			return skipVirtLauncher(dir, err.Error())
+		}
+		if err := plantPVCDisks(rootfs, uid, bundle, spec); err != nil {
 			unmountVirtLauncherRootfs(dir)
 			return skipVirtLauncher(dir, err.Error())
 		}

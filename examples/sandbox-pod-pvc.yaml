@@ -1,4 +1,5 @@
-# PVC is stripped from the user Pod and attached on the VMI as virtio-blk.
+# PVC stays on the user Pod so kubelet NodePublishes once. marooned-oci
+# bind-mounts that host path into virt-launcher as disk.img (virtio-blk).
 # The agent mkfs (if empty) and mounts it at /data in the guest rootfs.
 #
 #   $K apply -f examples/sandbox-pod-pvc.yaml

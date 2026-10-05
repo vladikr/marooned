@@ -533,7 +533,7 @@ func applyVolumes(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod) ([]Mount,
 		case vol.PersistentVolumeClaim != nil:
 			// RWO and RWX both virtio-blk. Do not use virtiofs (would need
 			// privileged virt-launcher). RWX block is the live-migration path.
-			diskName := "vol-" + vol.Name
+			diskName := sandbox.VMIDiskVolumeName(vol.Name)
 			vmi.Spec.Domain.Devices.Disks = append(vmi.Spec.Domain.Devices.Disks, virtv1.Disk{
 				Name:   diskName,
 				Serial: sandbox.DiskSerial(vol.Name),

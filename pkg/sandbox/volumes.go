@@ -3,6 +3,9 @@ package sandbox
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -74,12 +77,75 @@ func isStrippedVolume(vol corev1.Volume) bool {
 // guest path (kept in the volumes annotation).
 const DiskMountRoot = "/run/marooned/disks"
 
-// DiskMountPath is the host path kubelet bind-mounts a claim into.
+// VirtPVCDisksDir is where virt-launcher looks for filesystem PVC disk.img
+// files (GetFilesystemVolumePath).
+const VirtPVCDisksDir = "/var/run/kubevirt-private/vmi-disks"
+
+// DiskImgName is the raw image KubeVirt expects at the root of a filesystem PVC.
+const DiskImgName = "disk.img"
+
+// DiskMountPath is the dummy-container dest kubelet bind-mounts a claim into.
 func DiskMountPath(volumeName string) string {
 	if volumeName == "" {
 		return DiskMountRoot
 	}
 	return DiskMountRoot + "/" + volumeName
+}
+
+// VMIDiskVolumeName is the VMI volume/disk name for a Pod PVC/ephemeral volume.
+func VMIDiskVolumeName(podVolume string) string {
+	return "vol-" + podVolume
+}
+
+// PodVolumeFromVMIDisk reverses VMIDiskVolumeName. Other VMI volumes
+// (user-rootfs) keep their name as the Pod volume name.
+func PodVolumeFromVMIDisk(vmiVolume string) string {
+	if strings.HasPrefix(vmiVolume, "vol-") {
+		return strings.TrimPrefix(vmiVolume, "vol-")
+	}
+	return vmiVolume
+}
+
+// VirtPVCDiskOverlay is virt-launcher's directory for one filesystem PVC.
+func VirtPVCDiskOverlay(rootfs, vmiVolume string) string {
+	return filepath.Join(rootfs, "var/run/kubevirt-private/vmi-disks", vmiVolume)
+}
+
+// FindClaimVolumePath is the kubelet NodePublish directory for a Pod volume.
+// CSI uses <plugin>/<name>/mount; in-tree local/hostPath uses <plugin>/<name>.
+func FindClaimVolumePath(podsDir, podUID, volumeName string) string {
+	if podsDir == "" || podUID == "" || volumeName == "" {
+		return ""
+	}
+	root := filepath.Join(podsDir, podUID, "volumes")
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		return ""
+	}
+	for _, e := range ents {
+		if !e.IsDir() {
+			continue
+		}
+		cand := filepath.Join(root, e.Name(), volumeName)
+		st, err := os.Stat(cand)
+		if err != nil {
+			continue
+		}
+		mount := filepath.Join(cand, "mount")
+		if mst, err := os.Stat(mount); err == nil && mst.IsDir() {
+			return mount
+		}
+		if st.IsDir() {
+			return cand
+		}
+		return cand
+	}
+	return ""
+}
+
+// KubeletClaimVolumePath is FindClaimVolumePath under /var/lib/kubelet/pods.
+func KubeletClaimVolumePath(podUID, volumeName string) string {
+	return FindClaimVolumePath(kubeletPodsDir, podUID, volumeName)
 }
 
 // DropFromLivePod reports volumes that must not be on the user Pod.

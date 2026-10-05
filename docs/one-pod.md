@@ -117,7 +117,10 @@ containerDisk layout). Keep RuntimeClass + marooned-oci as the user Pod API.
 - Guest-ip / Services on kubevirtci: kernel bridge is in (this tree).
   Confirm `kubectl exec` wget of `status.podIP:8080` from another pod.
   Production stays l2bridge/CUDN; do not enable l2bridge on kubevirtci.
-- PVC hostPath bind into the overlay (`/var/lib/kubelet/pods/<uid>/volumes`).
+- PVC: kubelet NodePublishes on the user Pod (`/run/marooned/disks/<vol>`).
+  marooned-oci bind-mounts that host path into the overlay at
+  `/var/run/kubevirt-private/vmi-disks/vol-<name>` and creates `disk.img`
+  if missing. The agent mkfs/mounts the virtio-blk disk at the YAML path.
 - dedicatedCPUPlacement from original Guaranteed+integer CPU (issue #6)
   now lands on this same Pod.
 
