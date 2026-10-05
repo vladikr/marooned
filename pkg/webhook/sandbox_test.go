@@ -75,13 +75,11 @@ func TestMutateSandboxPodStripKeepMatrix(t *testing.T) {
 		wantClaims     bool
 		wantGate       bool
 		wantToleration bool
-		wantFinalizer  string
 	}{
 		{
-			name:          "keeps cpu/memory and adds finalizer",
-			wantCPU:       "100m",
-			wantMem:       "128Mi",
-			wantFinalizer: util.SandboxFinalizer,
+			name:    "keeps cpu/memory",
+			wantCPU: "100m",
+			wantMem: "128Mi",
 		},
 		{
 			name: "keeps hugepages on user pod",
@@ -94,17 +92,15 @@ func TestMutateSandboxPodStripKeepMatrix(t *testing.T) {
 			wantCPU:       "100m",
 			wantMem:       "128Mi",
 			wantHugepages: true,
-			wantFinalizer: util.SandboxFinalizer,
 		},
 		{
 			name: "keeps gpu extended resource",
 			mutate: func(p *corev1.Pod) {
 				p.Spec.Containers[0].Resources.Requests[corev1.ResourceName("nvidia.com/gpu")] = resource.MustParse("1")
 			},
-			wantCPU:       "100m",
-			wantMem:       "128Mi",
-			wantGPU:       true,
-			wantFinalizer: util.SandboxFinalizer,
+			wantCPU: "100m",
+			wantMem: "128Mi",
+			wantGPU: true,
 		},
 		{
 			name: "keeps pvc, strips emptyDir, keeps projected sa",
@@ -125,7 +121,6 @@ func TestMutateSandboxPodStripKeepMatrix(t *testing.T) {
 			wantPVC:       true,
 			wantEmptyDir:  false,
 			wantProjected: true,
-			wantFinalizer: util.SandboxFinalizer,
 		},
 		{
 			name: "keeps resourceClaims",
@@ -133,10 +128,9 @@ func TestMutateSandboxPodStripKeepMatrix(t *testing.T) {
 				p.Spec.ResourceClaims = []corev1.PodResourceClaim{{Name: "gpu"}}
 				p.Spec.Containers[0].Resources.Claims = []corev1.ResourceClaim{{Name: "gpu"}}
 			},
-			wantCPU:       "100m",
-			wantMem:       "128Mi",
-			wantClaims:    true,
-			wantFinalizer: util.SandboxFinalizer,
+			wantCPU:    "100m",
+			wantMem:    "128Mi",
+			wantClaims: true,
 		},
 		{
 			name: "does not add scheduling gate or node-mode taint",
@@ -147,7 +141,6 @@ func TestMutateSandboxPodStripKeepMatrix(t *testing.T) {
 			wantMem:        "128Mi",
 			wantGate:       false,
 			wantToleration: false,
-			wantFinalizer:  util.SandboxFinalizer,
 		},
 	}
 
@@ -161,8 +154,8 @@ func TestMutateSandboxPodStripKeepMatrix(t *testing.T) {
 			if pod.Labels[util.SandboxModeLabel] != util.SandboxModeSandbox {
 				t.Errorf("missing mode label")
 			}
-			if !hasFinalizer(pod.Finalizers, tc.wantFinalizer) {
-				t.Errorf("missing finalizer %s", tc.wantFinalizer)
+			if hasFinalizer(pod.Finalizers, util.SandboxFinalizer) {
+				t.Errorf("one-pod must not add sandbox-cleanup")
 			}
 
 			req := pod.Spec.Containers[0].Resources.Requests
@@ -242,21 +235,30 @@ func TestMutateSandboxPodSkipsDeleting(t *testing.T) {
 	}
 }
 
-func TestMutateSandboxPodIdempotentFinalizer(t *testing.T) {
+func TestMutateSandboxPodStripsFinalizerOnDelete(t *testing.T) {
+	now := metav1.Now()
 	pod := sandboxPod(func(p *corev1.Pod) {
-		p.Finalizers = []string{util.SandboxFinalizer}
+		p.DeletionTimestamp = &now
+		p.Finalizers = []string{"keep.me", util.SandboxFinalizer}
 	})
 	if err := MutateSandboxPod(pod); err != nil {
 		t.Fatal(err)
 	}
-	count := 0
-	for _, f := range pod.Finalizers {
-		if f == util.SandboxFinalizer {
-			count++
-		}
+	if hasFinalizer(pod.Finalizers, util.SandboxFinalizer) {
+		t.Fatal("delete must strip sandbox-cleanup")
 	}
-	if count != 1 {
-		t.Fatalf("finalizer count %d", count)
+	if len(pod.Finalizers) != 1 || pod.Finalizers[0] != "keep.me" {
+		t.Fatalf("finalizers %+v", pod.Finalizers)
+	}
+}
+
+func TestMutateSandboxPodDoesNotAddFinalizer(t *testing.T) {
+	pod := sandboxPod(nil)
+	if err := MutateSandboxPod(pod); err != nil {
+		t.Fatal(err)
+	}
+	if hasFinalizer(pod.Finalizers, util.SandboxFinalizer) {
+		t.Fatal("one-pod must not add sandbox-cleanup")
 	}
 }
 

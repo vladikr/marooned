@@ -17,8 +17,7 @@ virt-launcher phase 2 owns DHCP. isolated-busybox-in: guest IP
 ping/curl/wget :8080 from the node and from maroonedpods-controller.
 guest-wait must not SIGTERM virt-launcher on WaitContainer transport
 errors (qemu kept serving after kubelet Error). isolated-busybox-wait:
-pause stays up, exec and inbound work. Still unwired: cmdSyncCall vs
-DomainDefineXML (bump to 2m); STANDALONE_VMI on restart; PVC host bind.
+pause stays up, exec and inbound work. Still unwired: PVC host bind; dedicatedCPUPlacement.
 
 ## Done (verified on kubevirtci)
 

@@ -109,6 +109,46 @@ func TestHandleMaroonLabelIsIgnored(t *testing.T) {
 	}
 }
 
+func TestHandleSandboxDeleteStripsFinalizer(t *testing.T) {
+	rc := util.RuntimeClassName
+	now := metav1.Now()
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "box",
+			Namespace:         "app",
+			DeletionTimestamp: &now,
+			Finalizers:        []string{util.SandboxFinalizer},
+		},
+		Spec: corev1.PodSpec{
+			RuntimeClassName: &rc,
+			Containers:       []corev1.Container{{Name: "box", Image: "busybox"}},
+		},
+	}
+	raw, err := json.Marshal(pod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(&admissionv1.AdmissionRequest{
+		UID:       "del",
+		Kind:      metav1.GroupVersionKind{Kind: "Pod"},
+		Operation: admissionv1.Update,
+		Object:    runtime.RawExtension{Raw: raw},
+	}, nil, "maroonedpods")
+	out, err := h.Handle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Response.Allowed {
+		t.Fatal("not allowed")
+	}
+	if out.Response.Patch == nil {
+		t.Fatal("expected patch stripping sandbox-cleanup")
+	}
+	if !strings.Contains(string(out.Response.Patch), "finalizers") {
+		t.Fatalf("patch %s", out.Response.Patch)
+	}
+}
+
 func TestHandlePlainPodAllowed(t *testing.T) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "plain", Namespace: "app"},

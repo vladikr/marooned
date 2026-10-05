@@ -26,24 +26,21 @@ func IsSandboxPod(pod *corev1.Pod) bool {
 }
 
 // MutateSandboxPod applies the sandbox admission rules in place:
-// finalizer, mode label, placement, persist the guest volume table.
+// mode label, placement, persist the guest volume table.
 // PVC/ephemeral stay on the Pod so kubelet attaches once; emptyDir is
 // guest tmpfs and is dropped. CPU, memory, hugepages, extended devices,
 // and resourceClaims stay so the scheduler/quota/DRA see them.
 func MutateSandboxPod(pod *corev1.Pod) error {
-	// Do not re-add the finalizer on a deleting pod; that traps the object
-	// in Terminating (adaptor strips it, webhook puts it back).
+	// one-pod has no hidden VMI. sandbox-cleanup was for the two-pod
+	// adaptor; nothing strips it on delete, so kubectl delete stuck.
 	if pod.DeletionTimestamp != nil && !pod.DeletionTimestamp.IsZero() {
+		pod.Finalizers = stripNamedFinalizer(pod.Finalizers, util.SandboxFinalizer)
 		return nil
 	}
 	if pod.Labels == nil {
 		pod.Labels = map[string]string{}
 	}
 	pod.Labels[util.SandboxModeLabel] = util.SandboxModeSandbox
-
-	if !hasFinalizer(pod.Finalizers, util.SandboxFinalizer) {
-		pod.Finalizers = append(pod.Finalizers, util.SandboxFinalizer)
-	}
 
 	if err := persistVolumeSnapshot(pod); err != nil {
 		return err
@@ -148,6 +145,19 @@ func hasFinalizer(finalizers []string, name string) bool {
 		}
 	}
 	return false
+}
+
+func stripNamedFinalizer(finalizers []string, name string) []string {
+	out := finalizers[:0]
+	for _, f := range finalizers {
+		if f != name {
+			out = append(out, f)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func dropVolumeRefs(c *corev1.Container, droppedVolumeNames map[string]struct{}) {
