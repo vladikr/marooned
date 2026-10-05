@@ -23,6 +23,11 @@ func TestVMIPVCNames(t *testing.T) {
 	if len(got) != 1 || got[0] != "vol-data" {
 		t.Fatalf("got %v", got)
 	}
+	host := `{"spec":{"volumes":[{"name":"vol-data","hostDisk":{"path":"/var/run/kubevirt-private/vmi-disks/vol-data/disk.img","type":"DiskOrCreate","capacity":"1Gi"}}]}}`
+	got = vmiPVCNames(host)
+	if len(got) != 1 || got[0] != "vol-data" {
+		t.Fatalf("hostDisk %v", got)
+	}
 	if vmiPVCNames("") != nil {
 		t.Fatal("empty spec")
 	}
@@ -58,12 +63,12 @@ func TestPVCDiskBindsFromBundle(t *testing.T) {
 	if len(binds) != 1 {
 		t.Fatalf("binds %d", len(binds))
 	}
-	if binds[0][0] != src {
-		t.Fatalf("src %s", binds[0][0])
+	if binds[0].src != src {
+		t.Fatalf("src %s", binds[0].src)
 	}
 	wantDst := sandbox.VirtPVCDiskOverlay("/overlay", "vol-data")
-	if binds[0][1] != wantDst {
-		t.Fatalf("dst %s want %s", binds[0][1], wantDst)
+	if binds[0].dst != wantDst {
+		t.Fatalf("dst %s want %s", binds[0].dst, wantDst)
 	}
 }
 
@@ -76,7 +81,8 @@ func TestPVCDiskBindsSkipWhenNoPVC(t *testing.T) {
 
 func TestEnsureDiskImg(t *testing.T) {
 	dir := t.TempDir()
-	if err := ensureDiskImg(dir); err != nil {
+	const want int64 = 2 << 20
+	if err := ensureDiskImg(dir, want); err != nil {
 		t.Fatal(err)
 	}
 	p := filepath.Join(dir, sandbox.DiskImgName)
@@ -84,10 +90,10 @@ func TestEnsureDiskImg(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Size() < 1<<20 {
-		t.Fatalf("size %d", st.Size())
+	if st.Size() != want {
+		t.Fatalf("size %d want %d (must not use node-disk statfs)", st.Size(), want)
 	}
-	if err := ensureDiskImg(dir); err != nil {
+	if err := ensureDiskImg(dir, want); err != nil {
 		t.Fatal(err)
 	}
 	st2, err := os.Stat(p)

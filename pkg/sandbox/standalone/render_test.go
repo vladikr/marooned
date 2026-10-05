@@ -93,3 +93,51 @@ func TestRenderNilPod(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestRenderPVCHostDiskCapacity(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "box", Namespace: "app", UID: "uid-1"},
+		Spec: corev1.PodSpec{
+			RuntimeClassName: pointer.String(util.RuntimeClassName),
+			Containers: []corev1.Container{{
+				Name:  "box",
+				Image: "busybox",
+				VolumeMounts: []corev1.VolumeMount{{
+					Name: "data", MountPath: "/data",
+				}},
+			}},
+			Volumes: []corev1.Volume{{
+				Name: "data",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "isolated-data"},
+				},
+			}},
+		},
+	}
+	res, err := RenderWithClaimBytes(pod, sandbox.EffectiveSandbox(nil), map[string]int64{"data": 1 << 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, vol := range res.VMI.Spec.Volumes {
+		if vol.Name != "vol-data" {
+			continue
+		}
+		found = true
+		if vol.PersistentVolumeClaim != nil {
+			t.Fatal("standalone VMI must not keep PVC (virt-launcher is not a Pod)")
+		}
+		if vol.HostDisk == nil || vol.HostDisk.Type != virtv1.HostDiskExistsOrCreate {
+			t.Fatalf("hostDisk %+v", vol.HostDisk)
+		}
+		if vol.HostDisk.Path != "/var/run/kubevirt-private/vmi-disks/vol-data/disk.img" {
+			t.Fatalf("path %s", vol.HostDisk.Path)
+		}
+		if vol.HostDisk.Capacity.Value() != 1<<30 {
+			t.Fatalf("capacity %s", vol.HostDisk.Capacity.String())
+		}
+	}
+	if !found {
+		t.Fatal("missing vol-data")
+	}
+}

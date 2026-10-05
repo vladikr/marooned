@@ -9,14 +9,21 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	"maroonedpods.io/maroonedpods/pkg/sandbox"
 )
 
 const (
-	qemuDiskUID = 107
-	qemuDiskGID = 107
+	qemuDiskUID         = 107
+	qemuDiskGID         = 107
+	defaultDiskImgBytes = int64(1) << 30
 )
+
+type vmiClaimDisk struct {
+	name    string
+	maxSize int64
+}
 
 type vmiSpecVolumes struct {
 	Spec struct {
@@ -25,11 +32,15 @@ type vmiSpecVolumes struct {
 			PersistentVolumeClaim *struct {
 				ClaimName string `json:"claimName"`
 			} `json:"persistentVolumeClaim"`
+			HostDisk *struct {
+				Path     string            `json:"path"`
+				Capacity resource.Quantity `json:"capacity"`
+			} `json:"hostDisk"`
 		} `json:"volumes"`
 	} `json:"spec"`
 }
 
-func vmiPVCNames(spec string) []string {
+func vmiClaimDisks(spec string) []vmiClaimDisk {
 	if spec == "" {
 		return nil
 	}
@@ -37,12 +48,30 @@ func vmiPVCNames(spec string) []string {
 	if json.Unmarshal([]byte(spec), &vmi) != nil {
 		return nil
 	}
-	var names []string
+	var out []vmiClaimDisk
 	for _, vol := range vmi.Spec.Volumes {
-		if vol.PersistentVolumeClaim == nil || vol.Name == "" {
+		if vol.Name == "" {
 			continue
 		}
-		names = append(names, vol.Name)
+		d := vmiClaimDisk{name: vol.Name, maxSize: defaultDiskImgBytes}
+		switch {
+		case vol.HostDisk != nil:
+			if n, ok := vol.HostDisk.Capacity.AsInt64(); ok && n >= 1<<20 {
+				d.maxSize = n
+			}
+		case vol.PersistentVolumeClaim != nil:
+		default:
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+func vmiPVCNames(spec string) []string {
+	var names []string
+	for _, d := range vmiClaimDisks(spec) {
+		names = append(names, d.name)
 	}
 	return names
 }
@@ -84,21 +113,26 @@ func bundlePVCSources(bundle string) map[string]string {
 	return out
 }
 
-func pvcDiskBinds(rootfs, podUID, bundle, spec string) [][2]string {
-	names := vmiPVCNames(spec)
-	if len(names) == 0 {
+type pvcBind struct {
+	src, dst string
+	maxSize  int64
+}
+
+func pvcDiskBinds(rootfs, podUID, bundle, spec string) []pvcBind {
+	disks := vmiClaimDisks(spec)
+	if len(disks) == 0 {
 		return nil
 	}
 	fromBundle := bundlePVCSources(bundle)
-	var binds [][2]string
-	for _, vmiVol := range names {
-		podVol := sandbox.PodVolumeFromVMIDisk(vmiVol)
+	var binds []pvcBind
+	for _, d := range disks {
+		podVol := sandbox.PodVolumeFromVMIDisk(d.name)
 		src := fromBundle[podVol]
 		if src == "" && podUID != "" {
 			src = sandbox.KubeletClaimVolumePath(podUID, podVol)
 		}
-		dst := sandbox.VirtPVCDiskOverlay(rootfs, vmiVol)
-		binds = append(binds, [2]string{src, dst})
+		dst := sandbox.VirtPVCDiskOverlay(rootfs, d.name)
+		binds = append(binds, pvcBind{src: src, dst: dst, maxSize: d.maxSize})
 	}
 	return binds
 }
@@ -111,16 +145,20 @@ func plantPVCDisks(rootfs, podUID, bundle, spec string) error {
 	if len(binds) == 0 {
 		return nil
 	}
-	waitImageVolumeDirs(binds, 15*time.Second)
+	wait := make([][2]string, len(binds))
+	for i, p := range binds {
+		wait[i] = [2]string{p.src, p.dst}
+	}
+	waitImageVolumeDirs(wait, 15*time.Second)
 	for _, p := range binds {
-		if p[0] == "" {
-			return fmt.Errorf("PVC disk source missing for %s", p[1])
+		if p.src == "" {
+			return fmt.Errorf("PVC disk source missing for %s", p.dst)
 		}
-		if err := bindPVCDir(p[0], p[1]); err != nil {
+		if err := bindPVCDir(p.src, p.dst); err != nil {
 			return err
 		}
-		if err := ensureDiskImg(p[1]); err != nil {
-			return fmt.Errorf("disk.img in %s: %w", p[1], err)
+		if err := ensureDiskImg(p.dst, p.maxSize); err != nil {
+			return fmt.Errorf("disk.img in %s: %w", p.dst, err)
 		}
 	}
 	return nil
@@ -143,16 +181,16 @@ func bindPVCDir(src, dst string) error {
 	return nil
 }
 
-func ensureDiskImg(dir string) error {
+func ensureDiskImg(dir string, maxSize int64) error {
 	p := filepath.Join(dir, sandbox.DiskImgName)
+	size := diskImgSize(dir, maxSize)
+	if size < 1<<20 {
+		return fmt.Errorf("available space %d too small", size)
+	}
 	if st, err := os.Stat(p); err == nil && st.Size() > 0 {
 		_ = os.Chmod(p, 0666)
 		_ = os.Chown(p, qemuDiskUID, qemuDiskGID)
 		return nil
-	}
-	size := diskImgSize(dir)
-	if size < 1<<20 {
-		return fmt.Errorf("available space %d too small", size)
 	}
 	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
@@ -169,17 +207,23 @@ func ensureDiskImg(dir string) error {
 	return nil
 }
 
-func diskImgSize(dir string) int64 {
+func diskImgSize(dir string, maxSize int64) int64 {
+	if maxSize < 1<<20 {
+		maxSize = defaultDiskImgBytes
+	}
 	var st unix.Statfs_t
-	if err := unix.Statfs(dir, &st); err != nil {
-		return 0
+	avail := maxSize
+	if err := unix.Statfs(dir, &st); err == nil {
+		n := int64(st.Bavail) * int64(st.Bsize)
+		reserve := int64(1 << 20)
+		if n > reserve {
+			n -= reserve
+		}
+		if n < avail {
+			avail = n
+		}
 	}
-	avail := int64(st.Bavail) * int64(st.Bsize)
-	reserve := int64(1 << 20)
-	if avail > reserve {
-		avail -= reserve
-	}
-	return avail &^ (reserve - 1)
+	return avail &^ ((1 << 20) - 1)
 }
 
 func unmountPVCDisks(rootfs string) {

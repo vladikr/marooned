@@ -6,9 +6,11 @@ package standalone
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	virtv1 "kubevirt.io/api/core/v1"
 
@@ -18,6 +20,8 @@ import (
 	"maroonedpods.io/maroonedpods/pkg/util"
 	mpv1 "maroonedpods.io/maroonedpods/staging/src/maroonedpods.io/api/pkg/apis/core/v1alpha1"
 )
+
+const defaultClaimDiskBytes = int64(1) << 30
 
 // standaloneMachineType is i440fx. virt-launcher v1.9 allocateHotplugPorts
 // on q35 defines the domain, then DomainDefineXML again with extra
@@ -76,6 +80,11 @@ type Result struct {
 
 // Render translates a RuntimeClass=marooned Pod into virt-launcher STANDALONE_VMI JSON.
 func Render(pod *corev1.Pod, cfg mpv1.SandboxConfig) (Result, error) {
+	return RenderWithClaimBytes(pod, cfg, nil)
+}
+
+// RenderWithClaimBytes is Render plus PVC request sizes (pod volume name → bytes).
+func RenderWithClaimBytes(pod *corev1.Pod, cfg mpv1.SandboxConfig, claimBytes map[string]int64) (Result, error) {
 	var out Result
 	if pod == nil {
 		return out, fmt.Errorf("pod is nil")
@@ -101,6 +110,7 @@ func Render(pod *corev1.Pod, cfg mpv1.SandboxConfig) (Result, error) {
 		return out, fmt.Errorf("translate produced no VMI")
 	}
 	prepareStandalone(tr.VMI, string(pod.UID))
+	replacePVCWithHostDisk(tr.VMI, claimBytes)
 	b, err := json.Marshal(tr.VMI)
 	if err != nil {
 		return out, err
@@ -108,6 +118,40 @@ func Render(pod *corev1.Pod, cfg mpv1.SandboxConfig) (Result, error) {
 	out.VMI = tr.VMI
 	out.JSON = b
 	return out, nil
+}
+
+// replacePVCWithHostDisk turns filesystem PVCs into HostDisk ExistsOrCreate.
+// virt-launcher is not a Pod, so it cannot CSI-attach; marooned-oci bind-mounts
+// the kubelet publish dir and creates disk.img. Capacity must be the PVC
+// request: local-volume statfs is the node disk (~tens of GiB).
+func replacePVCWithHostDisk(vmi *virtv1.VirtualMachineInstance, claimBytes map[string]int64) {
+	if vmi == nil {
+		return
+	}
+	for i := range vmi.Spec.Volumes {
+		vol := &vmi.Spec.Volumes[i]
+		if vol.PersistentVolumeClaim == nil && vol.HostDisk == nil {
+			continue
+		}
+		if vol.HostDisk != nil && vol.PersistentVolumeClaim == nil {
+			continue
+		}
+		podVol := sandbox.PodVolumeFromVMIDisk(vol.Name)
+		n := int64(0)
+		if claimBytes != nil {
+			n = claimBytes[podVol]
+		}
+		if n < 1<<20 {
+			n = defaultClaimDiskBytes
+		}
+		cap := resource.NewQuantity(n, resource.BinarySI)
+		vol.HostDisk = &virtv1.HostDisk{
+			Path:     filepath.Join(sandbox.VirtPVCDisksDir, vol.Name, sandbox.DiskImgName),
+			Type:     virtv1.HostDiskExistsOrCreate,
+			Capacity: *cap,
+		}
+		vol.PersistentVolumeClaim = nil
+	}
 }
 
 func rootfsBytes(pod *corev1.Pod) int64 {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
@@ -28,7 +29,7 @@ func renderStandaloneVMI(kube *kubernetes.Clientset, mp generatedclient.Interfac
 			pod.Spec.NodeName = req.Node
 		}
 		cfg := sandbox.EffectiveSandbox(getMaroonedPodsConfig(ctx, mp))
-		res, err := standalone.Render(pod, cfg)
+		res, err := standalone.RenderWithClaimBytes(pod, cfg, claimBytes(ctx, kube, pod))
 		if err != nil {
 			return nil, err
 		}
@@ -40,6 +41,30 @@ func renderStandaloneVMI(kube *kubernetes.Clientset, mp generatedclient.Interfac
 			UID:       string(res.VMI.UID),
 		}, nil
 	}
+}
+
+func claimBytes(ctx context.Context, kube *kubernetes.Clientset, pod *corev1.Pod) map[string]int64 {
+	if kube == nil || pod == nil {
+		return nil
+	}
+	src := sandbox.RestoreVolumes(pod)
+	out := map[string]int64{}
+	for _, vol := range src.Spec.Volumes {
+		if vol.PersistentVolumeClaim == nil || vol.PersistentVolumeClaim.ClaimName == "" {
+			continue
+		}
+		pvc, err := kube.CoreV1().PersistentVolumeClaims(pod.Namespace).Get(ctx, vol.PersistentVolumeClaim.ClaimName, metav1.GetOptions{})
+		if err != nil {
+			klog.Infof("PVC %s/%s: %v", pod.Namespace, vol.PersistentVolumeClaim.ClaimName, err)
+			continue
+		}
+		q, ok := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+		if !ok {
+			continue
+		}
+		out[vol.Name] = q.Value()
+	}
+	return out
 }
 
 func getMaroonedPodsConfig(ctx context.Context, mp generatedclient.Interface) *mpv1.MaroonedPodsConfig {
