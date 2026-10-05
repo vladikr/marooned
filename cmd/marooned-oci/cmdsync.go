@@ -13,10 +13,13 @@ import (
 )
 
 const (
-	launcherSockRel      = "run/kubevirt/sockets/launcher-sock"
-	cmdSyncMethod        = "/kubevirt.cmd.v1.Cmd/SyncVirtualMachine"
-	cmdSyncWait          = 60 * time.Second
-	cmdSyncCall          = 60 * time.Second
+	launcherSockRel = "run/kubevirt/sockets/launcher-sock"
+	cmdSyncMethod   = "/kubevirt.cmd.v1.Cmd/SyncVirtualMachine"
+	cmdSyncWait     = 60 * time.Second
+	// DomainDefineXML is ~60-90s (isolated-busybox-wait started at 81s).
+	// waitForSock returns as soon as launcher-sock exists, so create is
+	// typically this call, under kubelet's 2m runtime timeout.
+	cmdSyncCall          = 2 * time.Minute
 	tapDomainAttachment  = "tap"
 	defaultInterfaceName = "default"
 )
