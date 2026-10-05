@@ -61,7 +61,9 @@ Today:
 
 1. Shim `POST /v1/RenderStandaloneVMI` runs `pkg/sandbox/standalone.Render`
    (`translate.Translate` → JSON, Pod UID stamped on the VMI).
-2. `marooned-oci create` writes `standalone-vmi.json` and starts
+2. `marooned-oci create` writes `standalone-vmi.json` (and
+   `/run/marooned-oci/vmi-<pod-uid>.json` so a container restart still
+   has the spec) and starts
    virt-launcher **without** `STANDALONE_VMI`. v1.9
    `HandleStandaloneMode` would `SyncVMI` with nil
    `VirtualMachineOptions`, so the converter leaves

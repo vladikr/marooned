@@ -26,6 +26,48 @@ func TestStandaloneVMISpecMissing(t *testing.T) {
 	}
 }
 
+func TestStandaloneVMISpecFromPodFile(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "ctr2")
+	if err := os.Mkdir(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"kind":"VirtualMachineInstance","metadata":{"uid":"pod-uid"}}`
+	if err := os.WriteFile(filepath.Join(dir, "poduid"), []byte("pod-uid"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "vmi-pod-uid.json"), []byte(want), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got := standaloneVMISpec(dir, "")
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	copied := strings.TrimSpace(string(mustRead(filepath.Join(dir, "standalone-vmi.json"))))
+	if copied != want {
+		t.Fatalf("overlay copy %q", copied)
+	}
+}
+
+func TestPersistStandaloneVMIWritesPodFile(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "ctr")
+	if err := os.Mkdir(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "poduid"), []byte("abc"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	spec := `{"metadata":{"uid":"abc"}}`
+	persistStandaloneVMI(dir, spec)
+	if strings.TrimSpace(string(mustRead(filepath.Join(dir, "standalone-vmi.json")))) != spec {
+		t.Fatal("overlay")
+	}
+	if strings.TrimSpace(string(mustRead(filepath.Join(root, "vmi-abc.json")))) != spec {
+		t.Fatal("pod file")
+	}
+}
+
 func TestStartVirtLauncherPauseWithoutBinary(t *testing.T) {
 	dir := t.TempDir()
 	if pid := startVirtLauncherPause("id", dir); pid != 0 {

@@ -41,9 +41,38 @@ func findVirtLauncher() string {
 	return ""
 }
 
+func podVMIPath(dir, uid string) string {
+	if dir == "" || uid == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(dir), "vmi-"+uid+".json")
+}
+
+func persistStandaloneVMI(dir, spec string) {
+	if dir == "" || spec == "" {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dir, standaloneVMIFile), []byte(spec), 0644)
+	uid := strings.TrimSpace(string(mustRead(filepath.Join(dir, "poduid"))))
+	if uid == "" {
+		var ident vmiIdentity
+		_ = json.Unmarshal([]byte(spec), &ident)
+		uid = ident.Metadata.UID
+	}
+	if p := podVMIPath(dir, uid); p != "" {
+		_ = os.WriteFile(p, []byte(spec), 0644)
+	}
+}
+
 func standaloneVMISpec(dir, bundle string) string {
 	if b := strings.TrimSpace(string(mustRead(filepath.Join(dir, standaloneVMIFile)))); b != "" {
 		return b
+	}
+	if uid := strings.TrimSpace(string(mustRead(filepath.Join(dir, "poduid")))); uid != "" {
+		if b := strings.TrimSpace(string(mustRead(podVMIPath(dir, uid)))); b != "" {
+			_ = os.WriteFile(filepath.Join(dir, standaloneVMIFile), []byte(b), 0644)
+			return b
+		}
 	}
 	if bundle == "" {
 		return ""
@@ -116,10 +145,10 @@ func fetchStandaloneVMI(dir string, meta bundleMeta) {
 		VMI json.RawMessage `json:"vmi"`
 	}
 	if json.Unmarshal(body, &resp) != nil || len(resp.VMI) == 0 {
-		_ = os.WriteFile(filepath.Join(dir, standaloneVMIFile), body, 0644)
+		persistStandaloneVMI(dir, string(body))
 		return
 	}
-	_ = os.WriteFile(filepath.Join(dir, standaloneVMIFile), resp.VMI, 0644)
+	persistStandaloneVMI(dir, string(resp.VMI))
 }
 
 func hostVirtLauncherRootfs() string {
@@ -608,7 +637,7 @@ func startVirtLauncherPause(id, dir string) int {
 	} else if link.MAC != "" {
 		attachTap = true
 	}
-	_ = os.WriteFile(filepath.Join(dir, standaloneVMIFile), []byte(spec), 0644)
+	persistStandaloneVMI(dir, spec)
 	cmd := virtLauncherCmd(rootfs, netns, args)
 	if cmd == nil {
 		unmountVirtLauncherRootfs(dir)
