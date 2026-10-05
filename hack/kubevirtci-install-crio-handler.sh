@@ -15,9 +15,17 @@ source ./hack/kubevirt-cluster.sh
 ssh="./cluster-up/ssh.sh"
 conf="${root}/hack/crio/20-marooned.conf"
 
-nodes="${KUBEVIRT_NUM_NODES:-1}"
-for i in $(seq 1 "$nodes"); do
-  node=$(printf 'node%02d' "$i")
+# Default 1 would skip node02 on a two-node CPU-manager cluster.
+if [ -n "${KUBEVIRT_NUM_NODES:-}" ]; then
+  nodes="${KUBEVIRT_NUM_NODES}"
+  node_names=()
+  for i in $(seq 1 "$nodes"); do
+    node_names+=("$(printf 'node%02d' "$i")")
+  done
+else
+  mapfile -t node_names < <(./cluster-up/kubectl.sh get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+fi
+for node in "${node_names[@]}"; do
   echo "installing marooned CRI-O handler on $node"
   "$ssh" "$node" "sudo mkdir -p /usr/local/bin /run/marooned-oci /var/run/marooned /etc/crio/crio.conf.d /opt/marooned; \
     sudo chmod 1777 /var/run/marooned /run/marooned-oci /opt/marooned; \

@@ -1,18 +1,24 @@
 # Guaranteed integer CPU → STANDALONE_VMI dedicatedCPUPlacement.
 # qemu is already in this Pod cgroup; the converter then emits vcpupin
 # from the cgroup cpuset. Exclusive isolation needs kubelet CPU manager
-# static policy; kubevirtci ships none (qemu Cpus_allowed 0-5).
+# static policy. kubevirtci enables that on worker join, so a 2-node
+# cluster is required (node01 control-plane stays none; node02 static).
+# nodeSelector keeps this Pod off node01. virt-handler may still label
+# cpumanager=false; kubelet policy is what pins.
 #
 #   $K apply -f examples/sandbox-pod-cpu.yaml
 #   $K exec isolated-cpu -- wget -qO- http://127.0.0.1:8080/
 # Expect: marooned-guest-ok
 # Domain XML (on the node): grep vcpupin /run/marooned-oci/*/virt-launcher.log
+# Host cpuset: one CPU from the static pool, not 0-5.
 apiVersion: v1
 kind: Pod
 metadata:
   name: isolated-cpu
 spec:
   runtimeClassName: marooned
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
   containers:
   - name: box
     image: quay.io/prometheus/busybox:latest

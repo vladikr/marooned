@@ -130,6 +130,7 @@ containerDisk layout). Keep RuntimeClass + marooned-oci as the user Pod API.
   host sysfs (NUMA cells + thread siblings). virt-handler normally
   fills that from libvirt capabilities; without it the converter
   panics in cpuChunksToCells. Exclusive isolation needs kubelet CPU
-  manager static policy.
+  manager static policy. kubevirtci sets that on worker join only
+  (`KUBEVIRT_NUM_NODES=2`: node01 none, node02 static).
 
 `kubectl exec` / logs / probes stay on marooned-oci → agent.
