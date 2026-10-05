@@ -90,8 +90,9 @@ Today:
    `unix:/var/run/marooned/<uid>/agent.sock` with no VMI object.
 7. The STANDALONE_VMI pod NIC is `bridge: {}` (not masquerade, not
    Passt). marooned-oci runs virt-handler phase 1 in the user Pod netns:
-   rename `eth0` → `eth0-nic`, bridge `k6t-eth0`, tap `tap0`, dummy
-   `eth0` keeps the original MAC/IP for CNI CHECK, DHCP cache at
+   rename `eth0` → `eth0-nic` (new local MAC so the bridge FDB does
+   not pin the guest MAC on the veth), bridge `k6t-eth0`, tap `tap0`,
+   dummy `eth0` keeps the original MAC/IP for CNI CHECK, DHCP cache at
    `/var/run/kubevirt-private/vif-cache-eth0.json`. Then
    `SyncVirtualMachine` with `domainAttachments[default]=tap` so the
    converter emits `<interface type="ethernet">` and virt-launcher

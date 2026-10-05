@@ -172,6 +172,30 @@ func TestStripStandaloneNIC(t *testing.T) {
 	}
 }
 
+func TestLocalAdminMAC(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 8; i++ {
+		mac, err := localAdminMAC()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(mac) != 6 {
+			t.Fatalf("len %d", len(mac))
+		}
+		if mac[0]&0x01 != 0 {
+			t.Fatalf("multicast %s", mac)
+		}
+		if mac[0]&0x02 == 0 {
+			t.Fatalf("universal %s", mac)
+		}
+		s := mac.String()
+		if seen[s] {
+			t.Fatalf("dup %s", s)
+		}
+		seen[s] = true
+	}
+}
+
 func TestSetupPodBridgeNoNetns(t *testing.T) {
 	if _, err := setupPodBridge("", t.TempDir(), ""); err == nil {
 		t.Fatal("expected error")

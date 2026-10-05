@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -63,10 +64,14 @@ type podLink struct {
 // setupPodBridge is virt-handler phase 1 of pod-network bridge binding,
 // run in the user Pod netns before virt-launcher starts:
 //
-//	eth0 → eth0-nic (bridge port, no IP)
+//	eth0 → eth0-nic (bridge port, no IP, new local MAC)
 //	k6t-eth0 (bridge, 169.254.75.10/32 for in-pod DHCP)
 //	tap0 on the bridge (qemu)
 //	dummy eth0 keeps the original MAC/IP for CNI CHECK
+//
+// eth0-nic must not keep the original MAC: the bridge installs a
+// permanent FDB entry for a slave's own MAC, so inbound frames for
+// the guest MAC would hairpin out the veth instead of tap0.
 //
 // DHCP cache is written where virt-launcher phase 2 reads it
 // (/var/run/kubevirt-private/vif-cache-eth0.json). Returns the original
@@ -133,6 +138,13 @@ func applyPodBridge(netns, rootfs string, link podLink) error {
 	_, _ = ipInNS(netns, "link", "set", link.Name, "down")
 	_, _ = ipInNS(netns, "addr", "flush", "dev", link.Name)
 	if _, err := ipInNS(netns, "link", "set", link.Name, "name", uplinkNIC); err != nil {
+		return err
+	}
+	nicMAC, err := localAdminMAC()
+	if err != nil {
+		return err
+	}
+	if _, err := ipInNS(netns, "link", "set", uplinkNIC, "address", nicMAC.String()); err != nil {
 		return err
 	}
 	if _, err := ipInNS(netns, "link", "set", uplinkNIC, "master", podBridgeName); err != nil {
@@ -263,6 +275,17 @@ func parseDefaultRoute(out string) (gw net.IP, dev string) {
 		}
 	}
 	return gw, dev
+}
+
+// localAdminMAC is a random unicast locally-administered address so
+// eth0-nic's permanent bridge FDB entry is not the guest MAC.
+func localAdminMAC() (net.HardwareAddr, error) {
+	mac := make(net.HardwareAddr, 6)
+	if _, err := rand.Read(mac); err != nil {
+		return nil, err
+	}
+	mac[0] = (mac[0] | 0x02) & 0xfe
+	return mac, nil
 }
 
 func qemuIDs(rootfs string) (int, int) {
