@@ -162,7 +162,7 @@ func protoVarint(x uint64) []byte {
 }
 
 func parseCmdResponse(b []byte) (ok bool, msg string, err error) {
-	ok = true
+	// proto3 omits success=false; only success=true encodes field 1.
 	for len(b) > 0 {
 		key, n := consumeVarint(b)
 		if n <= 0 {

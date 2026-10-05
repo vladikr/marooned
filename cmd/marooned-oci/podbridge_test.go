@@ -82,6 +82,22 @@ func TestDHCPConfigJSONRoundTrip(t *testing.T) {
 	if got.Gateway.String() != "10.244.0.1" {
 		t.Fatalf("gw %s", got.Gateway)
 	}
+	if strings.Contains(string(b), `"Peer"`) || strings.Contains(string(b), `"Broadcast"`) {
+		t.Fatalf("empty Peer/Broadcast marshal as string: %s", b)
+	}
+	var kv struct {
+		IP struct {
+			IP   net.IP     `json:"IP"`
+			Mask net.IPMask `json:"Mask"`
+			Peer *net.IPNet `json:"Peer"`
+		} `json:"IP"`
+	}
+	if err := json.Unmarshal(b, &kv); err != nil {
+		t.Fatal(err)
+	}
+	if kv.IP.Peer != nil {
+		t.Fatal("peer")
+	}
 }
 
 func TestWriteDHCPCache(t *testing.T) {

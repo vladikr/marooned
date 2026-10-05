@@ -293,18 +293,12 @@ func qemuIDs(rootfs string) (int, int) {
 	return uid, gid
 }
 
-// dhcpAddrJSON matches github.com/vishvananda/netlink.Addr JSON
-// (embedded *net.IPNet plus Label/Flags/Scope/…).
+// dhcpAddrJSON is the JSON netlink.Addr virt-launcher unmarshals
+// (embedded *net.IPNet). Empty Peer/Broadcast must be omitted:
+// net.IP marshals as "" and *net.IPNet cannot unmarshal a string.
 type dhcpAddrJSON struct {
-	IP          net.IP     `json:"IP"`
-	Mask        net.IPMask `json:"Mask"`
-	Label       string     `json:"Label"`
-	Flags       int        `json:"Flags"`
-	Scope       int        `json:"Scope"`
-	Peer        net.IP     `json:"Peer"`
-	Broadcast   net.IP     `json:"Broadcast"`
-	PreferedLft int        `json:"PreferedLft"`
-	ValidLft    int        `json:"ValidLft"`
+	IP   net.IP     `json:"IP"`
+	Mask net.IPMask `json:"Mask"`
 }
 
 type dhcpConfigJSON struct {

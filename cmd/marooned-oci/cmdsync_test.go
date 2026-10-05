@@ -90,12 +90,11 @@ func TestMarshalVMIRequestNoAttach(t *testing.T) {
 
 func TestParseCmdResponse(t *testing.T) {
 	ok, msg, err := parseCmdResponse(nil)
-	if err != nil || !ok || msg != "" {
-		t.Fatalf("empty %v %v %q", err, ok, msg)
+	if err != nil || ok {
+		t.Fatalf("empty %v ok=%v %q", err, ok, msg)
 	}
-	// success=false (field 1 varint 0), message "boom" (field 2)
-	fail := append(protoVarint(1<<3|0), 0)
-	fail = append(fail, protoBytes(2, []byte("boom"))...)
+	// proto3 failure: success=false is omitted, only message
+	fail := protoBytes(2, []byte("boom"))
 	ok, msg, err = parseCmdResponse(fail)
 	if err != nil || ok || msg != "boom" {
 		t.Fatalf("fail %v ok=%v msg=%q", err, ok, msg)
