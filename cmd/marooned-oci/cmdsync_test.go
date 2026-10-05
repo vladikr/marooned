@@ -15,7 +15,7 @@ import (
 
 func TestMarshalVMIRequestTap(t *testing.T) {
 	spec := []byte(`{"kind":"VirtualMachineInstance"}`)
-	b := marshalVMIRequest(spec, map[string]string{"default": "tap"})
+	b := marshalVMIRequest(spec, map[string]string{"default": "tap"}, nil)
 	if !bytes.Contains(b, spec) {
 		t.Fatal("missing vmi json")
 	}
@@ -29,7 +29,7 @@ func TestMarshalVMIRequestTap(t *testing.T) {
 
 func TestMarshalVMIRequestFields(t *testing.T) {
 	spec := []byte(`{"kind":"VirtualMachineInstance"}`)
-	b := marshalVMIRequest(spec, map[string]string{"default": "tap"})
+	b := marshalVMIRequest(spec, map[string]string{"default": "tap"}, nil)
 	vmiMsg, rest, ok := protoField(b, 1)
 	if !ok {
 		t.Fatal("vmi")
@@ -79,7 +79,7 @@ func protoField(b []byte, want int) (payload, rest []byte, ok bool) {
 
 func TestMarshalVMIRequestNoAttach(t *testing.T) {
 	spec := []byte(`{"kind":"VirtualMachineInstance"}`)
-	b := marshalVMIRequest(spec, nil)
+	b := marshalVMIRequest(spec, nil, nil)
 	if bytes.Contains(b, []byte("tap")) {
 		t.Fatal("unexpected tap")
 	}
@@ -174,7 +174,7 @@ func TestCmdInvoke(t *testing.T) {
 	)
 	go s.Serve(l)
 	defer s.Stop()
-	req := marshalVMIRequest([]byte(`{"kind":"VirtualMachineInstance"}`), map[string]string{"default": "tap"})
+	req := marshalVMIRequest([]byte(`{"kind":"VirtualMachineInstance"}`), map[string]string{"default": "tap"}, nil)
 	resp, err := cmdInvoke(sock, cmdSyncMethod, req, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)

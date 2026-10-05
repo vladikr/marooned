@@ -64,7 +64,8 @@ func launcherSockViaProc(pid int) string {
 
 // syncStandaloneVMI is virt-handler's SyncVirtualMachine for this Pod:
 // virt-launcher v1.9 HandleStandaloneMode passes nil VirtualMachineOptions,
-// so we start without STANDALONE_VMI and send domainAttachments ourselves.
+// so we start without STANDALONE_VMI and send domainAttachments plus host
+// CPU topology (dedicatedCPUPlacement vcpupin panics if topology is nil).
 func syncStandaloneVMI(rootfs, spec string, attachTap bool, pid int) error {
 	sock := launcherSockViaProc(pid)
 	if sock == "" {
@@ -77,7 +78,7 @@ func syncStandaloneVMI(rootfs, spec string, attachTap bool, pid int) error {
 	if attachTap {
 		attachments[defaultInterfaceName] = tapDomainAttachment
 	}
-	req := marshalVMIRequest([]byte(spec), attachments)
+	req := marshalVMIRequest([]byte(spec), attachments, hostTopologyProto())
 	resp, err := cmdInvoke(sock, cmdSyncMethod, req, cmdSyncCall)
 	if err != nil {
 		return err
@@ -134,17 +135,20 @@ func cmdInvoke(socket, method string, req []byte, timeout time.Duration) ([]byte
 	return out, nil
 }
 
-func marshalVMIRequest(vmiJSON []byte, attachments map[string]string) []byte {
+func marshalVMIRequest(vmiJSON []byte, attachments map[string]string, topology []byte) []byte {
 	vmi := protoBytes(1, vmiJSON)
 	req := protoBytes(1, vmi)
-	if len(attachments) == 0 {
-		return req
-	}
 	var opts []byte
+	if topology != nil {
+		opts = append(opts, protoBytes(4, topology)...)
+	}
 	for k, v := range attachments {
 		entry := protoBytes(1, []byte(k))
 		entry = append(entry, protoBytes(2, []byte(v))...)
 		opts = append(opts, protoBytes(8, entry)...)
+	}
+	if len(opts) == 0 {
+		return req
 	}
 	return append(req, protoBytes(2, opts)...)
 }

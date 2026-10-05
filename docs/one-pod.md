@@ -126,6 +126,10 @@ containerDisk layout). Keep RuntimeClass + marooned-oci as the user Pod API.
   Domain.CPU.DedicatedCPUPlacement on STANDALONE_VMI. Guest cores match
   the integer request so ExtraGuestOverhead 50m does not ceil 1 CPU to 2.
   Converter vcpupin uses the Pod cgroup cpuset (qemu is already there).
-  Exclusive isolation needs kubelet CPU manager static policy.
+  SyncVirtualMachine also sends VirtualMachineOptions.topology from
+  host sysfs (NUMA cells + thread siblings). virt-handler normally
+  fills that from libvirt capabilities; without it the converter
+  panics in cpuChunksToCells. Exclusive isolation needs kubelet CPU
+  manager static policy.
 
 `kubectl exec` / logs / probes stay on marooned-oci → agent.
