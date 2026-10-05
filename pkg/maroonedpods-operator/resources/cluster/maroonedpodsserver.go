@@ -195,6 +195,7 @@ func createGatingValidatingWebhook(namespace string, c client.Client, l logr.Log
 		includeHooks = false
 	}
 	path := mpserver.ServePath
+	validatePath := mpserver.ValidatePath
 	defaultServicePort := int32(443)
 	namespacedScope := admissionregistrationv1.NamespacedScope
 	exactPolicy := admissionregistrationv1.Equivalent
@@ -258,7 +259,7 @@ func createGatingValidatingWebhook(namespace string, c client.Client, l logr.Log
 					Service: &admissionregistrationv1.ServiceReference{
 						Namespace: namespace,
 						Name:      MaroonedPodsServerServiceName,
-						Path:      &path,
+						Path:      &validatePath,
 						Port:      &defaultServicePort,
 					},
 				},

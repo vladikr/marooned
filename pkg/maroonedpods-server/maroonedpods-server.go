@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	healthzPath = "/healthz"
-	ServePath   = "/serve-path"
+	healthzPath  = "/healthz"
+	ServePath    = "/serve-path"
+	ValidatePath = "/validate-path"
 )
 
 // Server is the public interface to the upload proxy
@@ -55,7 +56,9 @@ func (app *MaroonedPodsServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 func (app *MaroonedPodsServer) initHandler(maroonedpodsCli kubernetes.Interface) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(healthzPath, app.handleHealthzRequest)
-	mux.Handle(ServePath, NewMaroonedPodsServerHandler(app.maroonedpodsNS, maroonedpodsCli))
+	h := NewMaroonedPodsServerHandler(app.maroonedpodsNS, maroonedpodsCli)
+	mux.Handle(ServePath, h)
+	mux.Handle(ValidatePath, h)
 	mux.Handle("/apis/metrics.k8s.io/", &metricsHandler{cli: maroonedpodsCli})
 	app.handler = cors.AllowAll().Handler(mux)
 

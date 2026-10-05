@@ -147,6 +147,9 @@ func TestHandleSandboxDeleteStripsFinalizer(t *testing.T) {
 	if !strings.Contains(string(out.Response.Patch), "finalizers") {
 		t.Fatalf("patch %s", out.Response.Patch)
 	}
+	if strings.Contains(string(out.Response.Patch), "rootdisk") {
+		t.Fatal("delete UPDATE must not append Image volumes")
+	}
 }
 
 func TestHandlePlainPodAllowed(t *testing.T) {

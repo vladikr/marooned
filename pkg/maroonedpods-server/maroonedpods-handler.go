@@ -36,6 +36,10 @@ func (ash *MaroonedPodsServerHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		http.Error(w, e, http.StatusInternalServerError)
 		return
 	}
+	if r.URL.Path == ValidatePath && out != nil && out.Response != nil {
+		out.Response.Patch = nil
+		out.Response.PatchType = nil
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	jout, err := json.Marshal(out)

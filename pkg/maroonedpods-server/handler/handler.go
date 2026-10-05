@@ -103,10 +103,15 @@ func (v Handler) mutateSandboxPod(pod *v1.Pod) (*admissionv1.AdmissionReview, er
 	if err != nil {
 		return nil, err
 	}
-	disk, kernel := v.sandboxImages()
-	modified, err = sandbox.AppendImageVolumesJSON(modified, disk, kernel)
-	if err != nil {
-		return nil, err
+	// Image volumes are CREATE-only. Re-adding them on UPDATE (delete
+	// finalizer, adaptor strip) is rejected: "pod updates may not change
+	// fields" / "may not specify more than 1 volume type".
+	if v.request != nil && v.request.Operation == admissionv1.Create {
+		disk, kernel := v.sandboxImages()
+		modified, err = sandbox.AppendImageVolumesJSON(modified, disk, kernel)
+		if err != nil {
+			return nil, err
+		}
 	}
 	ops, err := jsonpatch.CreatePatch(original, modified)
 	if err != nil {
