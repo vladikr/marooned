@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestWriteCrioExit(t *testing.T) {
@@ -95,5 +97,94 @@ func TestGuestHasExitedStamp(t *testing.T) {
 	}
 	if !guestHasExited(dir) {
 		t.Fatal("guest-exited stamp")
+	}
+}
+
+func TestDoGuestWaitRetriesUntilWaitSucceeds(t *testing.T) {
+	root := t.TempDir()
+	id := "ctr"
+	dir := filepath.Join(root, id)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "criid"), []byte("pod-box\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exits := t.TempDir()
+	oldExits := crioExitDirs
+	crioExitDirs = []string{exits}
+	defer func() { crioExitDirs = oldExits }()
+
+	n := 0
+	oldWait := guestWaitOnce
+	oldPause := guestWaitPause
+	guestWaitPause = 0
+	guestWaitOnce = func(string) error {
+		n++
+		if n < 3 {
+			return fmt.Errorf("dial")
+		}
+		return nil
+	}
+	defer func() {
+		guestWaitOnce = oldWait
+		guestWaitPause = oldPause
+	}()
+
+	if doGuestWait(root, []string{id}) != 0 {
+		t.Fatal("wait")
+	}
+	if n != 3 {
+		t.Fatalf("tries %d", n)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "guest-exited")); err != nil {
+		t.Fatal("finish after success")
+	}
+}
+
+func TestDoGuestWaitErrorDoesNotFinish(t *testing.T) {
+	root := t.TempDir()
+	id := "ctr"
+	dir := filepath.Join(root, id)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "criid"), []byte("pod-box\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldWait := guestWaitOnce
+	oldPause := guestWaitPause
+	guestWaitPause = time.Millisecond
+	tries := 0
+	guestWaitOnce = func(string) error {
+		tries++
+		if tries >= 4 {
+			return nil
+		}
+		if _, err := os.Stat(filepath.Join(dir, "guest-exited")); err == nil {
+			t.Fatal("finished on wait error")
+		}
+		return fmt.Errorf("not found")
+	}
+	defer func() {
+		guestWaitOnce = oldWait
+		guestWaitPause = oldPause
+	}()
+
+	_ = doGuestWait(root, []string{id})
+	if tries < 4 {
+		t.Fatalf("tries %d", tries)
+	}
+}
+
+func TestPauseDead(t *testing.T) {
+	dir := t.TempDir()
+	if pauseDead(dir) {
+		t.Fatal("no state")
+	}
+	writeState(dir, state{OCIVersion: "1.0.2", ID: "c", Status: "running", PID: 1 << 30})
+	if !pauseDead(dir) {
+		t.Fatal("dead pid")
 	}
 }

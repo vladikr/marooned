@@ -12,12 +12,13 @@ starts virt-launcher from a node rootfs overlay as the CRI pause,
 feeds kernel/disk via kubelet Image volumes (`--image-volume`), and
 vsockfwds without a VMI object. Guest NIC is pod-network bridge:
 marooned-oci phase 1, then cmd SyncVMI with domainAttachments tap so
-virt-launcher phase 2 owns DHCP. isolated-busybox-dhcp: guest IP
-equals status.podIP (10.244.0.71), qemu in the user Pod cgroup, exec
-and wget :8080 work. Inbound podIP from the node still hairpins
-because eth0-nic kept the guest MAC (permanent FDB on the veth).
-Still unwired: inbound from another pod after eth0-nic local MAC;
-PVC host bind.
+virt-launcher phase 2 owns DHCP. isolated-busybox-in: guest IP
+10.244.0.81 equals status.podIP, qemu in the user Pod cgroup, inbound
+ping/curl/wget :8080 from the node and from maroonedpods-controller.
+guest-wait must not SIGTERM virt-launcher on WaitContainer transport
+errors (qemu kept serving after kubelet Error). Still unwired:
+cmdSyncCall 60s vs DomainDefineXML; STANDALONE_VMI on restart; PVC
+host bind.
 
 ## Done (verified on kubevirtci)
 

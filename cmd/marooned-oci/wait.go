@@ -37,20 +37,46 @@ func startGuestWait(root, ociID string) {
 	}
 }
 
+// guestWaitOnce is WaitContainer. A transport/shim error is not a guest
+// exit: isolated-busybox-in SIGTERM'd virt-launcher while qemu still
+// served :8080 because the error was ignored.
+var guestWaitOnce = func(criID string) error {
+	return shimJSONWait("/v1/WaitContainer", map[string]string{"id": criID})
+}
+
+var guestWaitPause = time.Second
+
 func doGuestWait(root string, args []string) int {
 	id := lastID(args)
 	dir := filepath.Join(root, id)
 	criID := strings.TrimSpace(string(mustRead(filepath.Join(dir, "criid"))))
 	if criID == "" {
+		gwlog(dir, "no criid")
 		return 1
 	}
 	gwlog(dir, "wait "+criID)
-	_ = shimJSONWait("/v1/WaitContainer", map[string]string{"id": criID})
+	for {
+		err := guestWaitOnce(criID)
+		if err == nil {
+			break
+		}
+		gwlog(dir, "wait: "+err.Error())
+		if pauseDead(dir) {
+			gwlog(dir, "pause already dead")
+			return 0
+		}
+		time.Sleep(guestWaitPause)
+	}
 	code := guestExitCode(criID)
 	gwlog(dir, fmt.Sprintf("guest exited code=%d", code))
 	finishOCIContainer(dir, id, code)
 	gwlog(dir, "notified crio exit")
 	return 0
+}
+
+func pauseDead(dir string) bool {
+	st, err := readState(dir)
+	return err == nil && st.PID > 1 && !pidAlive(st.PID)
 }
 
 // finishOCIContainer records the guest exit and SIGTERMs the host pause so
