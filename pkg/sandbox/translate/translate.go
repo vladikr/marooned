@@ -91,6 +91,10 @@ func Translate(in Input) Result {
 	vmi.Spec.Domain.Devices.AutoattachGraphicsDevice = &falseVal
 	vmi.Spec.Domain.Devices.AutoattachVSOCK = &trueVal
 	vmi.Spec.Domain.CPU = &virtv1.CPU{Cores: cpu, Sockets: 1, Threads: 1}
+	applyDedicatedCPU(vmi, in.Pod)
+	if vmi.Spec.Domain.CPU.DedicatedCPUPlacement {
+		res.GuestCPU = vmi.Spec.Domain.CPU.Cores
+	}
 	guestMem := mem.DeepCopy()
 	vmi.Spec.Domain.Memory = &virtv1.Memory{Guest: &guestMem}
 
@@ -217,6 +221,20 @@ func hasSRIOVOrHostDevice(pod *corev1.Pod) bool {
 		}
 	}
 	return len(pod.Spec.ResourceClaims) > 0
+}
+
+// applyDedicatedCPU pins guest vCPUs to the Pod cgroup cpuset when the
+// user Pod asked (Guaranteed+integer CPU, or maroonedpods.io/dedicated-cpu).
+// Guest cores match the integer request so they fit the exclusive set
+// CPU manager assigned; ExtraGuestOverhead 50m must not ceil 1 CPU to 2.
+func applyDedicatedCPU(vmi *virtv1.VirtualMachineInstance, pod *corev1.Pod) {
+	if vmi == nil || vmi.Spec.Domain.CPU == nil || !sandbox.WantsDedicatedCPU(pod) {
+		return
+	}
+	if cores := sandbox.IntegerCPUCores(pod); cores >= 1 {
+		vmi.Spec.Domain.CPU.Cores = cores
+	}
+	vmi.Spec.Domain.CPU.DedicatedCPUPlacement = true
 }
 
 func guestCompute(pod *corev1.Pod, cfg mpv1.SandboxConfig, tee string) (uint32, resource.Quantity) {

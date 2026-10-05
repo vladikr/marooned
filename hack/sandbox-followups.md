@@ -17,8 +17,9 @@ virt-launcher phase 2 owns DHCP. isolated-busybox-in: guest IP
 ping/curl/wget :8080 from the node and from maroonedpods-controller.
 guest-wait must not SIGTERM virt-launcher on WaitContainer transport
 errors (qemu kept serving after kubelet Error). isolated-busybox-wait:
-pause stays up, exec and inbound work. PVC host bind is in this tree
-(pending isolated-pvc on kubevirtci). Still unwired: dedicatedCPUPlacement.
+pause stays up, exec and inbound work. PVC host bind verified
+(isolated-pvc cat /data/ok → pvc-ok; disk.img capped at 1Gi).
+dedicatedCPUPlacement is in this tree (Guaranteed+integer CPU).
 
 ## Done (verified on kubevirtci)
 
@@ -74,7 +75,7 @@ GitHub issues track these. Next in order: #3 → #4 → #5 → #6.
 - **kubectl top / HPA:** #3 — verified (`isolated-model` → 18Mi guest RSS, not pause). Shim annotation + `metrics.k8s.io`. CRI-O cgroup path still pause (node eviction unchanged). Idle CPU 0m is expected.
 - **Guest `status.podIP`:** #4 — kubelet keeps pause CNI. Masquerade: pause forwards ports to virt-launcher. l2bridge/CUDN (production): EndpointSlice uses the guest IP; do not use l2bridge on kubevirtci.
 - **Always-restart timestamp:** #5 — verified (`Finished: Sun, 27 Sep 2026`, not 1754/272y). Exit 143 is SIGTERM.
-- **Dedicated CPUs:** #6 — Guaranteed QoS / annotation → VMI `dedicatedCPUPlacement`.
+- **Dedicated CPUs:** #6 — Guaranteed QoS / annotation → VMI `dedicatedCPUPlacement` (in tree; kubevirtci has no CPU manager static).
 - **Rename this repo / product:** #7 — sandbox Pods are not marooned on a VM-node.
 - **Warm pool:** #8
 - **Devices (hugepages / SR-IOV / DRA):** #9

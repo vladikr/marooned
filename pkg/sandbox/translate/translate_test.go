@@ -101,6 +101,45 @@ func TestTranslateMemoryFloor(t *testing.T) {
 	}
 }
 
+func TestTranslateDedicatedCPU(t *testing.T) {
+	best := podWithResources("1", "512Mi")
+	res := Translate(Input{Pod: best, Config: testConfig()})
+	if res.VMI.Spec.Domain.CPU.DedicatedCPUPlacement {
+		t.Fatal("request-only 1 CPU is Burstable; dedicated stays off")
+	}
+
+	cpu := resource.MustParse("1")
+	mem := resource.MustParse("512Mi")
+	g := podWithResources("1", "512Mi")
+	g.Spec.Containers[0].Resources.Limits = corev1.ResourceList{
+		corev1.ResourceCPU: cpu, corev1.ResourceMemory: mem,
+	}
+	res = Translate(Input{Pod: g, Config: testConfig()})
+	if !res.VMI.Spec.Domain.CPU.DedicatedCPUPlacement {
+		t.Fatal("Guaranteed integer CPU")
+	}
+	if res.VMI.Spec.Domain.CPU.Cores != 1 {
+		t.Fatalf("cores %d: ExtraGuestOverhead 50m must not ceil dedicated 1 CPU to 2", res.VMI.Spec.Domain.CPU.Cores)
+	}
+
+	ann := podWithResources("100m", "128Mi")
+	ann.Annotations = map[string]string{util.DedicatedCPUAnnotation: "true"}
+	res = Translate(Input{Pod: ann, Config: testConfig()})
+	if !res.VMI.Spec.Domain.CPU.DedicatedCPUPlacement {
+		t.Fatal("annotation true")
+	}
+
+	off := podWithResources("1", "512Mi")
+	off.Spec.Containers[0].Resources.Limits = corev1.ResourceList{
+		corev1.ResourceCPU: cpu, corev1.ResourceMemory: mem,
+	}
+	off.Annotations = map[string]string{util.DedicatedCPUAnnotation: "false"}
+	res = Translate(Input{Pod: off, Config: testConfig()})
+	if res.VMI.Spec.Domain.CPU.DedicatedCPUPlacement {
+		t.Fatal("annotation false")
+	}
+}
+
 func TestTranslateSandboxLauncherLabel(t *testing.T) {
 	p := podWithResources("1", "512Mi")
 	p.UID = "pod-uid-1"

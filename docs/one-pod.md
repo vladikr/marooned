@@ -121,7 +121,11 @@ containerDisk layout). Keep RuntimeClass + marooned-oci as the user Pod API.
   marooned-oci bind-mounts that host path into the overlay at
   `/var/run/kubevirt-private/vmi-disks/vol-<name>` and creates `disk.img`
   if missing. The agent mkfs/mounts the virtio-blk disk at the YAML path.
-- dedicatedCPUPlacement from original Guaranteed+integer CPU (issue #6)
-  now lands on this same Pod.
+- dedicatedCPUPlacement: Guaranteed QoS with an integer CPU request
+  (or annotation maroonedpods.io/dedicated-cpu=true) sets
+  Domain.CPU.DedicatedCPUPlacement on STANDALONE_VMI. Guest cores match
+  the integer request so ExtraGuestOverhead 50m does not ceil 1 CPU to 2.
+  Converter vcpupin uses the Pod cgroup cpuset (qemu is already there).
+  Exclusive isolation needs kubelet CPU manager static policy.
 
 `kubectl exec` / logs / probes stay on marooned-oci → agent.

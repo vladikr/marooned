@@ -93,8 +93,11 @@ const (
 	RootfsBytesAnnotation    = "maroonedpods.io/rootfs-bytes"
 	// RootfsVolumeAnnotation names a Pod volume (PVC) used as the guest
 	// container rootfs instead of emptyDisk + guest-pull.
-	RootfsVolumeAnnotation    = "maroonedpods.io/rootfs-volume"
-	TEEAnnotation             = "maroonedpods.io/tee"
+	RootfsVolumeAnnotation = "maroonedpods.io/rootfs-volume"
+	TEEAnnotation          = "maroonedpods.io/tee"
+	// DedicatedCPUAnnotation forces or disables VMI dedicatedCPUPlacement.
+	// "true" opts in; "false" opts out of the Guaranteed+integer-CPU default.
+	DedicatedCPUAnnotation    = "maroonedpods.io/dedicated-cpu"
 	SRIOVNetworkAnnotation    = "maroonedpods.io/sriov-network"
 	AgentReadyAnnotation      = "maroonedpods.io/agent-ready"
 	VolumesAnnotation         = "maroonedpods.io/volumes"
