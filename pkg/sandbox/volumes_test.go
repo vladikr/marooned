@@ -6,6 +6,9 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"maroonedpods.io/maroonedpods/pkg/util"
 )
 
 func TestDiskMountPath(t *testing.T) {
@@ -61,5 +64,47 @@ func TestDropFromLivePod(t *testing.T) {
 	}
 	if DropFromLivePod(pvc) {
 		t.Fatal("PVC must stay on the live Pod")
+	}
+}
+
+func TestRestoreVolumesDropsDummyMountForBlockDevice(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "p",
+		},
+		Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{{
+				Name: "data",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "blk"},
+				},
+			}},
+			Containers: []corev1.Container{{
+				Name: "box",
+				VolumeMounts: []corev1.VolumeMount{{
+					Name:      "data",
+					MountPath: DiskMountPath("data"),
+				}},
+			}},
+		},
+	}
+	raw, err := EncodeVolumeSnapshot(VolumeSnapshot{
+		Volumes: pod.Spec.Volumes,
+		Mounts: []ContainerMounts{{
+			Container:     "box",
+			VolumeDevices: []corev1.VolumeDevice{{Name: "data", DevicePath: "/dev/xvda"}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod.Annotations = map[string]string{util.VolumesAnnotation: raw}
+	got := RestoreVolumes(pod)
+	if len(got.Spec.Containers[0].VolumeMounts) != 0 {
+		t.Fatalf("dummy mount leaked: %+v", got.Spec.Containers[0].VolumeMounts)
+	}
+	devs := got.Spec.Containers[0].VolumeDevices
+	if len(devs) != 1 || devs[0].DevicePath != "/dev/xvda" {
+		t.Fatalf("devicePath: %+v", devs)
 	}
 }

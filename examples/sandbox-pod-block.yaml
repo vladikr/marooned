@@ -1,9 +1,11 @@
 # Block PVC: volumeDevices bind the virtio-blk disk at devicePath.
 # The agent does not mkfs or mount a filesystem.
 #
-# kubevirtci local SC is filesystem-mode. The webhook strips volumeDevices
-# from the user Pod, so kubelet never checks volumeMode. A real Block PVC
-# is the same guest path.
+# kubevirtci local SC is filesystem-mode. The webhook converts live
+# volumeDevices to dummy volumeMounts at /run/marooned/disks/<vol> so
+# kubelet can attach the claim. The snapshot keeps devicePath /dev/xvda
+# for the guest. A volumeMode:Block CSI PVC is a follow-up (would need
+# live volumeDevices).
 #
 #   $K apply -f examples/sandbox-pod-block.yaml
 #   $K exec isolated-block -- dd if=/dev/xvda bs=8 count=1

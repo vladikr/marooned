@@ -145,23 +145,57 @@ func plantPVCDisks(rootfs, podUID, bundle, spec string) error {
 	if len(binds) == 0 {
 		return nil
 	}
-	wait := make([][2]string, len(binds))
-	for i, p := range binds {
-		wait[i] = [2]string{p.src, p.dst}
-	}
-	waitImageVolumeDirs(wait, 15*time.Second)
+	waitPVCSources(binds, 15*time.Second)
 	for _, p := range binds {
 		if p.src == "" {
 			return fmt.Errorf("PVC disk source missing for %s", p.dst)
 		}
-		if err := bindPVCDir(p.src, p.dst); err != nil {
+		imgBound, err := bindPVCSource(p.src, p.dst)
+		if err != nil {
 			return err
+		}
+		if imgBound {
+			continue
 		}
 		if err := ensureDiskImg(p.dst, p.maxSize); err != nil {
 			return fmt.Errorf("disk.img in %s: %w", p.dst, err)
 		}
 	}
 	return nil
+}
+
+func waitPVCSources(binds []pvcBind, d time.Duration) {
+	deadline := time.Now().Add(d)
+	for {
+		ready := true
+		for _, p := range binds {
+			if p.src == "" {
+				continue
+			}
+			if _, err := os.Stat(p.src); err != nil {
+				ready = false
+				break
+			}
+		}
+		if ready || !time.Now().Before(deadline) {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// bindPVCSource mounts src into dst. Directories are bound as the
+// filesystem PVC tree (caller creates disk.img). Files and block
+// devices are bound as dst/disk.img so qemu HostDisk can use them.
+func bindPVCSource(src, dst string) (imgBound bool, err error) {
+	st, err := os.Stat(src)
+	if err != nil {
+		return false, fmt.Errorf("pvc source %s: %w", src, err)
+	}
+	if st.IsDir() {
+		return false, bindPVCDir(src, dst)
+	}
+	return true, bindPVCFile(src, dst)
 }
 
 func bindPVCDir(src, dst string) error {
@@ -179,6 +213,38 @@ func bindPVCDir(src, dst string) error {
 		return fmt.Errorf("bind %s -> %s: %w", src, dst, err)
 	}
 	return nil
+}
+
+func bindPVCFile(src, dst string) error {
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+	img := filepath.Join(dst, sandbox.DiskImgName)
+	if err := touchBindTarget(img); err != nil {
+		return err
+	}
+	if err := unix.Mount(src, img, "", unix.MS_BIND, ""); err != nil {
+		return fmt.Errorf("bind %s -> %s: %w", src, img, err)
+	}
+	_ = os.Chmod(img, 0666)
+	_ = os.Chown(img, qemuDiskUID, qemuDiskGID)
+	return nil
+}
+
+func touchBindTarget(p string) error {
+	if st, err := os.Lstat(p); err == nil {
+		if st.IsDir() {
+			return fmt.Errorf("%s is a directory", p)
+		}
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		return err
+	}
+	return f.Close()
 }
 
 func ensureDiskImg(dir string, maxSize int64) error {

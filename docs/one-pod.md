@@ -37,7 +37,8 @@ kubelet → CRI-O handler marooned → marooned-oci
 - PVC/ephemeral stay on the user Pod. kubelet NodePublishes once.
   `volumeMounts.mountPath` in YAML is the **guest** path (annotation
   `maroonedpods.io/volumes`). Live bind-mount is
-  `/run/marooned/disks/<volume>`.
+  `/run/marooned/disks/<volume>`. `volumeDevices` become those dummy
+  mounts on the live spec; the guest still gets `devicePath`.
 - emptyDir stays guest tmpfs.
 
 ## CRI-O handler
@@ -120,7 +121,12 @@ containerDisk layout). Keep RuntimeClass + marooned-oci as the user Pod API.
 - PVC: kubelet NodePublishes on the user Pod (`/run/marooned/disks/<vol>`).
   marooned-oci bind-mounts that host path into the overlay at
   `/var/run/kubevirt-private/vmi-disks/vol-<name>` and creates `disk.img`
-  if missing. The agent mkfs/mounts the virtio-blk disk at the YAML path.
+  if missing. A file or block-device source is bound as `disk.img`.
+  Filesystem `volumeMounts`: the agent mkfs/mounts at the YAML path.
+  `volumeDevices`: webhook turns live devices into dummy mounts so a
+  Filesystem SC can attach; the snapshot keeps `devicePath` and the
+  agent bind/mknod that guest path (no mkfs). `volumeMode: Block` CSI
+  needs live `volumeDevices` and is a follow-up.
 - dedicatedCPUPlacement: Guaranteed QoS with an integer CPU request
   (or annotation maroonedpods.io/dedicated-cpu=true) sets
   Domain.CPU.DedicatedCPUPlacement on STANDALONE_VMI. Guest cores match

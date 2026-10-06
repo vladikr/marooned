@@ -245,6 +245,24 @@ func restoreMounts(containers []corev1.Container, m ContainerMounts) {
 			}
 			containers[i].VolumeMounts = append(containers[i].VolumeMounts, vm)
 		}
+		if len(m.VolumeDevices) > 0 {
+			drop := map[string]struct{}{}
+			for _, vd := range m.VolumeDevices {
+				drop[vd.Name] = struct{}{}
+			}
+			kept := make([]corev1.VolumeMount, 0, len(containers[i].VolumeMounts))
+			for _, vm := range containers[i].VolumeMounts {
+				if _, ok := drop[vm.Name]; ok {
+					continue
+				}
+				kept = append(kept, vm)
+			}
+			if len(kept) == 0 {
+				containers[i].VolumeMounts = nil
+			} else {
+				containers[i].VolumeMounts = kept
+			}
+		}
 		byDev := map[string]int{}
 		for j, vd := range containers[i].VolumeDevices {
 			byDev[vd.Name] = j

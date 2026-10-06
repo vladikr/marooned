@@ -28,8 +28,10 @@ func IsSandboxPod(pod *corev1.Pod) bool {
 // MutateSandboxPod applies the sandbox admission rules in place:
 // mode label, placement, persist the guest volume table.
 // PVC/ephemeral stay on the Pod so kubelet attaches once; emptyDir is
-// guest tmpfs and is dropped. CPU, memory, hugepages, extended devices,
-// and resourceClaims stay so the scheduler/quota/DRA see them.
+// guest tmpfs and is dropped. Claim volumeDevices become dummy
+// volumeMounts at DiskMountPath so a Filesystem SC can attach.
+// CPU, memory, hugepages, extended devices, and resourceClaims stay
+// so the scheduler/quota/DRA see them.
 func MutateSandboxPod(pod *corev1.Pod) error {
 	// one-pod has no hidden VMI. sandbox-cleanup was for the two-pod
 	// adaptor; nothing strips it on delete, so kubectl delete stuck.
@@ -172,11 +174,41 @@ func rewriteClaimMounts(c *corev1.Container, volumes []corev1.Volume) {
 			claims[vol.Name] = struct{}{}
 		}
 	}
+	mounted := map[string]struct{}{}
 	for i, m := range c.VolumeMounts {
 		if _, ok := claims[m.Name]; ok {
 			c.VolumeMounts[i].MountPath = sandbox.DiskMountPath(m.Name)
 		}
+		mounted[c.VolumeMounts[i].Name] = struct{}{}
 	}
+	if len(c.VolumeDevices) == 0 {
+		return
+	}
+	// Filesystem PVCs cannot keep live volumeDevices (kubelet rejects
+	// volumeMode Filesystem + volumeDevices). Dummy volumeMounts let
+	// kubelet NodePublish once at DiskMountPath; the snapshot keeps
+	// devicePath for the guest. volumeMode Block CSI needs live
+	// volumeDevices and is a follow-up.
+	kept := make([]corev1.VolumeDevice, 0, len(c.VolumeDevices))
+	for _, d := range c.VolumeDevices {
+		if _, ok := claims[d.Name]; !ok {
+			kept = append(kept, d)
+			continue
+		}
+		if _, ok := mounted[d.Name]; ok {
+			continue
+		}
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
+			Name:      d.Name,
+			MountPath: sandbox.DiskMountPath(d.Name),
+		})
+		mounted[d.Name] = struct{}{}
+	}
+	if len(kept) == 0 {
+		c.VolumeDevices = nil
+		return
+	}
+	c.VolumeDevices = kept
 }
 
 func isWorkloadVolume(vol corev1.Volume) bool {

@@ -400,16 +400,32 @@ func TestMutateSandboxPodVolumeDevicesRoundTrip(t *testing.T) {
 	if !hasVolume(pod, "data") {
 		t.Fatal("block PVC must stay on the user Pod")
 	}
-	if len(pod.Spec.Containers[0].VolumeDevices) != 1 {
-		t.Fatalf("volumeDevices must stay so kubelet attaches the block: %+v", pod.Spec.Containers[0].VolumeDevices)
+	if len(pod.Spec.Containers[0].VolumeDevices) != 0 {
+		t.Fatalf("live volumeDevices must become dummy mounts for FS PVCs: %+v", pod.Spec.Containers[0].VolumeDevices)
+	}
+	foundDisk := false
+	for _, m := range pod.Spec.Containers[0].VolumeMounts {
+		if m.Name == "data" && m.MountPath == sandbox.DiskMountPath("data") {
+			foundDisk = true
+		}
+	}
+	if !foundDisk {
+		t.Fatalf("block PVC dummy mount missing: %+v", pod.Spec.Containers[0].VolumeMounts)
 	}
 	restored := sandbox.RestoreVolumes(pod)
 	if !hasVolume(restored, "data") {
 		t.Fatal("block PVC did not round-trip")
 	}
+	if len(restored.Spec.Containers[0].VolumeMounts) != 0 {
+		t.Fatalf("dummy mount must not leak into guest mounts: %+v", restored.Spec.Containers[0].VolumeMounts)
+	}
 	devs := restored.Spec.Containers[0].VolumeDevices
 	if len(devs) != 1 || devs[0].Name != "data" || devs[0].DevicePath != "/dev/xvda" {
 		t.Fatalf("volumeDevices did not round-trip: %+v", devs)
+	}
+	got := sandbox.GuestMounts(pod)
+	if len(got) != 1 || got[0].Kind != "block" || got[0].GuestPath != "/dev/xvda" {
+		t.Fatalf("guest mounts: %+v", got)
 	}
 }
 

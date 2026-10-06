@@ -111,3 +111,25 @@ func TestVirtPVCDiskOverlay(t *testing.T) {
 		t.Fatalf("got %s", got)
 	}
 }
+
+func TestBindPVCSourceKind(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "disk.img")
+	if err := os.WriteFile(file, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.IsDir() {
+		t.Fatal("dir source")
+	}
+	st, err = os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.IsDir() {
+		t.Fatal("file source must bind as disk.img")
+	}
+}

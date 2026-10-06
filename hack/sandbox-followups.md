@@ -22,6 +22,9 @@ errors (qemu kept serving after kubelet Error). isolated-busybox-wait:
 pause stays up, exec and inbound work. PVC host bind verified
 (isolated-pvc cat /data/ok → pvc-ok; disk.img capped at 1Gi).
 dedicatedCPUPlacement is in this tree (Guaranteed+integer CPU).
+Block `volumeDevices` convert live devices to dummy mounts; guest
+keeps `/dev/xvda` (kind=block, no mkfs). Pending kubevirtci
+`isolated-block`.
 
 ## Done (verified on kubevirtci)
 
@@ -61,7 +64,7 @@ dedicatedCPUPlacement is in this tree (Guaranteed+integer CPU).
 - exec -it: verified (os.Pipe + close parent ends; kubectl returns after the command)
 - First-start: virt-launcher 3/3 in ~3s (IfNotPresent disks); guest exec works immediately. Warm pool still later if we need pre-booted VMs.
 - Guest network: verified (10.0.2.2, Service wget, Ready 1/1 via exec probe pid-file). status.podIP is still the pause.
-- Volumes: emptyDir tmpfs + filesystem PVC + block volumeDevices verified. RWX is virtio-blk too (no virtiofs; virt-launcher stays non-root).
+- Volumes: emptyDir tmpfs + filesystem PVC verified. Block volumeDevices coded (dummy live mounts + guest `/dev/xvda`); pending isolated-block. RWX is virtio-blk too (no virtiofs; virt-launcher stays non-root).
 - Image: ImageVolume FG for sandbox/kernel containerDisk. Guest-pull verified (`guest-pull quay.io/prometheus/busybox:latest ok`; no host tar). Host tar remains last-resort fallback.
 - Multi-container / init: verified (`isolated-multi` Ready; `cat /shared/ready` → init-ok). One VMI; pause stays under conmon so init exit 0 is waitable.
 - Large-image: Pod+image for the engine; weights on a data PVC. `examples/sandbox-model.yaml` verified (`/models/ok` and wget 127.0.0.1 → model-ok). No importer. `rootfs-volume` air-gap only.

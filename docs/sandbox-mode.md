@@ -17,9 +17,11 @@ disk, not the user’s.
 
 The webhook **keeps** PVCs on the user Pod so kubelet NodePublishes once
 into `/run/marooned/disks/<volume>`. The YAML `mountPath` is the guest
-path (annotation `maroonedpods.io/volumes`). emptyDir is still guest
-tmpfs and is dropped from the live spec. There is no second virt-launcher
-Pod and no VMI object on branch `one-pod`.
+path (annotation `maroonedpods.io/volumes`). `volumeDevices` become
+dummy mounts on the live spec (kubevirtci local SC is Filesystem);
+the snapshot keeps `devicePath` and the agent bind/mknod it with no
+mkfs. emptyDir is still guest tmpfs and is dropped from the live spec.
+There is no second virt-launcher Pod and no VMI object on branch `one-pod`.
 
 ## RuntimeClass
 
