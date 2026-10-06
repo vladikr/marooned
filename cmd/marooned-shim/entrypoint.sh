@@ -16,13 +16,18 @@ install_oci() {
   chmod 0755 "$dest" 2>/dev/null || true
 }
 
-# Enter host pid 1's namespaces without hostPID on the Pod.
+# Enter host pid 1's mount/uts/ipc/net without hostPID on the Pod.
 # /host-proc is hostPath /proc (see the shim DaemonSet).
+# Do not pass --pid: setns into the host (ancestor) PID namespace from
+# a child pid ns is EINVAL. systemctl talks to systemd over
+# /run/systemd in the host mount ns; --root makes /usr/bin/systemctl
+# the host binary after the mount switch.
 host_nsenter() {
   if [ -e /host-proc/1/ns/mnt ] && [ -x /usr/bin/nsenter ]; then
     nsenter --mount=/host-proc/1/ns/mnt --uts=/host-proc/1/ns/uts \
       --ipc=/host-proc/1/ns/ipc --net=/host-proc/1/ns/net \
-      --pid=/host-proc/1/ns/pid -- "$@"
+      --root=/host-proc/1/root --wd=/host-proc/1/cwd \
+      -- "$@"
     return $?
   fi
   return 1
